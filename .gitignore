@@ -1,0 +1,21 @@
+# moon
+.moon/cache
+.moon/docker
+
+build/
+dist/
+out/
+result
+target/
+
+.direnv
+.env*
+
+# moon
+.moon/cache
+.moon/docker
+
+data/
+scratch*
+perf.data*
+flamegraph*
