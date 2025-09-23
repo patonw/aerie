@@ -1,6 +1,6 @@
-use leptos::{logging, prelude::*};
+use leptos::prelude::*;
 
-use crate::mermaid;
+use crate::utils::mermaid;
 
 #[component]
 pub fn Mermaid(#[prop(into)] spec: Signal<String>) -> impl IntoView {
@@ -18,10 +18,10 @@ pub fn Mermaid(#[prop(into)] spec: Signal<String>) -> impl IntoView {
             mermaid::run();
 
             // mermaid::render(&JsValue::from_serde(&json!({ "nodes": [node]})).unwrap());
-            logging::log!("rerendered");
         }
     });
 
+    // TODO: force minimum width for legibility
     pre().node_ref(node_ref).class("mermaid")
 }
 
