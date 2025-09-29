@@ -26,6 +26,7 @@ log = "0.4.28"
 simple_logger = "5.0.0"
 textwrap = "0.16.2"
 markdown = "1.0.0"
+rig-core = { workspace = true, optional = true, features = ["derive"] }
 
 [features]
 hydrate = [
@@ -37,7 +38,7 @@ ssr = [
   "dep:axum",
   "dep:tokio",
   "dep:leptos_axum",
-
+  "dep:rig-core",
   "dep:tower",
   "dep:tower-http",
   "leptos/ssr",

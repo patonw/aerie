@@ -31,6 +31,12 @@ pub struct History {
     stop: bool,
 }
 
+// // This is just becoming more trouble than its worth ...back to egui
+// #[derive(Clone, Serialize, Deserialize, Debug, Default)]
+// pub struct ChatSession {
+//     history: Vec<Message>,
+// }
+
 #[component]
 pub fn HomePage() -> impl IntoView {
     let interrupt = leptos_ws::BiDirectionalSignal::new("interrupt", false).unwrap();
@@ -41,6 +47,8 @@ pub fn HomePage() -> impl IntoView {
     let count = leptos_ws::BiDirectionalSignal::new("count", 0 as i32).unwrap();
 
     let history = leptos_ws::BiDirectionalSignal::new("history", History::default()).unwrap();
+
+    // let chat = leptos_ws::BiDirectionalSignal::new("chat", ChatSession::default()).unwrap();
 
     let last_message: NodeRef<html::Div> = NodeRef::new();
 
@@ -82,6 +90,8 @@ pub fn HomePage() -> impl IntoView {
 
     let start_counter = move |_| {
         spawn_local(async move {
+            // let response = shout().await.unwrap();
+            // logging::log!("LLM client: {response}");
             update_count().await.unwrap();
         });
     };
@@ -179,9 +189,10 @@ async fn update_history() -> Result<(), ServerFnError> {
             break;
         }
         history.update(move |value| {
+            let last_id = value.entries.last().map(|it| it.number).unwrap_or_default();
             value.entries.push(HistoryEntry {
                 name: format!("{}", i * 2).to_string(),
-                number: i * 2 + 1 as u16,
+                number: last_id + 1 as u16,
             })
         });
         sleep(Duration::from_millis(1000)).await;
@@ -189,3 +200,43 @@ async fn update_history() -> Result<(), ServerFnError> {
     task_count.update(|v| *v -= 1);
     Ok(())
 }
+
+// #[server]
+// pub async fn shout() -> Result<String, ServerFnError> {
+//     use rig::agent::Agent;
+//     use rig::client::completion::CompletionModelHandle;
+//     use rig::completion::Prompt;
+//
+//     let agent: Option<Agent<CompletionModelHandle<'_>>> = use_context();
+//     let model = agent.unwrap();
+//
+//     // let chat = leptos_ws::BiDirectionalSignal::new("chat", ChatSession::default()).unwrap();
+//     let history = leptos_ws::BiDirectionalSignal::new("history", History::default()).unwrap();
+//     let task_count = leptos_ws::BiDirectionalSignal::new("task_count", 0 as u32).unwrap();
+//     task_count.update(|v| *v += 1);
+//
+//     // let client = Arc::new(ollama::Client::from_env());
+//     // let model = client.agent("devstral:latest").build();
+//
+//     // Prompt the model and print its response
+//     let response = model
+//         .prompt("Who are you?")
+//         .await
+//         .expect("Failed to prompt LLM");
+//
+//     logging::log!("LLM: {response}");
+//
+//     let text = response.clone();
+//     history.update(move |value| {
+//         let last_id = value.entries.last().map(|it| it.number).unwrap_or_default();
+//         value.entries.push(HistoryEntry {
+//             name: text.clone(),
+//             number: last_id + 1 as u16,
+//         })
+//     });
+//
+//     chat.update(move |state| state.history.push(Message::assistant(text.clone())));
+//
+//     task_count.update(|v| *v -= 1);
+//     Ok(response)
+// }
