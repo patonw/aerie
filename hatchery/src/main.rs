@@ -2,41 +2,50 @@
 
 #[cfg(feature = "ssr")]
 pub mod fileserv;
+
 #[cfg(feature = "ssr")]
 use crate::fileserv::file_and_error_handler;
-#[cfg(feature = "ssr")]
-use axum::response::Response as AxumResponse;
+
 #[cfg(feature = "ssr")]
 use axum::{
     Router,
+    extract::{FromRef, Path, Request, State},
+    response::{IntoResponse, Response as AxumResponse},
     routing::{get, post},
 };
-#[cfg(feature = "ssr")]
-use axum::{
-    extract::{FromRef, Path, Request, State},
-    response::IntoResponse,
-};
+
 #[cfg(feature = "ssr")]
 use config::get_configuration;
+
 #[cfg(feature = "ssr")]
 use hatchery::app::*;
+
 #[cfg(feature = "ssr")]
 use http::HeaderMap;
+
 #[cfg(feature = "ssr")]
-use leptos::*;
-#[cfg(feature = "ssr")]
-use leptos::{config::LeptosOptions, prelude::provide_context};
+use leptos::{config::LeptosOptions, prelude::provide_context, *};
+
 #[cfg(feature = "ssr")]
 use leptos_axum::{AxumRouteListing, handle_server_fns_with_context};
+
 #[cfg(feature = "ssr")]
 use leptos_axum::{LeptosRoutes, generate_route_list_with_exclusions_and_ssg_and_context};
 use leptos_ws::WsSignals;
+
+#[cfg(feature = "ssr")]
+use rig::{
+    agent::Agent,
+    client::{builder::DynClientBuilder, completion::CompletionModelHandle},
+};
+
 #[cfg(feature = "ssr")]
 #[derive(Clone, FromRef)]
 pub struct AppState {
     server_signals: WsSignals,
     routes: Option<Vec<AxumRouteListing>>,
     options: LeptosOptions,
+    agent: Agent<CompletionModelHandle<'static>>,
 }
 
 #[cfg(feature = "ssr")]
@@ -48,6 +57,7 @@ async fn main() {
         let handler = leptos_axum::render_route_with_context(
             state.routes.clone().unwrap(),
             move || {
+                provide_context(state1.agent.clone());
                 provide_context(state1.options.clone());
                 provide_context(state1.server_signals.clone());
             },
@@ -64,6 +74,7 @@ async fn main() {
     ) -> impl IntoResponse {
         handle_server_fns_with_context(
             move || {
+                provide_context(state.agent.clone());
                 provide_context(state.options.clone());
                 provide_context(state.server_signals.clone());
             },
@@ -78,11 +89,20 @@ async fn main() {
     // build our application with a route
     let conf = get_configuration(None).unwrap();
     let leptos_options = conf.leptos_options;
+
+    // TODO: Runtime reconfiguration
+    let agent: Agent<CompletionModelHandle<'_>> = {
+        let client = DynClientBuilder::new();
+        client.agent("ollama", "devstral:latest").unwrap().build()
+    };
+
     let mut state = AppState {
         options: leptos_options.clone(),
         routes: None,
         server_signals: server_signals.clone(),
+        agent,
     };
+
     // Setting get_configuration(None) means we'll be using cargo-leptos's env values
     // For deployment these variables are:
     // <https://github.com/leptos-rs/start-axum#executing-a-server-on-a-remote-machine-without-the-toolchain>
@@ -94,7 +114,11 @@ async fn main() {
     let (routes, _) = generate_route_list_with_exclusions_and_ssg_and_context(
         || view! { <App/> },
         None,
-        move || provide_context(state2.server_signals.clone()),
+        move || {
+            // This is the place that matters
+            provide_context(state2.agent.clone());
+            provide_context(state2.server_signals.clone())
+        },
     );
     state.routes = Some(routes.clone());
     let app = Router::new()
