@@ -14,14 +14,27 @@ dirs = "6.0.0"
 eframe = "0.32.3"
 egui = "0.32.3"
 egui_commonmark = "0.21.1"
-egui_extras = "0.32.3"
+egui_extras = { version = "0.32.3", features = ["syntect"] }
 env_logger = "0.11.8"
 flume = { version = "0.11.1", features = ["async"] }
 image = { version = "0.25.8", features = ["png"] }
 log = "0.4.28"
-rig-core = { workspace = true, features = ["derive"] }
+rig-core = { workspace = true, features = ["derive", "rmcp"] }
+rmcp = { version = "0.5.0", features = [
+  "client",
+  "server",
+  "transport-child-process",
+  "transport-io",
+] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 serde_with = "3.15.0"
 serde_yml = "0.0.12"
 tokio = { version = "1.47.1", features = ["full"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = [
+  "env-filter",
+  "fmt",
+  "json",
+  "registry",
+] }
