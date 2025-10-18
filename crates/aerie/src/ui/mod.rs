@@ -1,0 +1,61 @@
+use eframe::egui;
+
+mod behavior;
+mod tiles;
+
+pub use behavior::AppBehavior;
+
+pub enum Pane {
+    Settings,
+    Chat,
+    Logs,
+}
+
+fn user_bubble<R>(ui: &mut egui::Ui, cb: impl FnMut(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+        egui::Frame::new()
+            .stroke(egui::Stroke::new(1.0, egui::Color32::GRAY))
+            .corner_radius(16)
+            .outer_margin(4)
+            .inner_margin(8)
+            .show(ui, cb)
+            .inner
+    })
+}
+
+fn agent_bubble<R>(
+    ui: &mut egui::Ui,
+    cb: impl FnMut(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+        egui::Frame::new()
+            .stroke(egui::Stroke::new(1.0, egui::Color32::GRAY))
+            .corner_radius(16)
+            .outer_margin(4)
+            .inner_margin(8)
+            .show(ui, cb)
+            .inner
+    })
+}
+
+fn error_bubble<R>(
+    ui: &mut egui::Ui,
+    cb: impl FnMut(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+        egui::Frame::new()
+            .inner_margin(12)
+            .outer_margin(24)
+            .corner_radius(14)
+            .shadow(egui::Shadow {
+                offset: [8, 12],
+                blur: 16,
+                spread: 0,
+                color: egui::Color32::from_black_alpha(180),
+            })
+            // .fill(egui::Color32::from_rgba_unmultiplied(97, 0, 255, 128))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::RED))
+            .show(ui, cb)
+            .inner
+    })
+}
