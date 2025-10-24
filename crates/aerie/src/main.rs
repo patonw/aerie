@@ -16,7 +16,7 @@ use tracing_subscriber::{
 };
 
 use aerie::{
-    LogChannelLayer, LogEntry, Settings, get_agent,
+    AgentFactory, LogChannelLayer, LogEntry, Settings,
     ui::{AppBehavior, Pane},
 };
 
@@ -107,23 +107,24 @@ fn main() -> anyhow::Result<()> {
         }
     });
 
-    let llm_agent = {
-        let settings_r = settings.read().unwrap();
-        Arc::new(get_agent(
-            &settings_r.clone(),
-            &mcp_client,
-            mcp_tools.clone(),
-        ))
+    let agent_factory = AgentFactory {
+        settings: settings.clone(),
+        mcp_client: mcp_client.clone(),
+        mcp_tools: mcp_tools.clone(),
     };
 
     let mut tiles = egui_tiles::Tiles::default();
     let tabs: Vec<TileId> = vec![tiles.insert_pane(Pane::Chat), tiles.insert_pane(Pane::Logs)];
-    let content: TileId = tiles.insert_tab_tile(tabs);
+    let content_tabs: TileId = tiles.insert_tab_tile(tabs);
 
-    let settings_pane = tiles.insert_pane(Pane::Settings);
-    // let root = tiles.insert_horizontal_tile(vec![content, settings_pane]);
+    let tabs = vec![
+        tiles.insert_pane(Pane::Settings),
+        tiles.insert_pane(Pane::Navigator),
+    ];
+    let inspector_tabs = tiles.insert_tab_tile(tabs);
+
     let split =
-        egui_tiles::Linear::new_binary(LinearDir::Horizontal, [content, settings_pane], 0.75);
+        egui_tiles::Linear::new_binary(LinearDir::Horizontal, [content_tabs, inspector_tabs], 0.75);
 
     let root = tiles.insert_container(split);
 
@@ -137,10 +138,15 @@ fn main() -> anyhow::Result<()> {
         cache,
         prompt: prompt.clone(),
         rt: rt.handle().clone(),
-        llm_agent: llm_agent.clone(),
+        agent_factory,
+        branch_point: None,
+        dest_branch: String::new(),
     };
 
     eframe::run_simple_native("My egui App", options, move |ctx, _frame| {
+        let mut fonts = egui::FontDefinitions::default();
+        egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+        ctx.set_fonts(fonts);
         egui::CentralPanel::default().show(ctx, |ui| {
             tree.ui(&mut behavior, ui);
         });
@@ -172,11 +178,6 @@ fn main() -> anyhow::Result<()> {
 
             let settings_r = settings.read().unwrap();
             stored_settings = Arc::new(settings_r.clone());
-            behavior.llm_agent = Arc::new(get_agent(
-                &settings_r.clone(),
-                &mcp_client,
-                mcp_tools.clone(),
-            ));
         }
     })
     .map_err(|e| anyhow::anyhow!("I can't {e:?}"))?;

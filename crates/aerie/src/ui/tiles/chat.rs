@@ -1,5 +1,6 @@
 use eframe::egui;
 use egui_commonmark::*;
+use egui_phosphor::regular::GIT_BRANCH;
 use minijinja::{Environment, context};
 use rig::{
     agent::PromptRequest,
@@ -9,7 +10,7 @@ use std::{collections::VecDeque, f32, sync::atomic::Ordering, time::Instant};
 use tracing::Level;
 
 // use super::{Pane, agent_bubble, error_bubble, tiles, user_bubble};
-use crate::{ChatEntry, LogEntry};
+use crate::{ChatContent, LogEntry};
 
 use crate::ui::{agent_bubble, error_bubble, user_bubble};
 
@@ -69,16 +70,24 @@ impl super::AppBehavior {
                 let cache = &mut self.cache;
                 let session_r = self.session.read().unwrap();
                 for msg in session_r.iter() {
-                    match msg {
-                        ChatEntry::Message(message) => render_message(ui, cache, message),
-                        ChatEntry::Aside {
+                    match &msg.content {
+                        ChatContent::Message(message) => {
+                            // TODO: only on user prompt
+                            if let Message::User { .. } = message
+                                && ui.button(GIT_BRANCH).clicked()
+                            {
+                                self.branch_point = Some(msg.id);
+                            }
+                            render_message(ui, cache, message);
+                        }
+                        ChatContent::Aside {
                             workflow,
                             prompt: _,
                             collapsed,
                             content,
                         } => {
-                            // TODO: collapsed section with only final message showing
                             let resp = egui::CollapsingHeader::new(format!("Workflow: {workflow}"))
+                                .id_salt(msg.id)
                                 .default_open(*collapsed)
                                 .show(ui, |ui| {
                                     for message in content {
@@ -91,7 +100,7 @@ impl super::AppBehavior {
                                 render_message(ui, cache, message);
                             }
                         }
-                        ChatEntry::Error(err) => {
+                        ChatContent::Error(err) => {
                             error_bubble(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.label(egui::RichText::new(err).color(egui::Color32::RED));
@@ -100,7 +109,6 @@ impl super::AppBehavior {
                     }
                 }
 
-                // TODO: switch over to scratch chat is moved into session
                 let chat_r = self.scratch.read().unwrap();
                 for msg in chat_r.iter() {
                     match msg {
@@ -145,6 +153,75 @@ impl super::AppBehavior {
                 }
             });
         });
+
+        if let Some(branch_point) = self.branch_point {
+            let mut submit = false;
+            let unique_name = !self.dest_branch.is_empty() && {
+                let session_r = self.session.read().unwrap();
+                !session_r.branches.contains_key(&self.dest_branch)
+            };
+
+            // Copy prompt from branch point into chat input
+            {
+                let session_r = self.session.read().unwrap();
+                let mut prompt_w = self.prompt.write().unwrap();
+                if prompt_w.is_empty()
+                    && let Some(entry) = session_r.store.get(&branch_point)
+                    && let ChatContent::Message(msg) = &entry.content
+                    && let Message::User { content } = msg
+                    && let UserContent::Text(text) = content.first()
+                {
+                    *prompt_w = text.text().to_string();
+                }
+            }
+
+            let modal = egui::Modal::new(egui::Id::new("Branch dialog")).show(ui.ctx(), |ui| {
+                ui.set_width(250.0);
+
+                ui.heading("Create Branch");
+
+                ui.label("Name:");
+                ui.text_edit_singleline(&mut self.dest_branch);
+
+                ui.separator();
+
+                egui::Sides::new().show(
+                    ui,
+                    |_ui| {},
+                    |ui| {
+                        ui.add_enabled_ui(unique_name, |ui| {
+                            if ui.button("Ok").clicked() {
+                                submit = true;
+                            }
+                        });
+                        if ui.button("Cancel").clicked() {
+                            // You can call `ui.close()` to close the modal.
+                            // (This causes the current modals `should_close` to return true)
+                            ui.close();
+                        }
+                    },
+                );
+
+                submit |= unique_name && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    ui.close();
+                }
+
+                if submit {
+                    let mut session_rw = self.session.write().unwrap();
+                    let parent = session_rw.find_parent(branch_point);
+
+                    let name = std::mem::take(&mut self.dest_branch);
+                    session_rw.switch_branch(&name, parent);
+                    ui.close();
+                }
+            });
+
+            if modal.should_close() {
+                self.branch_point = None;
+            }
+        }
     }
 
     fn on_submit(&mut self, ui: &mut egui::Ui) {
@@ -153,8 +230,12 @@ impl super::AppBehavior {
         let scratch_ = self.scratch.clone();
         let prompt_ = self.prompt.clone();
         let task_count_ = self.task_count.clone();
-        let llm_agent_ = self.llm_agent.clone();
+        let agent_factory_ = self.agent_factory.clone();
         let log_history_ = self.log_history.clone();
+        let branch = {
+            let session_r = self.session.read().unwrap();
+            session_r.head.clone()
+        };
 
         let workflow = {
             let settings_r = self.settings.read().unwrap();
@@ -171,8 +252,6 @@ impl super::AppBehavior {
                 if workstep.disabled {
                     continue;
                 }
-
-                // TODO: handle preamble
 
                 let Ok(tmpl) = env.template_from_str(&workstep.prompt) else {
                     tracing::warn!("Cannot load template from step: {workstep:?}");
@@ -194,19 +273,14 @@ impl super::AppBehavior {
                     let session = session_.write().unwrap();
 
                     for entry in session.iter() {
-                        match entry {
-                            ChatEntry::Message(message) => buffer.push_back(message),
-                            ChatEntry::Aside {
-                                workflow,
-                                prompt: _,
-                                collapsed: _,
-                                content,
-                            } => {
+                        match &entry.content {
+                            ChatContent::Message(message) => buffer.push_back(message),
+                            ChatContent::Aside { content, .. } => {
                                 if let Some(message) = content.last() {
                                     buffer.push_back(message);
                                 }
                             }
-                            ChatEntry::Error(_) => {}
+                            ChatContent::Error(_) => {}
                         }
                     }
 
@@ -224,7 +298,8 @@ impl super::AppBehavior {
                     buffer.into_iter().cloned().collect::<Vec<_>>()
                 };
 
-                let request = PromptRequest::new(&llm_agent_, &prompt)
+                let agent = agent_factory_.agent(&workstep);
+                let request = PromptRequest::new(&agent, &prompt)
                     .multi_turn(5)
                     .with_history(&mut history);
 
@@ -252,14 +327,14 @@ impl super::AppBehavior {
             let mut session = session_.write().unwrap();
             let scratch = std::mem::take(&mut *scratch_.write().unwrap());
             if scratch.len() <= 2 {
-                session.extend(scratch.into_iter().map(|it| it.into()));
+                session.extend(scratch.into_iter().map(|it| it.into()), branch.as_ref());
             } else {
                 use itertools::{Either, Itertools};
 
                 // Split scratch so messages can be collapsed but errors will appear inline
                 let mut iter = scratch.into_iter();
                 if let Some(it) = iter.next() {
-                    session.push(it.into());
+                    session.push(it.into(), branch.as_ref());
                 }
 
                 let (content, errors): (Vec<_>, Vec<_>) = iter.partition_map(|r| match r {
@@ -267,14 +342,17 @@ impl super::AppBehavior {
                     Err(v) => Either::Right(v),
                 });
 
-                session.push(ChatEntry::Aside {
-                    workflow: workflow.name,
-                    prompt: user_prompt,
-                    collapsed: true,
-                    content,
-                });
+                session.push(
+                    ChatContent::Aside {
+                        workflow: workflow.name,
+                        prompt: user_prompt,
+                        collapsed: true,
+                        content,
+                    },
+                    branch.as_ref(),
+                );
 
-                session.extend(errors.into_iter().map(ChatEntry::Error));
+                session.extend(errors.into_iter().map(ChatContent::Error), branch.as_ref());
             }
 
             task_count_.fetch_sub(1, Ordering::Relaxed);
@@ -292,6 +370,7 @@ fn render_message(ui: &mut egui::Ui, cache: &mut CommonMarkCache, message: &Mess
             let UserContent::Text(text) = content.first() else {
                 todo!();
             };
+
             user_bubble(ui, |ui| {
                 ui.set_width(ui.available_width() * 0.75);
                 CommonMarkViewer::new().show(ui, cache, text.text());
