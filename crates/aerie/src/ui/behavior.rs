@@ -1,14 +1,15 @@
 use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
-use rig::{agent::Agent, message::Message, providers::ollama::CompletionModel};
+use rig::message::Message;
 use std::{
     ops::DerefMut,
     sync::{Arc, RwLock, atomic::AtomicU16},
 };
+use uuid::Uuid;
 
 use super::{Pane, tiles};
-use crate::{ChatHistory, LogEntry, Settings};
+use crate::{AgentFactory, ChatHistory, LogEntry, Settings};
 
 // TODO: persist/restore sessions
 pub struct AppBehavior {
@@ -20,13 +21,18 @@ pub struct AppBehavior {
     pub session: Arc<RwLock<ChatHistory>>,
     pub cache: CommonMarkCache,
     pub prompt: Arc<RwLock<String>>,
-    pub llm_agent: Arc<Agent<CompletionModel>>,
+    pub agent_factory: AgentFactory,
+    //
+    // TODO: decompose
+    pub branch_point: Option<Uuid>,
+    pub dest_branch: String,
 }
 
 impl egui_tiles::Behavior<Pane> for AppBehavior {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> WidgetText {
         match pane {
             Pane::Settings => "Settings".into(),
+            Pane::Navigator => "Branches".into(),
             Pane::Chat => "Chat".into(),
             Pane::Logs => "Logs".into(),
         }
@@ -40,19 +46,19 @@ impl egui_tiles::Behavior<Pane> for AppBehavior {
     ) -> egui_tiles::UiResponse {
         match pane {
             Pane::Settings => {
-                {
-                    let mut settings_rw = self.settings.write().unwrap();
-                    tiles::settings::settings_ui(ui, settings_rw.deref_mut());
-                };
+                let mut settings_rw = self.settings.write().unwrap();
+                tiles::settings::settings_ui(ui, settings_rw.deref_mut());
+            }
+            Pane::Navigator => {
+                let mut session_rw = self.session.write().unwrap();
+                tiles::navigator::nav_ui(ui, &mut session_rw);
             }
             Pane::Chat => {
                 self.chat_ui(ui);
             }
             Pane::Logs => {
-                {
-                    let logs_r = self.log_history.read().unwrap();
-                    tiles::logview::log_ui(ui, logs_r.as_ref());
-                };
+                let logs_r = self.log_history.read().unwrap();
+                tiles::logview::log_ui(ui, logs_r.as_ref());
             }
         };
 

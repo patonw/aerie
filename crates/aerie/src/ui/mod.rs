@@ -7,20 +7,27 @@ pub use behavior::AppBehavior;
 
 pub enum Pane {
     Settings,
+    Navigator,
     Chat,
     Logs,
 }
 
-fn user_bubble<R>(ui: &mut egui::Ui, cb: impl FnMut(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-        egui::Frame::new()
-            .stroke(egui::Stroke::new(1.0, egui::Color32::GRAY))
-            .corner_radius(16)
-            .outer_margin(4)
-            .inner_margin(8)
-            .show(ui, cb)
-            .inner
-    })
+fn user_bubble<R>(ui: &mut egui::Ui, cb_r: impl FnMut(&mut egui::Ui) -> R) -> R {
+    egui::Sides::new()
+        .show(
+            ui,
+            |_| {},
+            |ui| {
+                egui::Frame::new()
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::GRAY))
+                    .corner_radius(16)
+                    .outer_margin(4)
+                    .inner_margin(8)
+                    .show(ui, cb_r)
+                    .inner
+            },
+        )
+        .1
 }
 
 fn agent_bubble<R>(
