@@ -22,10 +22,13 @@ pub struct AppBehavior {
     pub cache: CommonMarkCache,
     pub prompt: Arc<RwLock<String>>,
     pub agent_factory: AgentFactory,
-    //
+
     // TODO: decompose
     pub branch_point: Option<Uuid>,
     pub dest_branch: String,
+
+    pub create_toolset: Option<String>,
+    pub edit_toolset: String,
 }
 
 impl egui_tiles::Behavior<Pane> for AppBehavior {
@@ -36,6 +39,7 @@ impl egui_tiles::Behavior<Pane> for AppBehavior {
             Pane::Chat => "Chat".into(),
             Pane::Logs => "Logs".into(),
             Pane::Workflow => "Workflow".into(),
+            Pane::Tools => "Tools".into(),
         }
     }
 
@@ -63,6 +67,9 @@ impl egui_tiles::Behavior<Pane> for AppBehavior {
             }
             Pane::Workflow => {
                 self.workflow_ui(ui);
+            }
+            Pane::Tools => {
+                self.toolset_ui(ui);
             }
         };
 

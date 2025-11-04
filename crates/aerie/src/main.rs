@@ -1,22 +1,16 @@
 use eframe::egui;
 use egui_commonmark::*;
 use egui_tiles::{LinearDir, TileId};
-use rmcp::{
-    ServiceExt as _,
-    model::Tool,
-    transport::{ConfigureCommandExt, TokioChildProcess},
-};
 use std::{
     sync::{Arc, RwLock, atomic::AtomicU16},
     time::{Duration, Instant},
 };
-use tokio::process::Command;
 use tracing_subscriber::{
     Layer as _, filter, layer::SubscriberExt as _, util::SubscriberInitExt as _,
 };
 
 use aerie::{
-    AgentFactory, LogChannelLayer, LogEntry, Settings,
+    AgentFactory, LogChannelLayer, LogEntry, Settings, ToolProvider, Toolbox, Toolset,
     ui::{AppBehavior, Pane},
 };
 
@@ -58,37 +52,32 @@ fn main() -> anyhow::Result<()> {
         .join("workbench.yml");
 
     // Runtime settings:
-    let settings = if settings_path.is_file() {
+    let mut settings = if settings_path.is_file() {
         let text = std::fs::read_to_string(&settings_path)?;
         serde_yml::from_str(&text)?
     } else {
         Settings::default()
     };
 
+    if settings.tools.toolset.is_empty() {
+        settings
+            .tools
+            .toolset
+            .insert("all".into(), Toolset::default());
+    }
+
+    let mut toolbox = Toolbox::default();
+
+    for (tool_name, tool_spec) in settings.tools.provider.iter() {
+        let toolkit = rt
+            .handle()
+            .block_on(async move { ToolProvider::from_spec(tool_spec).await })?;
+
+        toolbox.with_provider(tool_name, toolkit);
+    }
+
     let mut stored_settings = Arc::new(settings.clone());
     let settings = Arc::new(RwLock::new(settings));
-
-    let (mcp_client, mcp_tools) = rt.handle().block_on(async move {
-        let mcp_client = ()
-            .serve(TokioChildProcess::new(Command::new("cargo").configure(
-                |cmd| {
-                    cmd.arg("run")
-                        .arg("--")
-                        .arg("--embed-model")
-                        .arg("MxbaiEmbedLargeV1Q")
-                        .arg("--collection")
-                        .arg("goose")
-                        .current_dir("/code/rust/refoliate/embcp-server");
-                },
-            ))?)
-            .await
-            .inspect_err(|e| {
-                tracing::error!("client error: {:?}", e);
-            })?;
-
-        let mcp_tools: Vec<Tool> = mcp_client.list_tools(Default::default()).await?.tools;
-        Ok::<_, anyhow::Error>((mcp_client, mcp_tools))
-    })?;
 
     // Our application state:
     let task_count = Arc::new(AtomicU16::new(0));
@@ -109,8 +98,7 @@ fn main() -> anyhow::Result<()> {
 
     let agent_factory = AgentFactory {
         settings: settings.clone(),
-        mcp_client: mcp_client.clone(),
-        mcp_tools: mcp_tools.clone(),
+        toolbox,
     };
 
     let mut tiles = egui_tiles::Tiles::default();
@@ -118,6 +106,7 @@ fn main() -> anyhow::Result<()> {
         tiles.insert_pane(Pane::Chat),
         tiles.insert_pane(Pane::Logs),
         tiles.insert_pane(Pane::Workflow),
+        tiles.insert_pane(Pane::Tools),
     ];
     let content_tabs: TileId = tiles.insert_tab_tile(tabs);
 
@@ -145,6 +134,8 @@ fn main() -> anyhow::Result<()> {
         agent_factory,
         branch_point: None,
         dest_branch: String::new(),
+        create_toolset: None,
+        edit_toolset: String::new(),
     };
 
     let rt_ = rt.handle().clone();

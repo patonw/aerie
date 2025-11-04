@@ -32,6 +32,8 @@ impl super::AppBehavior {
                 });
             }
 
+            let toolsets = settings_rw.tools.toolset.keys().cloned().collect_vec();
+
             ui.add_enabled_ui(settings_rw.active_flow.is_some(), |ui| {
                 let workflow_name = settings_rw.active_flow.to_owned().unwrap_or_default();
                 if let Some(workflow) = settings_rw
@@ -123,6 +125,23 @@ impl super::AppBehavior {
                                         ui.label("Prompt");
                                         ui.text_edit_multiline(&mut step.prompt);
                                         ui.end_row();
+
+                                        toggled_field(
+                                            ui,
+                                            "Tools",
+                                            None::<String>,
+                                            &mut step.tools,
+                                            |ui, value| {
+
+                                                egui::ComboBox::from_id_salt("Tools")
+                                                    .selected_text(value.as_str()).show_ui(ui, |ui| {
+                                                        for name in  &toolsets {
+                                                            ui.selectable_value(value, name.clone(), name);
+                                                        }
+                                                    });
+
+                                            },
+                                        );
                                     },
                                 );
                             });

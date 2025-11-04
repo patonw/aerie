@@ -1,9 +1,14 @@
+use cached::proc_macro::cached;
+use glob::{Pattern, PatternError};
+use itertools::Itertools;
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet, HashMap},
     ops::Deref,
+    path::PathBuf,
     sync::Arc,
 };
-
+use tokio::process::Command;
 use tracing::Subscriber;
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
@@ -13,7 +18,12 @@ use rig::{
     message::Message,
     providers::ollama::{self, CompletionModel},
 };
-use rmcp::model::Tool;
+use rmcp::{
+    RoleClient, ServiceExt as _,
+    model::Tool,
+    service::RunningService,
+    transport::{ConfigureCommandExt, TokioChildProcess},
+};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
@@ -43,6 +53,9 @@ pub struct Settings {
 
     #[serde(default)]
     pub active_flow: Option<String>,
+
+    #[serde(default)]
+    pub tools: ToolSettings,
 }
 
 impl Settings {
@@ -53,6 +66,89 @@ impl Settings {
     }
 }
 
+#[skip_serializing_none]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Clone)]
+pub struct ToolSettings {
+    pub provider: BTreeMap<String, ToolSpec>,
+    pub toolset: BTreeMap<String, Toolset>,
+}
+
+/// Configuration to access a tool provider
+#[skip_serializing_none]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[serde(tag = "type")]
+pub enum ToolSpec {
+    MCP {
+        preface: Option<String>,
+        dir: Option<PathBuf>,
+        command: String,
+        args: Vec<String>,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct Toolset(BTreeSet<String>);
+
+impl Toolset {
+    pub fn empty() -> Self {
+        Self(Default::default())
+    }
+
+    pub fn with_include(mut self, provider: &str, tool: &str) -> Self {
+        self.0.insert(format!("{provider}/{tool}"));
+        self
+    }
+
+    pub fn add(&mut self, selector: &str) {
+        self.0.insert(selector.to_string());
+    }
+
+    pub fn remove(&mut self, selector: &str) {
+        self.0.remove(selector);
+    }
+
+    pub fn include(&mut self, provider: &str, tool: &Tool) {
+        self.add(&format!("{provider}/{}", tool.name));
+    }
+
+    pub fn exclude(&mut self, provider: &str, tool: &Tool) {
+        let path = format!("{provider}/{}", tool.name);
+        self.0.retain(|it| {
+            if let Ok(pattern) = tool_glob(it.clone()) {
+                !pattern.matches(&path)
+            } else {
+                false
+            }
+        });
+    }
+    pub fn toggle(&mut self, provider: &str, tool: &Tool) {
+        if self.apply(provider, tool) {
+            self.exclude(provider, tool);
+        } else {
+            self.include(provider, tool);
+        }
+    }
+
+    pub fn apply(&self, provider: &str, tool: &Tool) -> bool {
+        self.0
+            .iter()
+            .filter_map(|it| tool_glob(it.clone()).ok())
+            .any(|it| it.matches(&format!("{provider}/{}", tool.name)))
+    }
+}
+
+#[cached(result = true)]
+pub fn tool_glob(pattern: String) -> Result<Pattern, PatternError> {
+    Pattern::new(&pattern)
+}
+
+impl Default for Toolset {
+    fn default() -> Self {
+        Self(["*/*".into()].into())
+    }
+}
+
+/// A single step in a workflow
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
 pub struct Workstep {
@@ -72,8 +168,11 @@ pub struct Workstep {
 
     // TODO: templating mechanism
     pub prompt: String,
+
+    pub tools: Option<String>,
 }
 
+/// A sequence of steps consisting of LLM invocations
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct Workflow {
@@ -102,6 +201,7 @@ impl Default for Workflow {
                 preamble: None,
                 depth: None,
                 prompt: "{{user_prompt}}".to_string(),
+                tools: None,
             }],
         }
     }
@@ -232,6 +332,13 @@ impl ChatHistory {
         self.store.get(&id).and_then(|it| it.parent)
     }
 
+    pub fn last(&self) -> Option<&ChatEntry> {
+        self.head
+            .as_ref()
+            .and_then(|it| self.branches.get(it))
+            .and_then(|it| self.store.get(it))
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &ChatEntry> {
         let mut buffer: Vec<&ChatEntry> = Vec::new();
         let mut cursor = self
@@ -332,15 +439,118 @@ where
     }
 }
 
+type AgentT = AgentBuilder<CompletionModel>;
+
+/// An external service or process that provides tools that LLM agents can use
+#[derive(Clone)]
+pub enum ToolProvider {
+    MCP {
+        client: Arc<RunningService<RoleClient, ()>>,
+        tools: Vec<Tool>,
+    },
+}
+
+impl ToolProvider {
+    pub fn select_tools(&self, agent: AgentT, selector: impl Fn(&Tool) -> bool) -> AgentT {
+        match self {
+            ToolProvider::MCP { client, tools } => tools
+                .iter()
+                .filter(|it| selector(it))
+                .cloned()
+                .fold(agent, |agent, tool| {
+                    agent.rmcp_tool(tool, client.peer().clone())
+                }),
+        }
+    }
+
+    pub async fn from_spec(spec: &ToolSpec) -> anyhow::Result<Self> {
+        match spec {
+            ToolSpec::MCP {
+                preface,
+                dir,
+                command,
+                args,
+            } => {
+                let client = ()
+                    .serve(TokioChildProcess::new(Command::new(command).configure(
+                        |cmd| {
+                            let cmd = args.iter().fold(cmd, |cmd, arg| cmd.arg(arg));
+                            if let Some(cwd) = dir {
+                                cmd.current_dir(cwd);
+                            }
+                        },
+                    ))?)
+                    .await
+                    .inspect_err(|e| {
+                        tracing::error!("client error: {:?}", e);
+                    })?;
+
+                let client = Arc::new(client);
+
+                let tools: Vec<Tool> = client.list_tools(Default::default()).await?.tools;
+
+                // prepend preface into each description
+                let tools = tools
+                    .into_iter()
+                    .map(|mut tool| {
+                        if let Some(preface) = preface
+                            && let Some(desc) = tool.description.clone()
+                        {
+                            tool.description = Some(Cow::Owned(format!("{preface} {desc}")));
+                        }
+                        tool
+                    })
+                    .collect_vec();
+
+                Ok(ToolProvider::MCP { client, tools })
+            }
+        }
+    }
+}
+
+/// Runtime container managing all configured tool providers
+#[derive(Default, Clone)]
+pub struct Toolbox {
+    pub providers: BTreeMap<String, ToolProvider>,
+}
+
+impl Toolbox {
+    pub fn with_provider(&mut self, name: &str, provider: ToolProvider) -> &mut Self {
+        self.providers.insert(name.into(), provider);
+        self
+    }
+
+    pub fn all_tools(&self, agent: AgentT) -> AgentT {
+        self.select_tools(agent, |_, _| true)
+    }
+
+    pub fn select_chains(&self, agent: AgentT, selection: &[&str]) -> AgentT {
+        self.providers
+            .iter()
+            .filter(|(k, _)| selection.contains(&k.as_str()))
+            .map(|(_, v)| v)
+            .fold(agent, |agent, chain| chain.select_tools(agent, |_| true))
+    }
+
+    pub fn select_tools(&self, agent: AgentT, pred: impl Fn(&str, &Tool) -> bool) -> AgentT {
+        self.providers.iter().fold(agent, |agent, (name, chain)| {
+            chain.select_tools(agent, |tool| pred(name, tool))
+        })
+    }
+
+    pub fn apply(&self, agent: AgentT, toolset: &Toolset) -> AgentT {
+        self.select_tools(agent, |name, tool| toolset.apply(name, tool))
+    }
+}
+
 #[derive(Clone)]
 pub struct AgentFactory {
     pub settings: Arc<std::sync::RwLock<Settings>>,
-    pub mcp_client: rmcp::service::ServerSink,
-    pub mcp_tools: Vec<Tool>,
+    pub toolbox: Toolbox,
 }
 
 impl AgentFactory {
-    pub fn builder(&self) -> AgentBuilder<CompletionModel> {
+    pub fn builder(&self) -> AgentT {
         let settings = self.settings.read().unwrap();
         let llm_client = ollama::Client::from_env();
         let model = if settings.llm_model.is_empty() {
@@ -349,17 +559,10 @@ impl AgentFactory {
             settings.llm_model.as_str()
         };
 
-        let llm_agent = llm_client
+        llm_client
             .agent(model)
             .preamble(&settings.preamble)
-            .temperature(settings.temperature);
-
-        self.mcp_tools
-            .iter()
-            .cloned()
-            .fold(llm_agent, |agent, tool| {
-                agent.rmcp_tool(tool, self.mcp_client.clone())
-            })
+            .temperature(settings.temperature)
     }
 
     pub fn agent(&self, step: &Workstep) -> Agent<CompletionModel> {
@@ -370,6 +573,14 @@ impl AgentFactory {
         if let Some(preamble) = &step.preamble {
             builder = builder.preamble(preamble);
         }
+
+        if let Some(tools) = &step.tools {
+            let settings = self.settings.read().unwrap();
+            if let Some(toolset) = settings.tools.toolset.get(tools) {
+                builder = self.toolbox.apply(builder, toolset);
+            }
+        }
+
         builder.build()
     }
 }
