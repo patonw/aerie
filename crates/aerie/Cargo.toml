@@ -9,6 +9,7 @@ rig-core = { git = "https://github.com/patonw/rig", branch = "fix-tool_choice" }
 
 [dependencies]
 anyhow = "1.0.100"
+cached = "0.56.0"
 clap = { version = "4.5.48", features = ["env", "derive"] }
 dirs = "6.0.0"
 eframe = "0.32.3"
@@ -19,6 +20,7 @@ egui_extras = { version = "0.32.3", features = ["syntect"] }
 egui_tiles = "0.13.0"
 env_logger = "0.11.8"
 flume = { version = "0.11.1", features = ["async"] }
+glob = "0.3.3"
 image = { version = "0.25.8", features = ["png"] }
 itertools = "0.14.0"
 log = "0.4.28"
@@ -42,4 +44,4 @@ tracing-subscriber = { version = "0.3.20", features = [
   "json",
   "registry",
 ] }
-uuid = { version = "1.18.1", features = ["v4"] }
+uuid = { version = "1.18.1", features = ["serde", "v4"] }

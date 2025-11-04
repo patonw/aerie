@@ -88,7 +88,7 @@ impl super::AppBehavior {
                         } => {
                             let resp = egui::CollapsingHeader::new(format!("Workflow: {workflow}"))
                                 .id_salt(msg.id)
-                                .default_open(*collapsed)
+                                .default_open(!collapsed)
                                 .show(ui, |ui| {
                                     for message in content {
                                         render_message(ui, cache, message);
@@ -181,7 +181,8 @@ impl super::AppBehavior {
                 ui.heading("Create Branch");
 
                 ui.label("Name:");
-                ui.text_edit_singleline(&mut self.dest_branch);
+                ui.text_edit_singleline(&mut self.dest_branch)
+                    .request_focus();
 
                 ui.separator();
 
@@ -257,6 +258,24 @@ impl super::AppBehavior {
                     tracing::warn!("Cannot load template from step: {workstep:?}");
                     continue;
                 };
+
+                // TODO: implement last_message
+                // let last_message = {
+                //     let session = session_.read().unwrap();
+                //     let last_message = session
+                //         .last()
+                //         .map(|msg| match msg.content {
+                //             ChatContent::Message(message) => message.content,
+                //             ChatContent::Aside {
+                //                 workflow,
+                //                 prompt,
+                //                 collapsed,
+                //                 content,
+                //             } => todo!(),
+                //             ChatContent::Error(err) => err,
+                //         })
+                //         .unwrap_or(String::default());
+                // };
 
                 let Ok(prompt) = tmpl.render(context! {user_prompt}) else {
                     tracing::warn!("Cannot render prompt for step: {workstep:?}");
