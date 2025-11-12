@@ -19,7 +19,9 @@ egui_tiles = "0.14.0"
 env_logger = "0.11.8"
 flume = { version = "0.11.1", features = ["async"] }
 image = { version = "0.25.8", features = ["png"] }
+itertools = "0.14.0"
 log = "0.4.28"
+minijinja = { version = "2.11.0", features = ["loader"] }
 rig-core = { workspace = true, features = ["derive", "rmcp"] }
 rmcp = { version = "0.5.0", features = [
   "client",
