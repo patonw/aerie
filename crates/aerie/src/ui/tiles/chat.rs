@@ -384,6 +384,8 @@ impl super::AppBehavior {
 }
 
 fn render_message(ui: &mut egui::Ui, cache: &mut CommonMarkCache, message: &Message) {
+    use base64::prelude::*;
+
     match message {
         Message::User { content } => {
             let UserContent::Text(text) = content.first() else {
@@ -396,6 +398,10 @@ fn render_message(ui: &mut egui::Ui, cache: &mut CommonMarkCache, message: &Mess
             });
         }
         Message::Assistant { content, .. } => {
+            use regex::Regex;
+
+            let re = Regex::new(r"(?ms)```mermaid(.*)```").unwrap();
+
             let AssistantContent::Text(text) = content.first() else {
                 todo!();
             };
@@ -404,6 +410,57 @@ fn render_message(ui: &mut egui::Ui, cache: &mut CommonMarkCache, message: &Mess
                 ui.set_width(ui.available_width() * 0.75);
                 CommonMarkViewer::new().show(ui, cache, text.text());
             });
+
+            for (_, [diagram]) in re.captures_iter(text.text()).map(|m| m.extract()) {
+                ui.scope_builder(egui::UiBuilder::new().id_salt(diagram), |ui| {
+                    let enc = BASE64_URL_SAFE_NO_PAD.encode(diagram);
+
+                    // Would prefer to use SVGs but egui implementation is a bit buggy
+                    let url = format!(
+                        "https://mermaid.ink/img/{enc}?type=png&theme=forest&bgColor=888888&width={}",
+                        ui.available_width() as i32
+                    );
+                    let img = egui::Image::new(&url)
+                        .corner_radius(10)
+                        .fit_to_original_size(1.0)
+                        .bg_fill(egui::Color32::GRAY);
+                    let resp = ui
+                        .add(img)
+                        .on_hover_text_at_pointer(&url)
+                        .interact(egui::Sense::click());
+
+                    let payload = serde_json::to_string(&serde_json::json!({
+                        "code": diagram.to_string(),
+                        "mermaid": {"theme": "default"},
+                        "autoSync": true,
+                        "updateDiagram": false,
+                        "editorMode": "code",
+                    }))
+                    .unwrap_or_default();
+                    // ui.label(&payload);
+
+                    // Can't figure out the right compression settings for pako
+                    let enc = BASE64_URL_SAFE_NO_PAD.encode(payload);
+                    let edit_url = format!("https://mermaid.live/edit#base64:{enc}");
+                    // ui.label(&enc);
+
+                    resp.context_menu(|ui| {
+                        if ui.button("Open").clicked() {
+                            ui.ctx().open_url(egui::OpenUrl {
+                                url: url.clone(),
+                                new_tab: true,
+                            });
+                        }
+
+                        if ui.button("Edit").clicked() {
+                            ui.ctx().open_url(egui::OpenUrl {
+                                url: edit_url,
+                                new_tab: true,
+                            });
+                        }
+                    });
+                });
+            }
         }
     }
 }
