@@ -4,6 +4,7 @@ use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 use rig::{
     agent::Agent,
     client::{CompletionClient as _, ProviderClient as _},
+    message::Message,
     providers::ollama::{self, CompletionModel},
 };
 use rmcp::model::Tool;
@@ -29,6 +30,70 @@ pub struct Settings {
 
     #[serde(default)]
     pub autoscroll: bool,
+
+    #[serde(default)]
+    pub workflows: Vec<Workflow>,
+
+    #[serde(default)]
+    pub active_flow: Option<String>,
+}
+
+impl Settings {
+    pub fn get_workflow(&self) -> Option<&Workflow> {
+        let name = self.active_flow.as_ref()?;
+
+        self.workflows.iter().find(|it| it.name == *name)
+    }
+}
+
+#[skip_serializing_none]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
+pub struct Workstep {
+    #[serde(default)]
+    pub disabled: bool,
+
+    /// Override the workflow preamble for this step
+    #[serde(default)]
+    pub preamble: Option<String>,
+
+    /// Include the last `N` messages as context
+    #[serde(default)]
+    pub depth: Option<usize>,
+
+    // TODO: templating mechanism
+    pub prompt: String,
+}
+
+#[skip_serializing_none]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct Workflow {
+    pub name: String,
+
+    /// Only retain the final response in the chat history
+    #[serde(default)]
+    pub collapse: bool,
+
+    /// Override the global preamble
+    #[serde(default)]
+    pub preamble: Option<String>,
+
+    pub steps: Vec<Workstep>,
+}
+
+impl Default for Workflow {
+    fn default() -> Self {
+        Self {
+            name: Default::default(),
+            collapse: false,
+            preamble: None,
+            steps: vec![Workstep {
+                disabled: false,
+                preamble: None,
+                depth: None,
+                prompt: "{{prompt}}".to_string(),
+            }],
+        }
+    }
 }
 
 // TODO: preserve more data
@@ -43,6 +108,29 @@ impl LogEntry {
         &self.1
     }
 }
+
+#[derive(Debug, Clone)]
+pub enum ChatEntry {
+    Message(Message),
+    Aside {
+        workflow: String,
+        prompt: String,
+        collapsed: bool,
+        content: Vec<Message>,
+    },
+    Error(String),
+}
+
+impl From<Result<Message, String>> for ChatEntry {
+    fn from(value: Result<Message, String>) -> Self {
+        match value {
+            Ok(msg) => ChatEntry::Message(msg),
+            Err(err) => ChatEntry::Error(err),
+        }
+    }
+}
+
+pub type ChatHistory = Vec<ChatEntry>;
 
 #[derive(Clone)]
 pub struct LogChannelLayer(pub flume::Sender<LogEntry>);

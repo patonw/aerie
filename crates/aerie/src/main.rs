@@ -93,7 +93,6 @@ fn main() -> anyhow::Result<()> {
     // Our application state:
     let task_count = Arc::new(AtomicU16::new(0));
     let log_history = Arc::new(RwLock::new(Vec::<LogEntry>::new()));
-    let chat = Arc::new(RwLock::new(Vec::<_>::new()));
     let cache = CommonMarkCache::default();
     let prompt = Arc::new(RwLock::new(String::new()));
     let mut debounce = Instant::now() + Duration::from_secs(1);
@@ -133,7 +132,8 @@ fn main() -> anyhow::Result<()> {
         settings: settings.clone(),
         log_history: log_history.clone(),
         task_count: task_count.clone(),
-        chat: chat.clone(),
+        scratch: Default::default(),
+        session: Default::default(),
         cache,
         prompt: prompt.clone(),
         rt: rt.handle().clone(),

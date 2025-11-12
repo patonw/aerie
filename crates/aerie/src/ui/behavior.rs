@@ -8,7 +8,7 @@ use std::{
 };
 
 use super::{Pane, tiles};
-use crate::{LogEntry, Settings};
+use crate::{ChatHistory, LogEntry, Settings};
 
 // TODO: persist/restore sessions
 pub struct AppBehavior {
@@ -16,7 +16,8 @@ pub struct AppBehavior {
     pub settings: Arc<RwLock<Settings>>,
     pub task_count: Arc<AtomicU16>,
     pub log_history: Arc<RwLock<Vec<LogEntry>>>,
-    pub chat: Arc<RwLock<Vec<Result<Message, String>>>>,
+    pub scratch: Arc<RwLock<Vec<Result<Message, String>>>>,
+    pub session: Arc<RwLock<ChatHistory>>,
     pub cache: CommonMarkCache,
     pub prompt: Arc<RwLock<String>>,
     pub llm_agent: Arc<Agent<CompletionModel>>,
