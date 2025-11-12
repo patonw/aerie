@@ -9,6 +9,7 @@ rig-core = { git = "https://github.com/patonw/rig", branch = "fix-tool_choice" }
 
 [dependencies]
 anyhow = "1.0.100"
+base64 = "0.22.1"
 cached = "0.56.0"
 clap = { version = "4.5.48", features = ["env", "derive"] }
 dirs = "6.0.0"
@@ -16,7 +17,7 @@ eframe = "0.32.3"
 egui = "0.32.3"
 egui-phosphor = "0.10.0"
 egui_commonmark = "0.21.1"
-egui_extras = { version = "0.32.3", features = ["syntect"] }
+egui_extras = { version = "0.32.3", features = ["http", "image", "syntect"] }
 egui_tiles = "0.13.0"
 env_logger = "0.11.8"
 flume = { version = "0.11.1", features = ["async"] }
@@ -25,6 +26,7 @@ image = { version = "0.25.8", features = ["png"] }
 itertools = "0.14.0"
 log = "0.4.28"
 minijinja = { version = "2.11.0", features = ["loader"] }
+regex = "1.12.2"
 rig-core = { workspace = true, features = ["derive", "rmcp"] }
 rmcp = { version = "0.5.0", features = [
   "client",
