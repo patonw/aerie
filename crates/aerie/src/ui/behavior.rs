@@ -9,16 +9,15 @@ use std::{
 use uuid::Uuid;
 
 use super::{Pane, tiles};
-use crate::{AgentFactory, ChatHistory, LogEntry, Settings};
+use crate::{AgentFactory, LogEntry, Settings, chat::ChatSession};
 
-// TODO: persist/restore sessions
 pub struct AppBehavior {
     pub rt: tokio::runtime::Handle,
     pub settings: Arc<RwLock<Settings>>,
     pub task_count: Arc<AtomicU16>,
     pub log_history: Arc<RwLock<Vec<LogEntry>>>,
     pub scratch: Arc<RwLock<Vec<Result<Message, String>>>>,
-    pub session: Arc<RwLock<ChatHistory>>,
+    pub session: ChatSession,
     pub cache: CommonMarkCache,
     pub prompt: Arc<RwLock<String>>,
     pub agent_factory: AgentFactory,
@@ -55,8 +54,9 @@ impl egui_tiles::Behavior<Pane> for AppBehavior {
                 tiles::settings::settings_ui(ui, settings_rw.deref_mut());
             }
             Pane::Navigator => {
-                let mut session_rw = self.session.write().unwrap();
-                tiles::navigator::nav_ui(ui, &mut session_rw);
+                let _ = self.session.update(|history| {
+                    tiles::navigator::nav_ui(ui, history);
+                });
             }
             Pane::Chat => {
                 self.chat_ui(ui);
