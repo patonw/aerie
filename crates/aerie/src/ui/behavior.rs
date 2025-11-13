@@ -35,6 +35,7 @@ impl egui_tiles::Behavior<Pane> for AppBehavior {
             Pane::Navigator => "Branches".into(),
             Pane::Chat => "Chat".into(),
             Pane::Logs => "Logs".into(),
+            Pane::Workflow => "Workflow".into(),
         }
     }
 
@@ -59,6 +60,9 @@ impl egui_tiles::Behavior<Pane> for AppBehavior {
             Pane::Logs => {
                 let logs_r = self.log_history.read().unwrap();
                 tiles::logview::log_ui(ui, logs_r.as_ref());
+            }
+            Pane::Workflow => {
+                self.workflow_ui(ui);
             }
         };
 
