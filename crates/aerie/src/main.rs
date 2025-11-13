@@ -1,3 +1,4 @@
+use clap::Parser as _;
 use eframe::egui;
 use egui_commonmark::*;
 use egui_tiles::{LinearDir, TileId};
@@ -11,11 +12,45 @@ use tracing_subscriber::{
 
 use aerie::{
     AgentFactory, LogChannelLayer, LogEntry, Settings, ToolProvider, Toolbox, Toolset,
+    chat::ChatSession,
+    config::{Args, Command, SessionCommand},
     ui::{AppBehavior, Pane},
 };
 
 fn main() -> anyhow::Result<()> {
     let (log_tx, log_rx) = flume::unbounded::<LogEntry>();
+    let args = Args::parse();
+
+    let sessions_dir = dirs::data_dir()
+        .unwrap_or(".data/share".into())
+        .join("aerie/sessions");
+    let _ = std::fs::create_dir_all(&sessions_dir);
+
+    if let Some(Command::Session {
+        subcmd: SessionCommand::List,
+    }) = args.command
+    {
+        if let Ok(read_dir) = std::fs::read_dir(&sessions_dir) {
+            for path in read_dir {
+                let Ok(dirent) = path else { continue };
+                let pathbuf = dirent.path();
+                let Some(stem) = pathbuf.file_stem() else {
+                    continue;
+                };
+
+                println!("{}", stem.display());
+            }
+        }
+
+        return Ok(());
+    }
+
+    // TODO: ensure writable
+    let session_path = args
+        .session
+        .map(|s| sessions_dir.join(s).with_extension("yml"));
+
+    let session = ChatSession::load(session_path.as_ref());
 
     tracing_subscriber::registry()
         .with(
@@ -127,7 +162,7 @@ fn main() -> anyhow::Result<()> {
         log_history: log_history.clone(),
         task_count: task_count.clone(),
         scratch: Default::default(),
-        session: Default::default(),
+        session,
         cache,
         prompt: prompt.clone(),
         rt: rt.handle().clone(),

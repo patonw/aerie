@@ -36,10 +36,12 @@ impl super::AppBehavior {
 
                             ui.add_space(16.0);
 
-                            if ui.button("Clear").clicked() {
-                                let mut chat_rw = self.session.write().unwrap();
-                                chat_rw.clear();
-                            }
+                            // Can branch from beginning to have an empty history
+                            // TODO: support branch deletion instead
+                            // if ui.button("Clear").clicked() {
+                            //     let mut chat_rw = self.session.as_ref().write().unwrap();
+                            //     chat_rw.clear();
+                            // }
                         });
                     });
 
@@ -68,46 +70,48 @@ impl super::AppBehavior {
                 };
 
                 let cache = &mut self.cache;
-                let session_r = self.session.read().unwrap();
-                for msg in session_r.iter() {
-                    match &msg.content {
-                        ChatContent::Message(message) => {
-                            // TODO: only on user prompt
-                            if let Message::User { .. } = message
-                                && ui.button(GIT_BRANCH).clicked()
-                            {
-                                self.branch_point = Some(msg.id);
-                            }
-                            render_message(ui, cache, message);
-                        }
-                        ChatContent::Aside {
-                            workflow,
-                            prompt: _,
-                            collapsed,
-                            content,
-                        } => {
-                            let resp = egui::CollapsingHeader::new(format!("Workflow: {workflow}"))
-                                .id_salt(msg.id)
-                                .default_open(!collapsed)
-                                .show(ui, |ui| {
-                                    for message in content {
-                                        render_message(ui, cache, message);
-                                    }
-                                });
-                            if resp.fully_closed()
-                                && let Some(message) = content.last()
-                            {
+                self.session.view(|session_r| {
+                    for msg in session_r.iter() {
+                        match &msg.content {
+                            ChatContent::Message(message) => {
+                                // TODO: only on user prompt
+                                if let Message::User { .. } = message
+                                    && ui.button(GIT_BRANCH).clicked()
+                                {
+                                    self.branch_point = Some(msg.id);
+                                }
                                 render_message(ui, cache, message);
                             }
-                        }
-                        ChatContent::Error(err) => {
-                            error_bubble(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.label(egui::RichText::new(err).color(egui::Color32::RED));
-                            });
+                            ChatContent::Aside {
+                                workflow,
+                                prompt: _,
+                                collapsed,
+                                content,
+                            } => {
+                                let resp =
+                                    egui::CollapsingHeader::new(format!("Workflow: {workflow}"))
+                                        .id_salt(msg.id)
+                                        .default_open(!collapsed)
+                                        .show(ui, |ui| {
+                                            for message in content {
+                                                render_message(ui, cache, message);
+                                            }
+                                        });
+                                if resp.fully_closed()
+                                    && let Some(message) = content.last()
+                                {
+                                    render_message(ui, cache, message);
+                                }
+                            }
+                            ChatContent::Error(err) => {
+                                error_bubble(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.label(egui::RichText::new(err).color(egui::Color32::RED));
+                                });
+                            }
                         }
                     }
-                }
+                });
 
                 let chat_r = self.scratch.read().unwrap();
                 for msg in chat_r.iter() {
@@ -157,23 +161,22 @@ impl super::AppBehavior {
         if let Some(branch_point) = self.branch_point {
             let mut submit = false;
             let unique_name = !self.dest_branch.is_empty() && {
-                let session_r = self.session.read().unwrap();
-                !session_r.branches.contains_key(&self.dest_branch)
+                self.session
+                    .view(|session_r| !session_r.branches.contains_key(&self.dest_branch))
             };
 
             // Copy prompt from branch point into chat input
-            {
-                let session_r = self.session.read().unwrap();
+            self.session.view(|hist| {
                 let mut prompt_w = self.prompt.write().unwrap();
                 if prompt_w.is_empty()
-                    && let Some(entry) = session_r.store.get(&branch_point)
+                    && let Some(entry) = hist.store.get(&branch_point)
                     && let ChatContent::Message(msg) = &entry.content
                     && let Message::User { content } = msg
                     && let UserContent::Text(text) = content.first()
                 {
                     *prompt_w = text.text().to_string();
                 }
-            }
+            });
 
             let modal = egui::Modal::new(egui::Id::new("Branch dialog")).show(ui.ctx(), |ui| {
                 ui.set_width(250.0);
@@ -210,12 +213,13 @@ impl super::AppBehavior {
                 }
 
                 if submit {
-                    let mut session_rw = self.session.write().unwrap();
-                    let parent = session_rw.find_parent(branch_point);
+                    let _ = self.session.update(|session_rw| {
+                        let parent = session_rw.find_parent(branch_point);
 
-                    let name = std::mem::take(&mut self.dest_branch);
-                    session_rw.switch_branch(&name, parent);
-                    ui.close();
+                        let name = std::mem::take(&mut self.dest_branch);
+                        session_rw.switch_branch(&name, parent);
+                        ui.close();
+                    });
                 }
             });
 
@@ -233,10 +237,7 @@ impl super::AppBehavior {
         let task_count_ = self.task_count.clone();
         let agent_factory_ = self.agent_factory.clone();
         let log_history_ = self.log_history.clone();
-        let branch = {
-            let session_r = self.session.read().unwrap();
-            session_r.head.clone()
-        };
+        let branch = self.session.view(|hist| hist.head.clone());
 
         let workflow = {
             let settings_r = self.settings.read().unwrap();
@@ -282,14 +283,12 @@ impl super::AppBehavior {
                     continue;
                 };
 
-                let mut history = {
+                let mut history = session_.view(|session| {
                     let mut buffer: VecDeque<&Message> = if let Some(depth) = workstep.depth {
                         VecDeque::with_capacity(depth)
                     } else {
                         VecDeque::new()
                     };
-
-                    let session = session_.write().unwrap();
 
                     for entry in session.iter() {
                         match &entry.content {
@@ -315,7 +314,7 @@ impl super::AppBehavior {
 
                     // Laziness avoids cloning older items we won't use
                     buffer.into_iter().cloned().collect::<Vec<_>>()
-                };
+                });
 
                 let agent = agent_factory_.agent(&workstep);
                 let request = PromptRequest::new(&agent, &prompt)
@@ -343,36 +342,38 @@ impl super::AppBehavior {
                 }
             }
 
-            let mut session = session_.write().unwrap();
             let scratch = std::mem::take(&mut *scratch_.write().unwrap());
-            if scratch.len() <= 2 {
-                session.extend(scratch.into_iter().map(|it| it.into()), branch.as_ref());
-            } else {
-                use itertools::{Either, Itertools};
+            let _ = session_.update(|history| {
+                if scratch.len() <= 2 {
+                    history.extend(scratch.into_iter().map(|it| it.into()), branch.as_ref());
+                    // session.extend(scratch.into_iter().map(|it| it.into()), branch.as_ref());
+                } else {
+                    use itertools::{Either, Itertools};
 
-                // Split scratch so messages can be collapsed but errors will appear inline
-                let mut iter = scratch.into_iter();
-                if let Some(it) = iter.next() {
-                    session.push(it.into(), branch.as_ref());
+                    // Split scratch so messages can be collapsed but errors will appear inline
+                    let mut iter = scratch.into_iter();
+                    if let Some(it) = iter.next() {
+                        history.push(it.into(), branch.as_ref());
+                    }
+
+                    let (content, errors): (Vec<_>, Vec<_>) = iter.partition_map(|r| match r {
+                        Ok(v) => Either::Left(v),
+                        Err(v) => Either::Right(v),
+                    });
+
+                    history.push(
+                        ChatContent::Aside {
+                            workflow: workflow.name,
+                            prompt: user_prompt,
+                            collapsed: true,
+                            content,
+                        },
+                        branch.as_ref(),
+                    );
+
+                    history.extend(errors.into_iter().map(ChatContent::Error), branch.as_ref());
                 }
-
-                let (content, errors): (Vec<_>, Vec<_>) = iter.partition_map(|r| match r {
-                    Ok(v) => Either::Left(v),
-                    Err(v) => Either::Right(v),
-                });
-
-                session.push(
-                    ChatContent::Aside {
-                        workflow: workflow.name,
-                        prompt: user_prompt,
-                        collapsed: true,
-                        content,
-                    },
-                    branch.as_ref(),
-                );
-
-                session.extend(errors.into_iter().map(ChatContent::Error), branch.as_ref());
-            }
+            });
 
             task_count_.fetch_sub(1, Ordering::Relaxed);
             tracing::info!(
