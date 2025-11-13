@@ -160,9 +160,9 @@ impl super::AppBehavior {
 
         if let Some(branch_point) = self.branch_point {
             let mut submit = false;
-            let unique_name = !self.dest_branch.is_empty() && {
+            let unique_name = !self.new_branch.is_empty() && {
                 self.session
-                    .view(|session_r| !session_r.branches.contains_key(&self.dest_branch))
+                    .view(|session_r| !session_r.branches.contains_key(&self.new_branch))
             };
 
             // Copy prompt from branch point into chat input
@@ -184,7 +184,7 @@ impl super::AppBehavior {
                 ui.heading("Create Branch");
 
                 ui.label("Name:");
-                ui.text_edit_singleline(&mut self.dest_branch)
+                ui.text_edit_singleline(&mut self.new_branch)
                     .request_focus();
 
                 ui.separator();
@@ -216,7 +216,7 @@ impl super::AppBehavior {
                     let _ = self.session.update(|session_rw| {
                         let parent = session_rw.find_parent(branch_point);
 
-                        let name = std::mem::take(&mut self.dest_branch);
+                        let name = std::mem::take(&mut self.new_branch);
                         session_rw.switch_branch(&name, parent);
                         ui.close();
                     });

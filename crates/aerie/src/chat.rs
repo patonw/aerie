@@ -266,4 +266,98 @@ impl ChatHistory {
 
         buffer
     }
+
+    pub fn rename_branch(&mut self, branch: &str, new_name: &str) -> Result<(), String> {
+        let Some(head_id) = self.branches.remove(branch) else {
+            return Err("Branch does not exist".into());
+        };
+
+        self.branches.insert(new_name.to_string(), head_id);
+        if self.head.as_deref() == Some(branch) {
+            self.head = Some(new_name.to_string());
+        }
+
+        let mut cursor = head_id;
+        loop {
+            let Some(node) = self.store.get_mut(&cursor) else {
+                break;
+            };
+
+            if node.branch != branch {
+                break;
+            }
+
+            node.branch = new_name.to_string();
+
+            if let Some(parent) = &node.parent {
+                cursor = *parent;
+            } else {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn promote_branch(&mut self, branch: &str) {
+        let Some(head_id) = self.branches.get(branch) else {
+            return;
+        };
+
+        let mut cursor = *head_id;
+        let mut ancestor: Option<String> = None;
+
+        // crawl up tree until first ancestor. Rename until different ancestor.
+        loop {
+            let Some(node) = self.store.get_mut(&cursor) else {
+                break;
+            };
+
+            dbg!((&cursor, &ancestor, &node));
+
+            if let Some(target) = &ancestor {
+                if &node.branch != target {
+                    break;
+                }
+
+                node.branch = branch.to_string();
+            } else if node.branch != branch {
+                ancestor = Some(node.branch.clone());
+                node.branch = branch.to_string();
+            }
+
+            if let Some(parent) = &node.parent {
+                cursor = *parent;
+            } else {
+                break;
+            }
+        }
+    }
+
+    pub fn prune_branch(&mut self, branch: &str) {
+        let Some(head_id) = self.branches.remove(branch) else {
+            return;
+        };
+        let mut cursor = head_id;
+        loop {
+            let Some(node) = self.store.get(&cursor) else {
+                break;
+            };
+
+            if node.branch != branch {
+                if self.head.as_deref() == Some(branch) {
+                    self.head = Some(node.branch.clone());
+                }
+                break;
+            }
+
+            let node = self.store.remove(&cursor).unwrap();
+
+            if let Some(parent) = &node.parent {
+                cursor = *parent;
+            } else {
+                break;
+            }
+        }
+    }
 }

@@ -168,7 +168,8 @@ fn main() -> anyhow::Result<()> {
         rt: rt.handle().clone(),
         agent_factory,
         branch_point: None,
-        dest_branch: String::new(),
+        new_branch: String::new(),
+        rename_branch: None,
         create_toolset: None,
         edit_toolset: String::new(),
     };
