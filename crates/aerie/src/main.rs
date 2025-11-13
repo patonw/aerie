@@ -114,7 +114,11 @@ fn main() -> anyhow::Result<()> {
     };
 
     let mut tiles = egui_tiles::Tiles::default();
-    let tabs: Vec<TileId> = vec![tiles.insert_pane(Pane::Chat), tiles.insert_pane(Pane::Logs)];
+    let tabs: Vec<TileId> = vec![
+        tiles.insert_pane(Pane::Chat),
+        tiles.insert_pane(Pane::Logs),
+        tiles.insert_pane(Pane::Workflow),
+    ];
     let content_tabs: TileId = tiles.insert_tab_tile(tabs);
 
     let tabs = vec![
@@ -143,6 +147,10 @@ fn main() -> anyhow::Result<()> {
         dest_branch: String::new(),
     };
 
+    let rt_ = rt.handle().clone();
+    let settings_ = settings.clone();
+    let settings_path_ = settings_path.clone();
+
     eframe::run_simple_native("My egui App", options, move |ctx, _frame| {
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
@@ -153,34 +161,42 @@ fn main() -> anyhow::Result<()> {
 
         let dirty = {
             // Hmmm, should we change to only fire after input has stopped for a duration?
-            let settings_r = settings.read().unwrap();
+            let settings_r = settings_.read().unwrap();
             *settings_r != *stored_settings
         };
 
         if dirty && debounce < Instant::now() {
             // This will apply/save settings every n seconds *while* or *after* they have been changed
+            let settings__ = settings_.clone();
+            let settings_path_ = settings_path_.clone();
             debounce = Instant::now() + Duration::from_secs(5);
-            let settings_ = settings.clone();
-            let settings_path_ = settings_path.clone();
 
             log::info!("Settings changed, reloading agent");
 
-            rt.spawn(async move {
-                use tokio::io::AsyncWriteExt as _;
-                let text = {
-                    let settings_r = settings_.read().unwrap();
-                    serde_yml::to_string(&*settings_r).unwrap()
-                };
-
-                let mut file = tokio::fs::File::create(settings_path_).await.unwrap();
-                file.write_all(text.as_bytes()).await.unwrap();
+            rt_.spawn(async move {
+                save_settings(settings__, settings_path_).await;
             });
 
-            let settings_r = settings.read().unwrap();
+            let settings_r = settings_.read().unwrap();
             stored_settings = Arc::new(settings_r.clone());
         }
     })
     .map_err(|e| anyhow::anyhow!("I can't {e:?}"))?;
 
+    rt.handle().block_on(async move {
+        save_settings(settings, settings_path).await;
+    });
+
     Ok(())
+}
+
+async fn save_settings(settings: Arc<RwLock<Settings>>, settings_path: std::path::PathBuf) {
+    use tokio::io::AsyncWriteExt as _;
+    let text = {
+        let settings_r = settings.read().unwrap();
+        serde_yml::to_string(&*settings_r).unwrap()
+    };
+
+    let mut file = tokio::fs::File::create(settings_path).await.unwrap();
+    file.write_all(text.as_bytes()).await.unwrap();
 }

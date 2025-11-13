@@ -101,7 +101,7 @@ impl Default for Workflow {
                 temperature: None,
                 preamble: None,
                 depth: None,
-                prompt: "{{prompt}}".to_string(),
+                prompt: "{{user_prompt}}".to_string(),
             }],
         }
     }
