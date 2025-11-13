@@ -24,7 +24,8 @@ pub struct AppBehavior {
 
     // TODO: decompose
     pub branch_point: Option<Uuid>,
-    pub dest_branch: String,
+    pub new_branch: String,
+    pub rename_branch: Option<String>,
 
     pub create_toolset: Option<String>,
     pub edit_toolset: String,
@@ -54,9 +55,7 @@ impl egui_tiles::Behavior<Pane> for AppBehavior {
                 tiles::settings::settings_ui(ui, settings_rw.deref_mut());
             }
             Pane::Navigator => {
-                let _ = self.session.update(|history| {
-                    tiles::navigator::nav_ui(ui, history);
-                });
+                self.nav_ui(ui);
             }
             Pane::Chat => {
                 self.chat_ui(ui);
