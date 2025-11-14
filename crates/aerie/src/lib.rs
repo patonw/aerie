@@ -25,6 +25,8 @@ pub mod ui;
 pub use chat::{ChatContent, ChatEntry, ChatHistory, ChatSession};
 pub use config::{Settings, ToolSpec, Toolset};
 
+use crate::config::ConfigExt as _;
+
 /// A single step in a workflow
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
@@ -160,6 +162,7 @@ impl ToolProvider {
     pub async fn from_spec(spec: &ToolSpec) -> anyhow::Result<Self> {
         match spec {
             ToolSpec::MCP {
+                enabled,
                 preface,
                 dir,
                 command,
@@ -239,6 +242,7 @@ impl Toolbox {
 
 #[derive(Clone)]
 pub struct AgentFactory {
+    pub rt: tokio::runtime::Handle,
     pub settings: Arc<std::sync::RwLock<Settings>>,
     pub toolbox: Toolbox,
 }
@@ -276,5 +280,32 @@ impl AgentFactory {
         }
 
         builder.build()
+    }
+
+    // TODO: Let's save errors to display in tool tab instead of aborting
+    pub fn reload_tools(&mut self) -> anyhow::Result<()> {
+        let mut toolbox = Toolbox::default();
+
+        let providers = self.settings.view(|settings| {
+            settings
+                .tools
+                .provider
+                .iter()
+                .filter(|(_, spec)| matches!(spec, ToolSpec::MCP { enabled, .. } if *enabled))
+                .map(|(name, spec)| (name.clone(), spec.clone()))
+                .collect_vec()
+        });
+
+        for (tool_name, tool_spec) in providers {
+            let toolkit = self
+                .rt
+                .block_on(async move { ToolProvider::from_spec(&tool_spec).await })?;
+
+            toolbox.with_provider(&tool_name, toolkit);
+        }
+
+        self.toolbox = toolbox;
+
+        Ok(())
     }
 }

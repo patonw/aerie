@@ -2,6 +2,7 @@ use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
 use rig::message::Message;
+use rmcp::model::Tool;
 use std::{
     ops::DerefMut,
     sync::{Arc, RwLock, atomic::AtomicU16},
@@ -9,7 +10,17 @@ use std::{
 use uuid::Uuid;
 
 use super::{Pane, tiles};
-use crate::{AgentFactory, LogEntry, Settings, chat::ChatSession};
+use crate::{AgentFactory, LogEntry, Settings, ToolSpec, chat::ChatSession};
+
+pub enum ToolEditorState {
+    EditProvider {
+        original: Option<(String, ToolSpec)>,
+        modified: (String, ToolSpec),
+    },
+    ViewTool {
+        tool: Tool,
+    },
+}
 
 pub struct AppBehavior {
     pub rt: tokio::runtime::Handle,
@@ -29,6 +40,8 @@ pub struct AppBehavior {
 
     pub create_toolset: Option<String>,
     pub edit_toolset: String,
+
+    pub tool_editor: Option<ToolEditorState>,
 }
 
 impl egui_tiles::Behavior<Pane> for AppBehavior {
