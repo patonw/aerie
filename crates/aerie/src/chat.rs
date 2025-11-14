@@ -114,7 +114,6 @@ impl Deref for ChatEntry {
 #[skip_serializing_none]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ChatHistory {
-    pub counter: usize,
     pub store: BTreeMap<Uuid, ChatEntry>,
     pub branches: BTreeMap<String, Uuid>,
     pub head: Option<String>,

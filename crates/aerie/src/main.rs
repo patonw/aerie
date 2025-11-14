@@ -101,16 +101,6 @@ fn main() -> anyhow::Result<()> {
             .insert("all".into(), Toolset::default());
     }
 
-    let mut toolbox = Toolbox::default();
-
-    for (tool_name, tool_spec) in settings.tools.provider.iter() {
-        let toolkit = rt
-            .handle()
-            .block_on(async move { ToolProvider::from_spec(tool_spec).await })?;
-
-        toolbox.with_provider(tool_name, toolkit);
-    }
-
     let mut stored_settings = Arc::new(settings.clone());
     let settings = Arc::new(RwLock::new(settings));
 
@@ -131,10 +121,13 @@ fn main() -> anyhow::Result<()> {
         }
     });
 
-    let agent_factory = AgentFactory {
+    let mut agent_factory = AgentFactory {
+        rt: rt.handle().to_owned(),
         settings: settings.clone(),
-        toolbox,
+        toolbox: Toolbox::default(),
     };
+
+    agent_factory.reload_tools()?;
 
     let mut tiles = egui_tiles::Tiles::default();
     let tabs: Vec<TileId> = vec![
@@ -172,6 +165,7 @@ fn main() -> anyhow::Result<()> {
         rename_branch: None,
         create_toolset: None,
         edit_toolset: String::new(),
+        tool_editor: None,
     };
 
     let rt_ = rt.handle().clone();

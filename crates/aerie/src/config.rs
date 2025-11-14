@@ -3,6 +3,7 @@ use glob::{Pattern, PatternError};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
+    sync::{Arc, RwLock},
 };
 
 use rmcp::model::Tool;
@@ -72,6 +73,25 @@ impl Settings {
     }
 }
 
+pub trait ConfigExt {
+    fn view<T>(&self, cb: impl FnMut(&Settings) -> T) -> T;
+
+    fn update<T>(&self, cb: impl FnOnce(&mut Settings) -> T) -> T;
+}
+
+impl ConfigExt for Arc<RwLock<Settings>> {
+    fn view<T>(&self, mut cb: impl FnMut(&Settings) -> T) -> T {
+        let settings = self.read().unwrap();
+        cb(&settings)
+    }
+
+    // TODO: handle auto-save
+    fn update<T>(&self, cb: impl FnOnce(&mut Settings) -> T) -> T {
+        let mut settings = self.write().unwrap();
+        cb(&mut settings)
+    }
+}
+
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Clone)]
 pub struct ToolSettings {
@@ -85,11 +105,32 @@ pub struct ToolSettings {
 #[serde(tag = "type")]
 pub enum ToolSpec {
     MCP {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        enabled: bool,
+
+        #[serde(default)]
         preface: Option<String>,
+
+        #[serde(default)]
         dir: Option<PathBuf>,
+
         command: String,
+
+        #[serde(default)]
         args: Vec<String>,
     },
+}
+
+impl Default for ToolSpec {
+    fn default() -> Self {
+        ToolSpec::MCP {
+            enabled: false,
+            preface: None,
+            dir: None,
+            command: String::new(),
+            args: Vec::new(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
