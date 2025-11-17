@@ -7,10 +7,10 @@ use itertools::Itertools;
 use crate::{
     Settings, ToolProvider, ToolSpec, Toolset,
     config::ConfigExt as _,
-    ui::{behavior::ToolEditorState, toggled_field},
+    ui::{state::ToolEditorState, toggled_field},
 };
 
-impl super::AppBehavior {
+impl super::AppState {
     pub fn toolset_ui(&mut self, ui: &mut egui::Ui) {
         let language = "json";
         let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());

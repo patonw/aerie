@@ -1,7 +1,7 @@
 use egui_phosphor::regular::{PENCIL, ROCKET, TRASH};
 use std::collections::BTreeSet;
 
-impl super::AppBehavior {
+impl super::AppState {
     pub fn nav_ui(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {

@@ -11,10 +11,10 @@ use tracing_subscriber::{
 };
 
 use aerie::{
-    AgentFactory, LogChannelLayer, LogEntry, Settings, ToolProvider, Toolbox, Toolset,
+    AgentFactory, LogChannelLayer, LogEntry, Settings, Toolbox, Toolset,
     chat::ChatSession,
     config::{Args, Command, SessionCommand},
-    ui::{AppBehavior, Pane},
+    ui::{AppState, Pane},
 };
 
 fn main() -> anyhow::Result<()> {
@@ -133,7 +133,7 @@ fn main() -> anyhow::Result<()> {
     let tabs: Vec<TileId> = vec![
         tiles.insert_pane(Pane::Chat),
         tiles.insert_pane(Pane::Logs),
-        tiles.insert_pane(Pane::Workflow),
+        tiles.insert_pane(Pane::Pipeline),
         tiles.insert_pane(Pane::Tools),
     ];
     let content_tabs: TileId = tiles.insert_tab_tile(tabs);
@@ -150,7 +150,7 @@ fn main() -> anyhow::Result<()> {
     let root = tiles.insert_container(split);
 
     let mut tree = egui_tiles::Tree::new("my_tree", root, tiles);
-    let mut behavior = AppBehavior {
+    let mut behavior = AppState {
         settings: settings.clone(),
         log_history: log_history.clone(),
         task_count: task_count.clone(),

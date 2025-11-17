@@ -1,17 +1,17 @@
 use eframe::egui;
 use egui::WidgetText;
 
-mod behavior;
+mod state;
 mod tiles;
 
-pub use behavior::AppBehavior;
+pub use state::AppState;
 
 pub enum Pane {
     Settings,
     Navigator,
     Chat,
     Logs,
-    Workflow,
+    Pipeline,
     Tools,
 }
 

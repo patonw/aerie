@@ -22,7 +22,7 @@ pub enum ToolEditorState {
     },
 }
 
-pub struct AppBehavior {
+pub struct AppState {
     pub rt: tokio::runtime::Handle,
     pub settings: Arc<RwLock<Settings>>,
     pub task_count: Arc<AtomicU16>,
@@ -44,14 +44,14 @@ pub struct AppBehavior {
     pub tool_editor: Option<ToolEditorState>,
 }
 
-impl egui_tiles::Behavior<Pane> for AppBehavior {
+impl egui_tiles::Behavior<Pane> for AppState {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> WidgetText {
         match pane {
             Pane::Settings => "Settings".into(),
             Pane::Navigator => "Branches".into(),
             Pane::Chat => "Chat".into(),
             Pane::Logs => "Logs".into(),
-            Pane::Workflow => "Workflow".into(),
+            Pane::Pipeline => "Pipeline".into(),
             Pane::Tools => "Tools".into(),
         }
     }
@@ -77,8 +77,8 @@ impl egui_tiles::Behavior<Pane> for AppBehavior {
                 let logs_r = self.log_history.read().unwrap();
                 tiles::logview::log_ui(ui, logs_r.as_ref());
             }
-            Pane::Workflow => {
-                self.workflow_ui(ui);
+            Pane::Pipeline => {
+                self.pipeline_ui(ui);
             }
             Pane::Tools => {
                 self.toolset_ui(ui);

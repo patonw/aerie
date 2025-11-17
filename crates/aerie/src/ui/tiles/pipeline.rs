@@ -2,31 +2,31 @@ use eframe::egui;
 use itertools::Itertools;
 use std::collections::BTreeSet;
 
-use crate::{Workflow, Workstep, ui::toggled_field};
+use crate::{Pipeline, Workstep, ui::toggled_field};
 
-impl super::AppBehavior {
-    pub fn workflow_ui(&mut self, ui: &mut egui::Ui) {
+impl super::AppState {
+    pub fn pipeline_ui(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default().show_inside(ui, |ui| {
             let mut settings_rw = self.settings.write().unwrap();
 
             if ui.button("+ New").clicked() {
                 let existing = settings_rw
-                    .workflows
+                    .pipelines
                     .iter()
                     .map(|it| it.name.clone())
                     .collect::<BTreeSet<_>>();
 
                 let mut counter = 0;
                 let name = loop {
-                    let name = format!("New Workflow {counter:04}");
+                    let name = format!("New pipeline {counter:04}");
                     if !existing.contains(&name) {
                         break name;
                     }
                     counter += 1;
                 };
 
-                settings_rw.active_flow = Some(name.clone());
-                settings_rw.workflows.push(Workflow {
+                settings_rw.automation = Some(name.clone());
+                settings_rw.pipelines.push(Pipeline {
                     name,
                     ..Default::default()
                 });
@@ -34,24 +34,24 @@ impl super::AppBehavior {
 
             let toolsets = settings_rw.tools.toolset.keys().cloned().collect_vec();
 
-            ui.add_enabled_ui(settings_rw.active_flow.is_some(), |ui| {
-                let workflow_name = settings_rw.active_flow.to_owned().unwrap_or_default();
-                if let Some(workflow) = settings_rw
-                    .workflows
+            ui.add_enabled_ui(settings_rw.automation.is_some(), |ui| {
+                let pipeline_name = settings_rw.automation.to_owned().unwrap_or_default();
+                if let Some(pipeline) = settings_rw
+                    .pipelines
                     .iter_mut()
-                    .find(|it| it.name == workflow_name)
+                    .find(|it| it.name == pipeline_name)
                 {
                     let mut name_changed = false;
-                    let mut checked = workflow.preamble.is_some();
-                    let mut value = workflow.preamble.to_owned().unwrap_or_default();
+                    let mut checked = pipeline.preamble.is_some();
+                    let mut value = pipeline.preamble.to_owned().unwrap_or_default();
 
-                    egui::Grid::new("workflow settings")
+                    egui::Grid::new("pipeline settings")
                         .num_columns(2)
                         .striped(true)
                         .show(ui, |ui| {
-                            ui.label("Name").on_hover_text("Name of the workflow");
+                            ui.label("Name").on_hover_text("Name of the pipeline");
                             name_changed =
-                                ui.text_edit_singleline(&mut workflow.name).changed();
+                                ui.text_edit_singleline(&mut pipeline.name).changed();
                             ui.end_row();
 
                             ui.label("Preamble").on_hover_text("Optionally, override the system preamble.\nIf enabled and empty, then no preamble is used.");
@@ -62,16 +62,16 @@ impl super::AppBehavior {
                     if checked {
                         ui.add(
                             egui::TextEdit::multiline(&mut value)
-                                .hint_text("Workflow specific preamble"),
+                                .hint_text("pipeline specific preamble"),
                         );
                     }
                     // ui.add_visible(checked, egui::TextEdit::multiline(&mut value));
 
-                    workflow.preamble = if checked { Some(value) } else { None };
+                    pipeline.preamble = if checked { Some(value) } else { None };
 
                     ui.separator();
                     ui.heading("Steps");
-                    for (i, step) in workflow.steps.iter_mut().enumerate() {
+                    for (i, step) in pipeline.steps.iter_mut().enumerate() {
                         egui::Frame::new()
                             .stroke(egui::Stroke::new(1.0, egui::Color32::GRAY))
                             .corner_radius(4)
@@ -147,11 +147,11 @@ impl super::AppBehavior {
                             });
                     }
                     if ui.button("+ New step").clicked() {
-                        workflow.steps.push(Workstep::default());
+                        pipeline.steps.push(Workstep::default());
                     }
 
                     if name_changed {
-                        settings_rw.active_flow = Some(workflow.name.clone());
+                        settings_rw.automation = Some(pipeline.name.clone());
                     }
                 }
             });
