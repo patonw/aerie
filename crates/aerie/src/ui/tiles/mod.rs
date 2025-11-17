@@ -4,5 +4,6 @@ pub mod navigator;
 pub mod pipeline;
 pub mod settings;
 pub mod toolset;
+pub mod workflow;
 
 use super::AppState;
