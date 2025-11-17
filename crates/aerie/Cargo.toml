@@ -13,10 +13,12 @@ arc-swap = { version = "1.7.1", features = ["serde"] }
 base64 = "0.22.1"
 cached = "0.56.0"
 clap = { version = "4.5.48", features = ["env", "derive"] }
+delegate = "0.13.5"
 dirs = "6.0.0"
 eframe = "0.32.3"
 egui = "0.32.3"
 egui-phosphor = "0.10.0"
+egui-snarl = { version = "0.8.0", features = ["serde"] }
 egui_commonmark = "0.21.1"
 egui_extras = { version = "0.32.3", features = ["http", "image", "syntect"] }
 egui_tiles = "0.13.0"
@@ -26,6 +28,7 @@ glob = "0.3.3"
 im = { version = "15.1.0", features = ["serde", "debug"] }
 image = { version = "0.25.8", features = ["png"] }
 itertools = "0.14.0"
+kinded = "0.4.0"
 log = "0.4.28"
 minijinja = { version = "2.11.0", features = ["loader"] }
 regex = "1.12.2"
@@ -49,4 +52,5 @@ tracing-subscriber = { version = "0.3.20", features = [
   "json",
   "registry",
 ] }
+typed-builder = "0.23.1"
 uuid = { version = "1.18.1", features = ["serde", "v4"] }

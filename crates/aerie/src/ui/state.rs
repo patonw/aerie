@@ -1,6 +1,7 @@
 use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
+use egui_snarl::{Snarl, ui::SnarlStyle};
 use rig::message::Message;
 use rmcp::model::Tool;
 use std::{
@@ -10,7 +11,12 @@ use std::{
 use uuid::Uuid;
 
 use super::{Pane, tiles};
-use crate::{AgentFactory, LogEntry, Settings, ToolSpec, chat::ChatSession, utils::ErrorList};
+use crate::{
+    AgentFactory, LogEntry, Settings, ToolSpec,
+    chat::ChatSession,
+    utils::ErrorList,
+    workflow::{WorkNode, store::WorkflowStore},
+};
 
 pub enum ToolEditorState {
     EditProvider {
@@ -43,6 +49,11 @@ pub struct AppState {
     pub edit_toolset: String,
 
     pub tool_editor: Option<ToolEditorState>,
+
+    pub edit_workflow: Option<String>,
+    pub workflows: WorkflowStore,
+    pub snarl: Arc<tokio::sync::RwLock<Snarl<WorkNode>>>,
+    pub snarl_style: SnarlStyle,
 }
 
 impl egui_tiles::Behavior<Pane> for AppState {
@@ -54,6 +65,7 @@ impl egui_tiles::Behavior<Pane> for AppState {
             Pane::Logs => "Logs".into(),
             Pane::Pipeline => "Pipeline".into(),
             Pane::Tools => "Tools".into(),
+            Pane::Workflow => "Workflow".into(),
         }
     }
 
@@ -83,6 +95,9 @@ impl egui_tiles::Behavior<Pane> for AppState {
             }
             Pane::Tools => {
                 self.toolset_ui(ui);
+            }
+            Pane::Workflow => {
+                self.workflow_ui(ui);
             }
         };
 

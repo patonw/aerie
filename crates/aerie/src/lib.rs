@@ -6,6 +6,7 @@ pub mod pipeline;
 pub mod toolbox;
 pub mod ui;
 pub mod utils;
+pub mod workflow;
 
 pub use agent::AgentFactory;
 pub use chat::{ChatContent, ChatEntry, ChatHistory, ChatSession};

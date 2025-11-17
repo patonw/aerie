@@ -133,7 +133,7 @@ impl Default for ToolSpec {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Toolset(BTreeSet<String>);
 
 impl Toolset {
