@@ -15,7 +15,7 @@ use crate::{ChatContent, LogEntry};
 use crate::ui::{agent_bubble, error_bubble, user_bubble};
 
 // Too many refs to self for a free function. Need to clean this up
-impl super::AppBehavior {
+impl super::AppState {
     pub fn chat_ui(&mut self, ui: &mut egui::Ui) {
         // TODO: top panel with helper actions
         egui::TopBottomPanel::bottom("prompt")
@@ -83,7 +83,7 @@ impl super::AppBehavior {
                                 render_message(ui, cache, message);
                             }
                             ChatContent::Aside {
-                                workflow,
+                                automation: workflow,
                                 prompt: _,
                                 collapsed,
                                 content,
@@ -241,7 +241,7 @@ impl super::AppBehavior {
 
         let workflow = {
             let settings_r = self.settings.read().unwrap();
-            settings_r.get_workflow().cloned().unwrap_or_default()
+            settings_r.get_automation().cloned().unwrap_or_default()
         };
 
         self.rt.spawn(async move {
@@ -363,7 +363,7 @@ impl super::AppBehavior {
 
                     history.push(
                         ChatContent::Aside {
-                            workflow: workflow.name,
+                            automation: workflow.name,
                             prompt: user_prompt,
                             collapsed: true,
                             content,

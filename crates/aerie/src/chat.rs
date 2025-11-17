@@ -77,7 +77,7 @@ impl ChatSession {
 pub enum ChatContent {
     Message(Message),
     Aside {
-        workflow: String,
+        automation: String,
         prompt: String,
         collapsed: bool,
         content: Vec<Message>,

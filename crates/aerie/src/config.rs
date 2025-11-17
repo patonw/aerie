@@ -12,7 +12,7 @@ use serde_with::skip_serializing_none;
 
 use clap::{Parser, Subcommand};
 
-use crate::Workflow;
+use crate::Pipeline;
 
 #[derive(Parser, Clone, Debug)]
 #[command(version, about, long_about = None)]
@@ -56,20 +56,20 @@ pub struct Settings {
     pub autoscroll: bool,
 
     #[serde(default)]
-    pub workflows: Vec<Workflow>,
+    pub pipelines: Vec<Pipeline>,
 
     #[serde(default)]
-    pub active_flow: Option<String>,
+    pub automation: Option<String>,
 
     #[serde(default)]
     pub tools: ToolSettings,
 }
 
 impl Settings {
-    pub fn get_workflow(&self) -> Option<&Workflow> {
-        let name = self.active_flow.as_ref()?;
+    pub fn get_automation(&self) -> Option<&Pipeline> {
+        let name = self.automation.as_ref()?;
 
-        self.workflows.iter().find(|it| it.name == *name)
+        self.pipelines.iter().find(|it| it.name == *name)
     }
 }
 

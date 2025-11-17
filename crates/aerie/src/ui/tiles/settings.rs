@@ -42,13 +42,13 @@ pub fn settings_ui(ui: &mut egui::Ui, settings_rw: &mut Settings) {
                     });
                 });
 
-            egui::ComboBox::from_label("Workflow")
-                .selected_text(settings_rw.active_flow.as_ref().unwrap_or(&String::new()))
+            egui::ComboBox::from_label("Automation")
+                .selected_text(settings_rw.automation.as_ref().unwrap_or(&String::new()))
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut settings_rw.active_flow, None, "");
-                    for flow in &settings_rw.workflows {
+                    ui.selectable_value(&mut settings_rw.automation, None, "");
+                    for flow in &settings_rw.pipelines {
                         ui.selectable_value(
-                            &mut settings_rw.active_flow,
+                            &mut settings_rw.automation,
                             Some(flow.name.clone()),
                             &flow.name,
                         );
