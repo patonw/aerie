@@ -151,6 +151,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut tree = egui_tiles::Tree::new("my_tree", root, tiles);
     let mut behavior = AppState {
+        errors: rpds::List::new(),
         settings: settings.clone(),
         log_history: log_history.clone(),
         task_count: task_count.clone(),
@@ -180,6 +181,27 @@ fn main() -> anyhow::Result<()> {
         egui::CentralPanel::default().show(ctx, |ui| {
             tree.ui(&mut behavior, ui);
         });
+
+        if !behavior.errors.is_empty() {
+            let modal = egui::Modal::new(egui::Id::new("Errors")).show(ctx, |ui| {
+                // TODO: calculate from window size
+                ui.set_width(800.0);
+                ui.set_height(400.0);
+
+                ui.heading("Errors");
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for err in behavior.errors.iter() {
+                        ui.collapsing(err.to_string(), |ui| {
+                            ui.label(format!("{err:?}"));
+                        });
+                    }
+                });
+            });
+
+            if modal.should_close() {
+                behavior.errors = rpds::List::new();
+            }
+        }
 
         let dirty = {
             // Hmmm, should we change to only fire after input has stopped for a duration?

@@ -162,7 +162,7 @@ impl super::AppState {
             let mut submit = false;
             let unique_name = !self.new_branch.is_empty() && {
                 self.session
-                    .view(|session_r| !session_r.branches.contains_key(&self.new_branch))
+                    .view(|session_r| !session_r.has_branch(&self.new_branch))
             };
 
             // Copy prompt from branch point into chat input
@@ -213,12 +213,12 @@ impl super::AppState {
                 }
 
                 if submit {
-                    let _ = self.session.update(|session_rw| {
-                        let parent = session_rw.find_parent(branch_point);
+                    let _ = self.session.transform(|history| {
+                        let parent = history.find_parent(branch_point);
 
                         let name = std::mem::take(&mut self.new_branch);
-                        session_rw.switch_branch(&name, parent);
                         ui.close();
+                        history.switch_branch(&name, parent)
                     });
                 }
             });
@@ -343,17 +343,18 @@ impl super::AppState {
             }
 
             let scratch = std::mem::take(&mut *scratch_.write().unwrap());
-            let _ = session_.update(|history| {
+            let _ = session_.transform(|history| {
                 if scratch.len() <= 2 {
-                    history.extend(scratch.into_iter().map(|it| it.into()), branch.as_ref());
+                    history.extend(scratch.into_iter().map(|it| it.into()), Some(&branch))
                     // session.extend(scratch.into_iter().map(|it| it.into()), branch.as_ref());
                 } else {
                     use itertools::{Either, Itertools};
+                    let mut history = history;
 
                     // Split scratch so messages can be collapsed but errors will appear inline
                     let mut iter = scratch.into_iter();
                     if let Some(it) = iter.next() {
-                        history.push(it.into(), branch.as_ref());
+                        history = history.push(it.into(), Some(&branch));
                     }
 
                     let (content, errors): (Vec<_>, Vec<_>) = iter.partition_map(|r| match r {
@@ -361,17 +362,17 @@ impl super::AppState {
                         Err(v) => Either::Right(v),
                     });
 
-                    history.push(
-                        ChatContent::Aside {
-                            automation: workflow.name,
-                            prompt: user_prompt,
-                            collapsed: true,
-                            content,
-                        },
-                        branch.as_ref(),
-                    );
-
-                    history.extend(errors.into_iter().map(ChatContent::Error), branch.as_ref());
+                    history
+                        .push(
+                            ChatContent::Aside {
+                                automation: workflow.name,
+                                prompt: user_prompt,
+                                collapsed: true,
+                                content,
+                            },
+                            Some(&branch),
+                        )
+                        .extend(errors.into_iter().map(ChatContent::Error), Some(&branch))
                 }
             });
 
