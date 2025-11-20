@@ -31,22 +31,25 @@ impl super::AppState {
                     egui::Sides::new().show(
                         ui,
                         |ui| {
-                            self.session.update(|history| {
-                                ui.selectable_value(
-                                    &mut history.head,
-                                    Some(cursor.to_string()),
-                                    cursor,
-                                );
-                            });
+                            self.session
+                                .transform(|history| {
+                                    let mut head = history.head.clone();
+                                    ui.selectable_value(&mut head, cursor.to_string(), cursor);
+
+                                    history.switch(&head)
+                                })
+                                .unwrap();
                         },
                         |ui| {
                             if ui.button(PENCIL).on_hover_text("Rename").clicked() {
                                 self.rename_branch = Some(cursor.to_string());
                             }
-                            if ui.button(ROCKET).on_hover_text("Promote").clicked() {
-                                self.session.update(|history| {
-                                    history.promote_branch(cursor);
-                                });
+                            if ui.button(ROCKET).on_hover_text("Promote").clicked()
+                                && let Err(err) = self
+                                    .session
+                                    .transform(|history| history.promote_branch(cursor))
+                            {
+                                self.errors = self.errors.push_front(err);
                             }
                         },
                     );
@@ -60,23 +63,30 @@ impl super::AppState {
             egui::Sides::new().show(
                 ui,
                 |ui| {
-                    self.session.update(|history| {
-                        ui.selectable_value(&mut history.head, Some(cursor.to_string()), cursor);
-                    });
+                    self.session
+                        .transform(|history| {
+                            let mut head = history.head.clone();
+                            ui.selectable_value(&mut head, cursor.to_string(), cursor);
+
+                            history.switch(&head)
+                        })
+                        .unwrap();
                 },
                 |ui| {
                     if ui.button(PENCIL).on_hover_text("Rename").clicked() {
                         self.rename_branch = Some(cursor.to_string());
                     }
-                    if ui.button(ROCKET).on_hover_text("Promote").clicked() {
-                        self.session.update(|history| {
-                            history.promote_branch(cursor);
-                        });
+                    if ui.button(ROCKET).on_hover_text("Promote").clicked()
+                        && let Err(err) = self
+                            .session
+                            .transform(|history| history.promote_branch(cursor))
+                    {
+                        self.errors = self.errors.push_front(err);
                     }
                     if ui.button(TRASH).on_hover_text("Prune").clicked() {
-                        self.session.update(|history| {
-                            history.prune_branch(cursor);
-                        });
+                        self.session
+                            .transform(|history| history.prune_branch(cursor))
+                            .unwrap();
                     }
                 },
             );
@@ -92,7 +102,7 @@ impl super::AppState {
         let unique_name = !self.new_branch.is_empty()
             && self
                 .session
-                .view(|history| !history.branches.contains_key(&self.new_branch));
+                .view(|history| !history.has_branch(&self.new_branch));
 
         let title = "Rename Branch";
 
@@ -130,8 +140,12 @@ impl super::AppState {
 
             if submit {
                 let new_name = std::mem::take(&mut self.new_branch);
-                self.session
-                    .update(|history| history.rename_branch(old_name, &new_name));
+                if let Err(err) = self
+                    .session
+                    .tryform(|history| history.rename_branch(old_name, &new_name))
+                {
+                    self.errors = self.errors.push_front(err);
+                }
                 ui.close();
             }
         });
