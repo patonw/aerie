@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{ToolProvider, Toolset};
@@ -6,7 +8,7 @@ use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tools {
-    toolset: Toolset,
+    toolset: Arc<Toolset>,
 }
 
 impl DynNode for Tools {
@@ -41,7 +43,8 @@ impl UiNode for Tools {
                     let mut active = self.toolset.apply(name, tool);
 
                     if ui.checkbox(&mut active, tool.name.as_ref()).clicked() {
-                        self.toolset.toggle(name, tool);
+                        // Cow-like cloning if other refs exist
+                        Arc::make_mut(&mut self.toolset).toggle(name, tool);
                     }
                 }
             });

@@ -1,4 +1,9 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::Cow,
+    cmp::{Eq, PartialEq},
+    hash::Hash,
+    sync::Arc,
+};
 
 use arc_swap::ArcSwap;
 use rpds::{List, ListSync};
@@ -85,5 +90,46 @@ impl<E> ErrorDistiller<E> for ErrorList<E> {
     fn push(&self, err: E) {
         let err = Arc::new(err);
         self.rcu(|list| list.push_front(err.clone()));
+    }
+}
+
+pub trait ImmutableSetExt<V> {
+    /// Construct a new hash map by inserting a key/value mapping into a map.
+    /// If the map already has a mapping for the given key and value, returns self.
+    fn with(&self, v: &V) -> Self;
+}
+
+impl<V> ImmutableSetExt<V> for im::HashSet<V>
+where
+    V: Hash + Eq + Clone,
+{
+    fn with(&self, v: &V) -> Self {
+        if self.contains(v) {
+            self.clone()
+        } else {
+            self.update(v.clone())
+        }
+    }
+}
+
+pub trait ImmutableMapExt<K, V> {
+    /// Construct a new hash map by inserting a key/value mapping into a map.
+    /// If the map already has a mapping for the given key and value, returns self.
+    fn with(&self, k: &K, v: &V) -> Self;
+}
+
+impl<K, V> ImmutableMapExt<K, V> for im::HashMap<K, V>
+where
+    K: Hash + Eq + Clone,
+    V: PartialEq + Clone,
+{
+    fn with(&self, k: &K, v: &V) -> Self {
+        if let Some(old_value) = self.get(k)
+            && old_value == v
+        {
+            self.clone()
+        } else {
+            self.update(k.clone(), v.clone())
+        }
     }
 }

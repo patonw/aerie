@@ -1,4 +1,7 @@
-use std::collections::{BTreeSet, HashSet};
+use std::{
+    collections::BTreeSet,
+    hash::{DefaultHasher, Hasher as _},
+};
 
 use egui::Ui;
 use egui_snarl::{
@@ -6,12 +9,20 @@ use egui_snarl::{
     ui::{SnarlViewer, SnarlWidget},
 };
 
-use crate::workflow::{EditContext, WorkNode, runner::WorkflowRunner};
+use crate::{
+    config::ConfigExt as _,
+    workflow::{EditContext, ShadowGraph, WorkNode, runner::WorkflowRunner},
+};
 
 struct WorkflowViewer {
     edit_ctx: EditContext,
+
+    // TODO: store this in the app state so it isn't clobbered every frame
+    shadow: ShadowGraph<WorkNode>,
 }
 
+// TODO maintain a shadow graph that uses immutables
+// TODO: button to reset input pins
 impl SnarlViewer<WorkNode> for WorkflowViewer {
     fn title(&mut self, node: &WorkNode) -> String {
         node.as_ui().title()
@@ -29,16 +40,21 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
     ) -> impl egui_snarl::ui::SnarlPin + 'static {
         let value = match &*pin.remotes {
             [] => None,
-            [remote] => {
+            [remote, ..] => {
                 let other = snarl[remote.node].as_ui();
                 Some(other.preview(remote.output))
             }
-            _ => unreachable!(),
         };
 
-        snarl[pin.id.node]
+        let node_id = pin.id.node;
+        let node = &mut snarl[node_id];
+        let pin = node
             .as_ui_mut()
-            .show_input(ui, &self.edit_ctx, pin.id.input, value)
+            .show_input(ui, &self.edit_ctx, pin.id.input, value);
+
+        self.shadow = self.shadow.with_node(&node_id, node);
+
+        pin
     }
 
     fn outputs(&mut self, node: &WorkNode) -> usize {
@@ -51,9 +67,14 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui: &mut egui::Ui,
         snarl: &mut egui_snarl::Snarl<WorkNode>,
     ) -> impl egui_snarl::ui::SnarlPin + 'static {
-        snarl[pin.id.node]
+        let node_id = pin.id.node;
+        let node = &mut snarl[node_id];
+        let pin = node
             .as_ui_mut()
-            .show_output(ui, &self.edit_ctx, pin.id.output)
+            .show_output(ui, &self.edit_ctx, pin.id.output);
+
+        self.shadow = self.shadow.with_node(&node_id, node);
+        pin
     }
 
     fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<WorkNode>) -> bool {
@@ -75,6 +96,16 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             snarl.insert_node(pos, WorkNode::Tools(Default::default()));
             ui.close();
         }
+
+        // TODO: add start to empty graph by default. Don't allow insert or deletion
+        if ui.button("Start").clicked() {
+            snarl.insert_node(pos, WorkNode::Start(Default::default()));
+            ui.close();
+        }
+        if ui.button("LLM").clicked() {
+            snarl.insert_node(pos, WorkNode::LLM(Default::default()));
+            ui.close();
+        }
     }
 
     fn has_body(&mut self, node: &WorkNode) -> bool {
@@ -90,6 +121,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         snarl: &mut Snarl<WorkNode>,
     ) {
         snarl[node].as_ui_mut().show_body(ui, &self.edit_ctx);
+        self.shadow = self.shadow.with_node(&node, &snarl[node]);
     }
 
     fn connect(
@@ -103,8 +135,20 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         let wire_kind = remote.as_dyn().out_kind(from.id.output);
         let recipient = &snarl[to.id.node];
         if recipient.as_dyn().connect(to.id.input, wire_kind).is_ok() {
+            snarl.drop_inputs(to.id);
             snarl.connect(from.id, to.id);
+            self.shadow = self.shadow.with_wire(from.id, to.id);
         }
+    }
+
+    fn disconnect(
+        &mut self,
+        from: &egui_snarl::OutPin,
+        to: &egui_snarl::InPin,
+        snarl: &mut Snarl<WorkNode>,
+    ) {
+        snarl.disconnect(from.id, to.id);
+        self.shadow = self.shadow.without_wire(from.id, to.id);
     }
 
     fn has_node_menu(&mut self, _node: &WorkNode) -> bool {
@@ -121,6 +165,8 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
     ) {
         if ui.button("Remove").clicked() {
             snarl.remove_node(node);
+            self.shadow = self.shadow.without_node(&node);
+
             ui.close();
         }
     }
@@ -132,11 +178,19 @@ impl super::AppState {
             ui.horizontal_wrapped(|ui| {
                 // TODO: remove button. run only during chat
                 if ui.button("Run").clicked() {
-                    let snarl_ = self.snarl.clone();
+                    let snarl_ = self.workflows.snarl.clone();
                     let mut exec = {
                         let snarl = snarl_.blocking_read();
                         let mut exec = WorkflowRunner::default();
                         exec.init(&snarl);
+
+                        // TODO: clean this up
+                        exec.run_ctx.history = self.session.history.load().clone();
+                        exec.run_ctx.user_prompt = self.prompt.read().unwrap().clone();
+                        exec.run_ctx.model = self.settings.view(|s| s.llm_model.clone());
+                        exec.run_ctx.temperature = self.settings.view(|s| s.temperature);
+                        exec.run_ctx.errors = self.errors.clone();
+
                         exec
                     };
 
@@ -154,14 +208,20 @@ impl super::AppState {
 
                 // Expensive, don't want to run this every frame so leave button active
                 if ui.button("Save").clicked()
-                    && let Some(name) = self.edit_workflow.as_deref()
-                // && self.workflow_changed()
+                    && let Some(name) = self.workflows.editing.as_deref()
                 {
-                    tracing::info!("Saving {name} to workflows");
+                    tracing::info!(
+                        "Saving {name} to workflows...{} vs {}",
+                        self.workflow_changed(),
+                        !self.workflows.shadow.fast_eq(&self.workflows.baseline)
+                    );
+
                     // TODO: swap object?
-                    let snarl = self.snarl.blocking_read().to_owned();
-                    self.workflows.put(name, snarl);
-                    self.workflows.save().unwrap();
+                    let snarl = self.workflows.snarl.blocking_read().to_owned();
+                    self.workflows.baseline = ShadowGraph::from_snarl(&snarl);
+                    self.workflows.shadow = self.workflows.baseline.clone();
+                    self.workflows.store.put(name, snarl);
+                    self.workflows.store.save().unwrap();
                 }
             });
         });
@@ -170,25 +230,30 @@ impl super::AppState {
             let edit_ctx = EditContext {
                 toolbox: self.agent_factory.toolbox.clone(),
             };
-            let mut viewer = WorkflowViewer { edit_ctx };
-            let mut snarl = self.snarl.blocking_write();
+
+            let shadow = self.workflows.shadow.clone();
+            let mut viewer = WorkflowViewer { edit_ctx, shadow };
+            let mut snarl = self.workflows.snarl.blocking_write();
 
             SnarlWidget::new()
-                .style(self.snarl_style)
+                .style(self.workflows.style)
                 .show(&mut snarl, &mut viewer, ui);
+
+            self.workflows.shadow = viewer.shadow;
         });
     }
 
+    // TODO: Use shadow graph to track this
     pub fn workflow_changed(&self) -> bool {
-        let Some(name) = &self.edit_workflow else {
+        let Some(name) = &self.workflows.editing else {
             return true;
         };
 
-        let Some(baseline) = self.workflows.get(name) else {
+        let Some(baseline) = self.workflows.store.get(name) else {
             return true;
         };
 
-        let current = self.snarl.blocking_write();
+        let current = self.workflows.snarl.blocking_write();
 
         // How the heck do we detect when the graph has changed, efficiently?
         // No comparator, dirty flag or event bus.
@@ -199,8 +264,14 @@ impl super::AppState {
             return true;
         }
 
-        let nodes_b = baseline.nodes().collect::<HashSet<_>>();
-        let nodes_c = baseline.nodes().collect::<HashSet<_>>();
-        nodes_b != nodes_c
+        let hashes_b = baseline.nodes().map(hashit).collect::<BTreeSet<_>>();
+        let hashes_c = current.nodes().map(hashit).collect::<BTreeSet<_>>();
+        hashes_b != hashes_c
     }
+}
+
+fn hashit<T: std::hash::Hash>(t: &T) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    t.hash(&mut hasher);
+    hasher.finish()
 }

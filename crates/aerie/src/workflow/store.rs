@@ -8,7 +8,7 @@ use egui_snarl::Snarl;
 
 use super::WorkNode;
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct WorkflowStore {
     pub path: PathBuf,
     pub workflows: BTreeMap<String, Snarl<WorkNode>>,
@@ -24,7 +24,9 @@ impl WorkflowStore {
             Default::default()
         };
 
-        Ok(Self { path, workflows })
+        let mut this = Self { path, workflows };
+        this.fixup();
+        Ok(this)
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
@@ -45,5 +47,21 @@ impl WorkflowStore {
 
     pub fn put(&mut self, key: &str, value: Snarl<WorkNode>) {
         self.workflows.insert(key.into(), value);
+    }
+
+    pub fn fixup(&mut self) {
+        if self.workflows.is_empty() {
+            self.workflows
+                .insert("default".to_string(), Snarl::default());
+        }
+
+        for snarl in self.workflows.values_mut() {
+            tracing::info!("Examining {snarl:?}");
+            if snarl.nodes().count() < 1 || !snarl.nodes().any(|n| matches!(n, WorkNode::Start(_)))
+            {
+                tracing::info!("Missing start");
+                snarl.insert_node(egui::pos2(0.0, 0.0), WorkNode::Start(Default::default()));
+            }
+        }
     }
 }

@@ -6,6 +6,7 @@ use rig::message::Message;
 use rmcp::model::Tool;
 use std::{
     ops::DerefMut,
+    path::Path,
     sync::{Arc, RwLock, atomic::AtomicU16},
 };
 use uuid::Uuid;
@@ -15,7 +16,7 @@ use crate::{
     AgentFactory, LogEntry, Settings, ToolSpec,
     chat::ChatSession,
     utils::ErrorList,
-    workflow::{WorkNode, store::WorkflowStore},
+    workflow::{ShadowGraph, WorkNode, store::WorkflowStore},
 };
 
 pub enum ToolEditorState {
@@ -50,10 +51,7 @@ pub struct AppState {
 
     pub tool_editor: Option<ToolEditorState>,
 
-    pub edit_workflow: Option<String>,
-    pub workflows: WorkflowStore,
-    pub snarl: Arc<tokio::sync::RwLock<Snarl<WorkNode>>>,
-    pub snarl_style: SnarlStyle,
+    pub workflows: WorkflowState,
 }
 
 impl egui_tiles::Behavior<Pane> for AppState {
@@ -102,5 +100,53 @@ impl egui_tiles::Behavior<Pane> for AppState {
         };
 
         Default::default()
+    }
+}
+
+#[derive(Default)]
+pub struct WorkflowState {
+    pub editing: Option<String>,
+    pub store: WorkflowStore,
+    pub snarl: Arc<tokio::sync::RwLock<Snarl<WorkNode>>>,
+    pub style: SnarlStyle,
+    pub baseline: ShadowGraph<WorkNode>,
+    pub shadow: ShadowGraph<WorkNode>,
+}
+
+impl WorkflowState {
+    pub fn from_path(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        use egui_snarl::ui::{BackgroundPattern, Grid, NodeLayout, PinPlacement, SnarlStyle};
+        let workflows = WorkflowStore::load(path)?;
+
+        let edit_workflow = Some("default".to_string());
+        let workflow = workflows
+            .get(edit_workflow.as_deref().unwrap())
+            .cloned()
+            .unwrap_or_default();
+
+        let baseline: ShadowGraph<WorkNode> = ShadowGraph::from_snarl(&workflow);
+
+        let snarl = Arc::new(tokio::sync::RwLock::new(workflow));
+
+        Ok(Self {
+            editing: edit_workflow.clone(),
+            store: workflows.clone(),
+            snarl: snarl.clone(),
+            style: SnarlStyle {
+                crisp_magnified_text: Some(true),
+                bg_pattern: Some(BackgroundPattern::Grid(Grid::new(
+                    egui::Vec2::new(100.0, 100.0),
+                    0.0,
+                ))),
+                node_frame: SnarlStyle::default()
+                    .node_frame
+                    .map(|frame| frame.inner_margin(16.0)),
+                node_layout: Some(NodeLayout::sandwich()),
+                pin_placement: Some(PinPlacement::Edge),
+                ..Default::default()
+            },
+            baseline: baseline.clone(),
+            shadow: baseline.clone(),
+        })
     }
 }
