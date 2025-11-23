@@ -1,8 +1,8 @@
 use eframe::egui;
 use egui::WidgetText;
 
-mod state;
-mod tiles;
+pub mod state;
+pub mod tiles;
 
 pub use state::AppState;
 

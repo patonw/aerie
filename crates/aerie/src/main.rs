@@ -1,7 +1,6 @@
 use clap::Parser as _;
 use eframe::egui;
 use egui_commonmark::*;
-use egui_snarl::ui::{NodeLayout, PinPlacement, SnarlStyle};
 use egui_tiles::{LinearDir, TileId};
 use std::{
     sync::{Arc, RwLock, atomic::AtomicU16},
@@ -15,9 +14,8 @@ use aerie::{
     AgentFactory, LogChannelLayer, LogEntry, Settings, Toolbox, Toolset,
     chat::ChatSession,
     config::{Args, Command, SessionCommand},
-    ui::{AppState, Pane},
+    ui::{AppState, Pane, state::WorkflowState},
     utils::{ErrorDistiller as _, new_errlist},
-    workflow::store::WorkflowStore,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -89,9 +87,6 @@ fn main() -> anyhow::Result<()> {
         .unwrap_or_default()
         .join("workbench.yml");
 
-    let workflow_path = settings_path.with_file_name("workflow.yml");
-    let workflows = WorkflowStore::load(&workflow_path)?;
-
     // Runtime settings:
     let mut settings = if settings_path.is_file() {
         let text = std::fs::read_to_string(&settings_path)?;
@@ -158,13 +153,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut tree = egui_tiles::Tree::new("my_tree", root, tiles);
 
-    let edit_workflow = Some("default".to_string());
-    let workflow = workflows
-        .get(edit_workflow.as_deref().unwrap())
-        .cloned()
-        .unwrap_or_default();
-
-    let snarl = Arc::new(tokio::sync::RwLock::new(workflow));
+    let flow_state = WorkflowState::from_path(settings_path.with_file_name("workflow.yml"))?;
 
     let mut behavior = AppState {
         errors: new_errlist(),
@@ -183,14 +172,7 @@ fn main() -> anyhow::Result<()> {
         create_toolset: None,
         edit_toolset: String::new(),
         tool_editor: None,
-        edit_workflow,
-        workflows,
-        snarl,
-        snarl_style: SnarlStyle {
-            node_layout: Some(NodeLayout::sandwich()),
-            pin_placement: Some(PinPlacement::Edge),
-            ..Default::default()
-        },
+        workflows: flow_state,
     };
 
     let rt_ = rt.handle().clone();
