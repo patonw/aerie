@@ -1,6 +1,8 @@
 use egui_phosphor::regular::{PENCIL, ROCKET, TRASH};
 use std::collections::BTreeSet;
 
+use crate::utils::ErrorDistiller as _;
+
 impl super::AppState {
     pub fn nav_ui(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default().show_inside(ui, |ui| {
@@ -24,6 +26,7 @@ impl super::AppState {
         lineage: &std::collections::BTreeMap<String, BTreeSet<String>>,
         cursor: &str,
     ) {
+        let errors = self.errors.clone();
         if let Some(children) = lineage.get(cursor) {
             let id = ui.make_persistent_id(format!("navigator_{cursor}"));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
@@ -31,25 +34,21 @@ impl super::AppState {
                     egui::Sides::new().show(
                         ui,
                         |ui| {
-                            self.session
-                                .transform(|history| {
-                                    let mut head = history.head.clone();
-                                    ui.selectable_value(&mut head, cursor.to_string(), cursor);
-
-                                    history.switch(&head)
-                                })
-                                .unwrap();
+                            errors.distil(self.session.transform(|history| {
+                                let mut head = history.head.as_str();
+                                ui.selectable_value(&mut head, cursor, cursor);
+                                Ok(history.switch(head))
+                            }));
                         },
                         |ui| {
                             if ui.button(PENCIL).on_hover_text("Rename").clicked() {
                                 self.rename_branch = Some(cursor.to_string());
                             }
-                            if ui.button(ROCKET).on_hover_text("Promote").clicked()
-                                && let Err(err) = self
-                                    .session
-                                    .transform(|history| history.promote_branch(cursor))
-                            {
-                                self.errors = self.errors.push_front(err);
+                            if ui.button(ROCKET).on_hover_text("Promote").clicked() {
+                                errors.distil(
+                                    self.session
+                                        .transform(|history| history.promote_branch(cursor)),
+                                );
                             }
                         },
                     );
@@ -63,37 +62,39 @@ impl super::AppState {
             egui::Sides::new().show(
                 ui,
                 |ui| {
-                    self.session
-                        .transform(|history| {
-                            let mut head = history.head.clone();
-                            ui.selectable_value(&mut head, cursor.to_string(), cursor);
-
-                            history.switch(&head)
-                        })
-                        .unwrap();
+                    errors.distil(self.session.transform(|history| {
+                        let mut head = history.head.as_str();
+                        ui.selectable_value(&mut head, cursor, cursor);
+                        Ok(history.switch(head))
+                    }));
                 },
                 |ui| {
                     if ui.button(PENCIL).on_hover_text("Rename").clicked() {
                         self.rename_branch = Some(cursor.to_string());
                     }
-                    if ui.button(ROCKET).on_hover_text("Promote").clicked()
-                        && let Err(err) = self
-                            .session
-                            .transform(|history| history.promote_branch(cursor))
-                    {
-                        self.errors = self.errors.push_front(err);
+                    if ui.button(ROCKET).on_hover_text("Promote").clicked() {
+                        errors.distil(
+                            self.session
+                                .transform(|history| history.promote_branch(cursor)),
+                        );
                     }
-                    if ui.button(TRASH).on_hover_text("Prune").clicked() {
-                        self.session
-                            .transform(|history| history.prune_branch(cursor))
-                            .unwrap();
-                    }
+
+                    ui.add_enabled_ui(self.session.view(|history| history.head == cursor), |ui| {
+                        if ui.button(TRASH).on_hover_text("Prune").clicked() {
+                            errors.distil(
+                                self.session
+                                    .transform(|history| history.prune_branch(cursor)),
+                            );
+                        }
+                    });
                 },
             );
         }
     }
 
     fn rename_branch_dialog(&mut self, ui: &mut egui::Ui) {
+        let errors = self.errors.clone();
+
         let Some(old_name) = &self.rename_branch else {
             return;
         };
@@ -140,12 +141,10 @@ impl super::AppState {
 
             if submit {
                 let new_name = std::mem::take(&mut self.new_branch);
-                if let Err(err) = self
-                    .session
-                    .tryform(|history| history.rename_branch(old_name, &new_name))
-                {
-                    self.errors = self.errors.push_front(err);
-                }
+                errors.distil(
+                    self.session
+                        .transform(|history| history.rename_branch(old_name, &new_name)),
+                );
                 ui.close();
             }
         });
