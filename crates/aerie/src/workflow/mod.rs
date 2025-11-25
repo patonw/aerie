@@ -155,6 +155,9 @@ where
 {
     pub nodes: im::OrdMap<NodeId, MetaNode<T>>,
     pub wires: im::OrdSet<Wire>,
+
+    #[serde(default, skip_serializing_if = "im::OrdSet::is_empty")]
+    pub disabled: im::OrdSet<NodeId>,
 }
 
 impl<T: Clone + PartialEq> ShadowGraph<T> {
@@ -182,6 +185,7 @@ where
         Self {
             nodes: Default::default(),
             wires: Default::default(),
+            disabled: Default::default(),
         }
     }
 }
@@ -204,7 +208,8 @@ impl TryFrom<ShadowGraph<WorkNode>> for Snarl<WorkNode> {
         // recreate the graph with same ids. API only allows us to insert/remove with inner data.
         let value = serde_json::to_value(that)?;
 
-        Ok(serde_json::from_value(value)?)
+        let snarl = serde_json::from_value(value)?;
+        Ok(fixup_workflow(snarl))
     }
 }
 
@@ -216,7 +221,9 @@ where
     /// Does not account for identical copies in different addresses.
     /// Use the standard comparator to do a deep check instead.
     pub fn fast_eq(&self, other: &Self) -> bool {
-        self.nodes.ptr_eq(&other.nodes) && self.wires.ptr_eq(&other.wires)
+        self.nodes.ptr_eq(&other.nodes)
+            && self.wires.ptr_eq(&other.wires)
+            && self.disabled.ptr_eq(&other.disabled)
     }
 
     #[must_use]
@@ -226,21 +233,21 @@ where
         if nodes.ptr_eq(&self.nodes) {
             self.clone()
         } else {
-            // tracing::info!("Updating node {t:?}");
             Self {
                 nodes,
                 wires: self.wires.clone(),
+                disabled: self.disabled.clone(),
             }
         }
     }
 
     #[must_use]
     pub fn without_node(&self, id: &NodeId) -> Self {
-        let Self { nodes, wires } = self;
+        let Self { nodes, .. } = self;
         if nodes.contains_key(id) {
             Self {
                 nodes: nodes.without(id),
-                wires: wires.clone(),
+                ..self.drop_io(*id)
             }
         } else {
             self.clone()
@@ -257,6 +264,7 @@ where
             Self {
                 nodes: self.nodes.clone(),
                 wires,
+                disabled: self.disabled.clone(),
             }
         }
     }
@@ -268,9 +276,75 @@ where
             Self {
                 nodes: self.nodes.clone(),
                 wires: self.wires.without(&wire),
+                disabled: self.disabled.clone(),
             }
         } else {
             self.clone()
+        }
+    }
+
+    #[must_use]
+    pub fn drop_io(&self, node: NodeId) -> Self {
+        let wires = self
+            .wires
+            .iter()
+            .filter(|wire| wire.in_pin.node != node && wire.out_pin.node != node)
+            .cloned()
+            .collect::<im::OrdSet<_>>();
+
+        Self {
+            wires,
+            ..self.clone()
+        }
+    }
+
+    #[must_use]
+    pub fn drop_inputs(&self, pin: &egui_snarl::InPin) -> Self {
+        let wires = self
+            .wires
+            .iter()
+            .filter(|wire| wire.in_pin != pin.id)
+            .cloned()
+            .collect::<im::OrdSet<Wire>>();
+
+        Self {
+            wires,
+            ..self.clone()
+        }
+    }
+
+    #[must_use]
+    pub fn drop_outputs(&self, pin: &egui_snarl::OutPin) -> Self {
+        let wires = self
+            .wires
+            .iter()
+            .filter(|wire| wire.out_pin != pin.id)
+            .cloned()
+            .collect::<im::OrdSet<Wire>>();
+
+        Self {
+            wires,
+            ..self.clone()
+        }
+    }
+
+    pub fn is_disabled(&self, id: NodeId) -> bool {
+        self.disabled.contains(&id)
+    }
+
+    pub fn enable_node(&self, id: NodeId) -> Self {
+        Self {
+            nodes: self.nodes.clone(),
+            wires: self.wires.clone(),
+            disabled: self.disabled.without(&id),
+        }
+    }
+
+    pub fn disable_node(&self, id: NodeId) -> Self {
+        Self {
+            nodes: self.nodes.clone(),
+            wires: self.wires.clone(),
+            disabled: self.disabled.with(&id),
         }
     }
 }
@@ -410,8 +484,11 @@ pub enum WorkflowError {
     #[error("Validation error")]
     Validation(Vec<String>),
 
-    #[error("Input error")]
+    #[error("Input error {0:?}")]
     Input(Vec<String>),
+
+    #[error("Error while invoking provider")]
+    Provider(#[source] anyhow::Error),
 
     #[error("{0}")]
     Unknown(String),
@@ -421,4 +498,23 @@ impl From<anyhow::Error> for WorkflowError {
     fn from(value: anyhow::Error) -> Self {
         WorkflowError::Unknown(format!("anyhow... {value:?}"))
     }
+}
+
+pub fn fixup_workflow(mut snarl: Snarl<WorkNode>) -> Snarl<WorkNode> {
+    tracing::debug!("Examining graph {snarl:?}");
+
+    if snarl.nodes().count() < 1 || !snarl.nodes().any(|n| matches!(n, WorkNode::Start(_))) {
+        tracing::info!("Inserting missing start node");
+        snarl.insert_node(egui::pos2(0.0, 0.0), WorkNode::Start(Default::default()));
+    }
+
+    if !snarl.nodes().any(|n| matches!(n, WorkNode::Finish(_))) {
+        tracing::info!("Inserting missing finish node");
+        snarl.insert_node(
+            egui::pos2(1000.0, 0.0),
+            WorkNode::Finish(Default::default()),
+        );
+    }
+
+    snarl
 }

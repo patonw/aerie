@@ -6,6 +6,7 @@ use egui_snarl::{
 
 use crate::{
     config::ConfigExt as _,
+    utils::ErrorDistiller as _,
     workflow::{EditContext, ShadowGraph, WorkNode, runner::WorkflowRunner},
 };
 
@@ -23,6 +24,23 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         node.as_ui().title().to_string()
     }
 
+    fn final_node_rect(
+        &mut self,
+        node: NodeId,
+        rect: egui::Rect,
+        ui: &mut Ui,
+        _snarl: &mut Snarl<WorkNode>,
+    ) {
+        if self.shadow.is_disabled(node) {
+            let painter = ui.painter();
+            painter.rect_filled(
+                rect,
+                16.0,
+                egui::Color32::from_rgb(0x42, 0, 0).gamma_multiply(0.5),
+            );
+        }
+    }
+
     fn has_on_hover_popup(&mut self, node: &WorkNode) -> bool {
         !node.as_ui().tooltip().is_empty()
     }
@@ -35,8 +53,12 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui: &mut Ui,
         snarl: &mut Snarl<WorkNode>,
     ) {
-        let tooltip = snarl[node].as_ui().tooltip();
-        ui.label(tooltip);
+        if self.shadow.is_disabled(node) {
+            ui.label("Node has been disabled.\n\nThis and downstream nodes will not be executed.");
+        } else {
+            let tooltip = snarl[node].as_ui().tooltip();
+            ui.label(tooltip);
+        }
     }
 
     fn inputs(&mut self, node: &WorkNode) -> usize {
@@ -145,7 +167,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         let wire_kind = remote.as_dyn().out_kind(from.id.output);
         let recipient = &snarl[to.id.node];
         if recipient.as_dyn().connect(to.id.input, wire_kind).is_ok() {
-            snarl.drop_inputs(to.id);
+            self.drop_inputs(to, snarl);
             snarl.connect(from.id, to.id);
             self.shadow = self.shadow.with_wire(from.id, to.id);
         }
@@ -161,6 +183,16 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         self.shadow = self.shadow.without_wire(from.id, to.id);
     }
 
+    fn drop_inputs(&mut self, pin: &egui_snarl::InPin, snarl: &mut Snarl<WorkNode>) {
+        self.shadow = self.shadow.drop_inputs(pin);
+        snarl.drop_inputs(pin.id);
+    }
+
+    fn drop_outputs(&mut self, pin: &egui_snarl::OutPin, snarl: &mut Snarl<WorkNode>) {
+        self.shadow = self.shadow.drop_outputs(pin);
+        snarl.drop_outputs(pin.id);
+    }
+
     fn has_node_menu(&mut self, _node: &WorkNode) -> bool {
         true
     }
@@ -173,9 +205,19 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui: &mut Ui,
         snarl: &mut Snarl<WorkNode>,
     ) {
+        if self.shadow.is_disabled(node) {
+            if ui.button("Enable").clicked() {
+                self.shadow = self.shadow.enable_node(node);
+                ui.close();
+            }
+        } else if ui.button("Disable").clicked() {
+            self.shadow = self.shadow.disable_node(node);
+            ui.close();
+        }
+
         if ui.button("Remove").clicked() {
             snarl.remove_node(node);
-            self.shadow = self.shadow.without_node(&node);
+            self.shadow = self.shadow.enable_node(node).without_node(&node);
 
             ui.close();
         }
@@ -192,7 +234,7 @@ impl super::AppState {
 
                     let mut exec = {
                         let mut exec = WorkflowRunner::default();
-                        exec.init(&target);
+                        exec.init(&self.workflows.shadow);
 
                         // TODO: clean this up
                         exec.run_ctx.history = self.session.history.clone();
@@ -206,25 +248,26 @@ impl super::AppState {
                     };
 
                     let running = self.workflows.running.clone();
+                    let errors = self.errors.clone();
                     self.rt.spawn(async move {
                         running.store(true, std::sync::atomic::Ordering::Relaxed);
 
                         loop {
-                            // This would block workflow rendering while waiting for LLM to respond
-                            // TODO: explore how to use ArcSwap to snapshot snarl graphs
-                            if exec.step(&mut target).await.is_none() {
-                                break;
+                            match exec.step(&mut target).await {
+                                Ok(false) => break,
+                                Ok(true) => {
+                                    let mut snarl = snarl_.write().await;
+                                    *snarl = target.clone();
+                                }
+                                Err(err) => errors.push(err.into()),
                             }
-
-                            let mut snarl = snarl_.write().await;
-                            *snarl = target.clone();
                         }
 
                         running.store(false, std::sync::atomic::Ordering::Relaxed);
                     });
                 }
 
-                // Expensive, don't want to run this every frame so leave button active
+                // TODO: autosave based on change detection
                 if ui.button("Save").clicked()
                     && let Some(name) = self.workflows.editing.as_deref()
                 {
@@ -233,12 +276,14 @@ impl super::AppState {
                         !self.workflows.shadow.fast_eq(&self.workflows.baseline)
                     );
 
-                    // TODO: swap object?
-                    let snarl = self.workflows.snarl.blocking_read().to_owned();
-                    self.workflows.baseline = ShadowGraph::from_snarl(&snarl);
-                    self.workflows.shadow = self.workflows.baseline.clone();
-                    self.workflows.store.put(name, snarl);
+                    self.workflows
+                        .store
+                        .put(name, self.workflows.shadow.clone());
                     self.workflows.store.save().unwrap();
+
+                    let mut snarl = self.workflows.snarl.blocking_write();
+                    *snarl = Snarl::try_from(self.workflows.shadow.clone()).unwrap();
+                    self.workflows.baseline = self.workflows.shadow.clone();
                 }
             });
         });

@@ -123,9 +123,14 @@ impl WorkflowState {
         let workflows = WorkflowStore::load(path)?;
 
         let edit_workflow = Some("default".to_string());
-        let workflow = workflows.get(edit_workflow.as_deref().unwrap());
+        let workflow_name = edit_workflow.as_deref().unwrap();
+        let workflow = workflows.get(workflow_name);
 
-        let baseline: ShadowGraph<WorkNode> = ShadowGraph::from_snarl(&workflow);
+        let baseline: ShadowGraph<WorkNode> = workflows
+            .workflows
+            .get(workflow_name)
+            .cloned()
+            .unwrap_or_default();
 
         let snarl = Arc::new(tokio::sync::RwLock::new(workflow));
 
