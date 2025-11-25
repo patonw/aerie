@@ -10,7 +10,7 @@ use std::{
 use uuid::Uuid;
 
 use super::{Pane, tiles};
-use crate::{AgentFactory, LogEntry, Settings, ToolSpec, chat::ChatSession};
+use crate::{AgentFactory, LogEntry, Settings, ToolSpec, chat::ChatSession, utils::ErrorList};
 
 pub enum ToolEditorState {
     EditProvider {
@@ -24,7 +24,7 @@ pub enum ToolEditorState {
 
 pub struct AppState {
     pub rt: tokio::runtime::Handle,
-    pub errors: rpds::List<anyhow::Error>,
+    pub errors: ErrorList<anyhow::Error>,
     pub settings: Arc<RwLock<Settings>>,
     pub task_count: Arc<AtomicU16>,
     pub log_history: Arc<RwLock<Vec<LogEntry>>>,

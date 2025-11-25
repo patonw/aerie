@@ -15,6 +15,7 @@ use aerie::{
     chat::ChatSession,
     config::{Args, Command, SessionCommand},
     ui::{AppState, Pane},
+    utils::{ErrorDistiller as _, new_errlist},
 };
 
 fn main() -> anyhow::Result<()> {
@@ -151,7 +152,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut tree = egui_tiles::Tree::new("my_tree", root, tiles);
     let mut behavior = AppState {
-        errors: rpds::List::new(),
+        errors: new_errlist(),
         settings: settings.clone(),
         log_history: log_history.clone(),
         task_count: task_count.clone(),
@@ -182,7 +183,8 @@ fn main() -> anyhow::Result<()> {
             tree.ui(&mut behavior, ui);
         });
 
-        if !behavior.errors.is_empty() {
+        let errors = behavior.errors.load();
+        if !errors.is_empty() {
             let modal = egui::Modal::new(egui::Id::new("Errors")).show(ctx, |ui| {
                 // TODO: calculate from window size
                 ui.set_width(800.0);
@@ -190,7 +192,7 @@ fn main() -> anyhow::Result<()> {
 
                 ui.heading("Errors");
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for err in behavior.errors.iter() {
+                    for err in errors.iter() {
                         ui.collapsing(err.to_string(), |ui| {
                             ui.label(format!("{err:?}"));
                         });
@@ -199,7 +201,7 @@ fn main() -> anyhow::Result<()> {
             });
 
             if modal.should_close() {
-                behavior.errors = rpds::List::new();
+                behavior.errors.discard();
             }
         }
 

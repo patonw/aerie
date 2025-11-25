@@ -6,17 +6,20 @@ use rig::{
     agent::PromptRequest,
     message::{AssistantContent, Message, UserContent},
 };
-use std::{collections::VecDeque, f32, sync::atomic::Ordering, time::Instant};
+use std::{borrow::Cow, collections::VecDeque, f32, sync::atomic::Ordering, time::Instant};
 use tracing::Level;
 
 // use super::{Pane, agent_bubble, error_bubble, tiles, user_bubble};
-use crate::{ChatContent, LogEntry};
+use crate::{ChatContent, LogEntry, utils::ErrorDistiller as _};
 
 use crate::ui::{agent_bubble, error_bubble, user_bubble};
+use crate::utils::CowExt as _;
 
 // Too many refs to self for a free function. Need to clean this up
 impl super::AppState {
     pub fn chat_ui(&mut self, ui: &mut egui::Ui) {
+        let errors = self.errors.clone();
+
         // TODO: top panel with helper actions
         egui::TopBottomPanel::bottom("prompt")
             .resizable(true)
@@ -213,13 +216,13 @@ impl super::AppState {
                 }
 
                 if submit {
-                    let _ = self.session.transform(|history| {
+                    errors.distil(self.session.transform(|history| {
                         let parent = history.find_parent(branch_point);
 
                         let name = std::mem::take(&mut self.new_branch);
                         ui.close();
-                        history.switch_branch(&name, parent)
-                    });
+                        history.create_branch(&name, parent)
+                    }));
                 }
             });
 
@@ -238,6 +241,7 @@ impl super::AppState {
         let agent_factory_ = self.agent_factory.clone();
         let log_history_ = self.log_history.clone();
         let branch = self.session.view(|hist| hist.head.clone());
+        let errors = self.errors.clone();
 
         let workflow = {
             let settings_r = self.settings.read().unwrap();
@@ -343,38 +347,42 @@ impl super::AppState {
             }
 
             let scratch = std::mem::take(&mut *scratch_.write().unwrap());
-            let _ = session_.transform(|history| {
+            errors.distil(session_.transform(|history| {
+                let history = Cow::Borrowed(history);
                 if scratch.len() <= 2 {
-                    history.extend(scratch.into_iter().map(|it| it.into()), Some(&branch))
-                    // session.extend(scratch.into_iter().map(|it| it.into()), branch.as_ref());
+                    history.try_moo(|h| {
+                        h.extend(scratch.into_iter().map(|it| it.into()), Some(&branch))
+                    })
                 } else {
-                    use itertools::{Either, Itertools};
-                    let mut history = history;
+                    use itertools::{Either, Itertools as _};
 
                     // Split scratch so messages can be collapsed but errors will appear inline
                     let mut iter = scratch.into_iter();
-                    if let Some(it) = iter.next() {
-                        history = history.push(it.into(), Some(&branch));
-                    }
+                    let Some(prompt_msg) = iter.next() else {
+                        unreachable!()
+                    };
 
                     let (content, errors): (Vec<_>, Vec<_>) = iter.partition_map(|r| match r {
                         Ok(v) => Either::Left(v),
                         Err(v) => Either::Right(v),
                     });
 
+                    let aside_msgs = ChatContent::Aside {
+                        automation: workflow.name,
+                        prompt: user_prompt,
+                        collapsed: true,
+                        content,
+                    };
+
+                    let error_msgs = errors.into_iter().map(ChatContent::Error);
+
+                    // No inconsistent partial updates if intermediate ops fail
                     history
-                        .push(
-                            ChatContent::Aside {
-                                automation: workflow.name,
-                                prompt: user_prompt,
-                                collapsed: true,
-                                content,
-                            },
-                            Some(&branch),
-                        )
-                        .extend(errors.into_iter().map(ChatContent::Error), Some(&branch))
+                        .try_moo(|h| h.push(prompt_msg.into(), Some(&branch)))?
+                        .try_moo(|h| h.push(aside_msgs, Some(&branch)))?
+                        .try_moo(|h| h.extend(error_msgs, Some(&branch)))
                 }
-            });
+            }));
 
             task_count_.fetch_sub(1, Ordering::Relaxed);
             tracing::info!(

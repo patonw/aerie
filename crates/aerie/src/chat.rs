@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     ops::Deref,
     path::{Path, PathBuf},
@@ -8,7 +9,6 @@ use std::{
 use anyhow::anyhow;
 use arc_swap::ArcSwap;
 use rig::message::Message;
-use rpds::HashTrieMapSync;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
@@ -64,41 +64,29 @@ impl ChatSession {
         cb(&history)
     }
 
-    pub fn tryform(
-        &self,
-        cb: impl FnOnce(ChatHistory) -> anyhow::Result<ChatHistory>,
-    ) -> anyhow::Result<()> {
-        let span = tracing::info_span!("Updating session");
-        span.in_scope(|| {
-            let history = self.history.load();
-            let res = cb(history.as_ref().to_owned())?;
+    // callbacks likely expensive (e.g. invoking remote LLM) so retrying not desirable.
+    // Fails on concurent update rather than clobbering history via `store`
+    pub fn transform<F>(&self, cb: F) -> anyhow::Result<()>
+    where
+        F: FnOnce(&ChatHistory) -> anyhow::Result<Cow<ChatHistory>>,
+    {
+        let history = self.history.load();
+        if let Cow::Owned(result) = cb(&history)? {
+            // self.history.store(Arc::new(result));
+            let prev = self
+                .history
+                .compare_and_swap(history.deref(), Arc::new(result));
 
-            if **history != res {
-                self.history.store(Arc::new(res));
+            if !Arc::ptr_eq(history.deref(), prev.deref()) {
+                return Err(anyhow!("Conflict while updating history"));
             }
 
             if self.path.is_some() {
                 self.save_ref(&self.history.load())?;
             }
-            Ok(())
-        })
-    }
+        }
 
-    pub fn transform(&self, cb: impl FnOnce(ChatHistory) -> ChatHistory) -> anyhow::Result<()> {
-        let span = tracing::info_span!("Updating session");
-        span.in_scope(|| {
-            let history = self.history.load();
-            let res = cb(history.as_ref().to_owned());
-
-            if **history != res {
-                self.history.store(Arc::new(res));
-            }
-
-            if self.path.is_some() {
-                self.save_ref(&self.history.load())?;
-            }
-            Ok(())
-        })
+        Ok(())
     }
 }
 
@@ -115,6 +103,15 @@ pub enum ChatContent {
     Error(String),
 }
 
+impl std::cmp::Eq for ChatContent {} // ???
+
+impl std::hash::Hash for ChatContent {
+    // TODO: proper implementation rig::Message is the sticking point
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        core::mem::discriminant(self).hash(state);
+    }
+}
+
 impl From<Result<Message, String>> for ChatContent {
     fn from(value: Result<Message, String>) -> Self {
         match value {
@@ -125,7 +122,7 @@ impl From<Result<Message, String>> for ChatContent {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatEntry {
     pub id: Uuid,
     pub parent: Option<Uuid>,
@@ -142,10 +139,10 @@ impl Deref for ChatEntry {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Hash, Eq, Clone, Serialize, Deserialize)]
 pub struct ChatHistory {
-    pub store: HashTrieMapSync<Uuid, ChatEntry>,
-    pub branches: HashTrieMapSync<String, Uuid>,
+    pub store: im::HashMap<Uuid, ChatEntry>,
+    pub branches: im::HashMap<String, Uuid>,
     pub head: String,
 }
 
@@ -160,42 +157,53 @@ impl Default for ChatHistory {
 }
 
 impl ChatHistory {
-    pub fn switch(mut self, head: &str) -> Self {
-        self.head = head.to_string();
-        self
+    pub fn switch(&'_ self, head: &str) -> Cow<'_, Self> {
+        let mut result = Cow::Borrowed(self);
+        if self.head != head {
+            result.to_mut().head = head.to_string();
+        }
+
+        result
     }
 
-    pub fn push(mut self, content: ChatContent, branch: Option<impl AsRef<str>>) -> Self {
-        let (branch, parent) = if let Some(branch) = branch {
-            (
-                branch.as_ref().to_string(),
-                self.branches.get(branch.as_ref()).cloned(),
-            )
-        } else {
-            self.head_branch()
-        };
-
-        let id = Uuid::new_v4();
-        let entry = ChatEntry {
-            id,
-            parent,
-            content,
-            branch: branch.clone(),
-        };
-        self.store = self.store.insert(id, entry);
-        self.branches = self.branches.insert(branch.clone(), id);
-        self
+    pub fn push(
+        &'_ self,
+        content: ChatContent,
+        branch: Option<impl AsRef<str>>,
+    ) -> anyhow::Result<Cow<'_, Self>> {
+        self.extend(std::iter::once(content), branch)
     }
 
     pub fn extend(
-        mut self,
+        &'_ self,
         contents: impl std::iter::IntoIterator<Item = ChatContent>,
         branch: Option<impl AsRef<str>>,
-    ) -> Self {
+    ) -> anyhow::Result<Cow<'_, Self>> {
+        let mut result = Cow::Borrowed(self);
+
         for content in contents {
-            self = self.push(content, branch.as_ref());
+            let (branch, parent) = if let Some(branch) = branch.as_ref() {
+                (
+                    branch.as_ref().to_string(),
+                    result.branches.get(branch.as_ref()).cloned(),
+                )
+            } else {
+                result.head_branch()
+            };
+
+            let id = Uuid::new_v4();
+            let entry = ChatEntry {
+                id,
+                parent,
+                content,
+                branch: branch.clone(),
+            };
+
+            result.to_mut().store = result.store.update(id, entry);
+            result.to_mut().branches = result.branches.update(branch.clone(), id);
         }
-        self
+
+        Ok(result)
     }
 
     pub fn has_branch(&self, name: &str) -> bool {
@@ -208,7 +216,12 @@ impl ChatHistory {
         (branch, uuid)
     }
 
-    pub fn switch_branch(mut self, branch: &str, parent: Option<Uuid>) -> Self {
+    pub fn create_branch(
+        &'_ self,
+        branch: &str,
+        parent: Option<Uuid>,
+    ) -> anyhow::Result<Cow<'_, Self>> {
+        let mut result = Cow::Borrowed(self);
         // Nah, a little pointless to branch from current head
         // let parent = parent.or_else(|| self.head_branch().1);
 
@@ -216,11 +229,15 @@ impl ChatHistory {
         if !self.branches.contains_key(branch)
             && let Some(parent) = parent
         {
-            self.branches = self.branches.insert(branch.to_string(), parent);
+            result.to_mut().branches = self.branches.update(branch.to_string(), parent);
         }
 
-        self.head = branch.to_string();
-        self
+        // TODO: dedup `switch` - How to chain ops on cows?
+        if self.head != branch {
+            result.to_mut().head = branch.to_string();
+        }
+
+        Ok(result)
     }
 
     pub fn find_parent(&self, id: Uuid) -> Option<Uuid> {
@@ -303,23 +320,25 @@ impl ChatHistory {
         buffer
     }
 
-    pub fn rename_branch(mut self, branch: &str, new_name: &str) -> anyhow::Result<Self> {
+    pub fn rename_branch(&'_ self, branch: &str, new_name: &str) -> anyhow::Result<Cow<'_, Self>> {
+        let mut result = Cow::Borrowed(self);
+
         let Some(head_id) = self.branches.get(branch).cloned() else {
             return Err(anyhow!("Branch does not exist"));
         };
 
-        self.branches = self
+        result.to_mut().branches = self
             .branches
-            .remove(branch)
-            .insert(new_name.to_string(), head_id);
+            .without(branch)
+            .update(new_name.to_string(), head_id);
 
         if self.head == branch {
-            self.head = new_name.to_string();
+            result.to_mut().head = new_name.to_string();
         }
 
         let mut cursor = head_id;
         loop {
-            let Some(mut node) = self.store.get(&cursor).cloned() else {
+            let Some(mut node) = result.store.get(&cursor).cloned() else {
                 break;
             };
 
@@ -330,7 +349,7 @@ impl ChatHistory {
             node.branch = new_name.to_string();
 
             let parent = node.parent;
-            self.store = self.store.insert(cursor, node);
+            result.to_mut().store = result.store.update(cursor, node);
 
             if let Some(parent) = &parent {
                 cursor = *parent;
@@ -339,12 +358,14 @@ impl ChatHistory {
             }
         }
 
-        Ok(self)
+        Ok(result)
     }
 
-    pub fn promote_branch(mut self, branch: &str) -> Self {
-        let Some(head_id) = self.branches.get(branch) else {
-            return self;
+    // TODO: buggy - promoting second level flattens hierarchy (non-destructive though)
+    pub fn promote_branch(&'_ self, branch: &str) -> anyhow::Result<Cow<'_, Self>> {
+        let mut result = Cow::Borrowed(self);
+        let Some(head_id) = result.branches.get(branch) else {
+            return Ok(result);
         };
 
         let mut cursor = *head_id;
@@ -352,7 +373,7 @@ impl ChatHistory {
 
         // crawl up tree until first ancestor. Rename until different ancestor.
         loop {
-            let Some(mut node) = self.store.get(&cursor).cloned() else {
+            let Some(mut node) = result.store.get(&cursor).cloned() else {
                 break;
             };
 
@@ -368,7 +389,7 @@ impl ChatHistory {
             }
 
             let parent = node.parent;
-            self.store = self.store.insert(cursor, node);
+            result.to_mut().store = result.store.update(cursor, node);
 
             if let Some(parent) = parent {
                 cursor = parent;
@@ -377,31 +398,33 @@ impl ChatHistory {
             }
         }
 
-        self
+        Ok(result)
     }
 
-    pub fn prune_branch(mut self, branch: &str) -> Self {
+    pub fn prune_branch(&'_ self, branch: &str) -> anyhow::Result<Cow<'_, Self>> {
         let Some(head_id) = self.branches.get(branch).cloned() else {
-            return self;
+            return Err(anyhow!("Cannot prune current branch"));
         };
 
-        self.branches = self.branches.remove(branch);
+        let mut result = self.clone();
+
+        result.branches = self.branches.without(branch);
 
         let mut cursor = head_id;
         loop {
-            let Some(node) = self.store.get(&cursor) else {
+            let Some(node) = result.store.get(&cursor) else {
                 break;
             };
 
             if node.branch != branch {
-                if self.head == branch {
-                    self.head = node.branch.clone();
+                if result.head == branch {
+                    result.head = node.branch.clone();
                 }
                 break;
             }
 
             let parent = node.parent;
-            self.store = self.store.remove(&cursor);
+            result.store = result.store.without(&cursor);
 
             if let Some(parent) = parent {
                 cursor = parent;
@@ -410,6 +433,10 @@ impl ChatHistory {
             }
         }
 
-        self
+        Ok(if self == &result {
+            Cow::Borrowed(self)
+        } else {
+            Cow::Owned(result)
+        })
     }
 }
