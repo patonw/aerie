@@ -240,7 +240,7 @@ impl UiNode for LLM {
 impl LLM {
     pub async fn forward(
         &mut self,
-        _ctx: &RunContext,
+        ctx: &RunContext,
         inputs: Vec<Option<Value>>,
     ) -> Result<(), WorkflowError> {
         self.validate(&inputs)?;
@@ -293,7 +293,7 @@ impl LLM {
             .preamble(preamble);
 
         if let Some(tools) = toolset {
-            agent = _ctx.toolbox.apply(agent, &tools);
+            agent = ctx.toolbox.apply(agent, &tools);
         }
 
         let agent = agent.build();
@@ -312,7 +312,7 @@ impl LLM {
 
                 self.chat = Arc::new(conversation);
             }
-            Err(err) => tracing::warn!("Error: {err:?}"),
+            Err(err) => Err(WorkflowError::Provider(err.into()))?,
         }
 
         Ok(())

@@ -167,6 +167,7 @@ impl Finish {
             Some(Value::Chat(chat)) => {
                 ctx.history.store(chat.clone());
             }
+            None => {}
             _ => unreachable!(),
         }
 

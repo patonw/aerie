@@ -42,35 +42,13 @@ impl WorkflowStore {
     }
 
     pub fn get(&self, key: &str) -> Snarl<WorkNode> {
-        let workflow = self
-            .workflows
+        self.workflows
             .get(key)
             .map(|it| Snarl::try_from(it.clone()).unwrap())
-            .unwrap_or_default();
-
-        fixup_workflow(workflow)
+            .unwrap_or_default()
     }
 
-    pub fn put(&mut self, key: &str, value: Snarl<WorkNode>) {
-        self.workflows.insert(key.into(), ShadowGraph::from(&value));
+    pub fn put(&mut self, key: &str, value: ShadowGraph<WorkNode>) {
+        self.workflows.insert(key.into(), value);
     }
-}
-
-pub fn fixup_workflow(mut snarl: Snarl<WorkNode>) -> Snarl<WorkNode> {
-    tracing::debug!("Examining graph {snarl:?}");
-
-    if snarl.nodes().count() < 1 || !snarl.nodes().any(|n| matches!(n, WorkNode::Start(_))) {
-        tracing::info!("Inserting missing start node");
-        snarl.insert_node(egui::pos2(0.0, 0.0), WorkNode::Start(Default::default()));
-    }
-
-    if !snarl.nodes().any(|n| matches!(n, WorkNode::Finish(_))) {
-        tracing::info!("Inserting missing finish node");
-        snarl.insert_node(
-            egui::pos2(1000.0, 0.0),
-            WorkNode::Finish(Default::default()),
-        );
-    }
-
-    snarl
 }
