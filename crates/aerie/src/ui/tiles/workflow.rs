@@ -52,7 +52,9 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             .as_ui_mut()
             .show_input(ui, &self.edit_ctx, pin.id.input, value);
 
-        self.shadow = self.shadow.with_node(&node_id, node);
+        self.shadow = self
+            .shadow
+            .with_node(&node_id, snarl.get_node_info(node_id));
 
         pin
     }
@@ -73,7 +75,9 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             .as_ui_mut()
             .show_output(ui, &self.edit_ctx, pin.id.output);
 
-        self.shadow = self.shadow.with_node(&node_id, node);
+        self.shadow = self
+            .shadow
+            .with_node(&node_id, snarl.get_node_info(node_id));
         pin
     }
 
@@ -102,10 +106,6 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             snarl.insert_node(pos, WorkNode::Start(Default::default()));
             ui.close();
         }
-        if ui.button("LLM").clicked() {
-            snarl.insert_node(pos, WorkNode::LLM(Default::default()));
-            ui.close();
-        }
     }
 
     fn has_body(&mut self, node: &WorkNode) -> bool {
@@ -121,7 +121,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         snarl: &mut Snarl<WorkNode>,
     ) {
         snarl[node].as_ui_mut().show_body(ui, &self.edit_ctx);
-        self.shadow = self.shadow.with_node(&node, &snarl[node]);
+        self.shadow = self.shadow.with_node(&node, snarl.get_node_info(node));
     }
 
     fn connect(
@@ -211,8 +211,7 @@ impl super::AppState {
                     && let Some(name) = self.workflows.editing.as_deref()
                 {
                     tracing::info!(
-                        "Saving {name} to workflows...{} vs {}",
-                        self.workflow_changed(),
+                        "Saving {name} to workflows...changed? {}",
                         !self.workflows.shadow.fast_eq(&self.workflows.baseline)
                     );
 
@@ -242,36 +241,4 @@ impl super::AppState {
             self.workflows.shadow = viewer.shadow;
         });
     }
-
-    // TODO: Use shadow graph to track this
-    pub fn workflow_changed(&self) -> bool {
-        let Some(name) = &self.workflows.editing else {
-            return true;
-        };
-
-        let Some(baseline) = self.workflows.store.get(name) else {
-            return true;
-        };
-
-        let current = self.workflows.snarl.blocking_write();
-
-        // How the heck do we detect when the graph has changed, efficiently?
-        // No comparator, dirty flag or event bus.
-
-        let wires_b = baseline.wires().collect::<BTreeSet<_>>();
-        let wires_c = current.wires().collect::<BTreeSet<_>>();
-        if wires_b != wires_c {
-            return true;
-        }
-
-        let hashes_b = baseline.nodes().map(hashit).collect::<BTreeSet<_>>();
-        let hashes_c = current.nodes().map(hashit).collect::<BTreeSet<_>>();
-        hashes_b != hashes_c
-    }
-}
-
-fn hashit<T: std::hash::Hash>(t: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    t.hash(&mut hasher);
-    hasher.finish()
 }

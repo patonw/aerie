@@ -1,12 +1,13 @@
-use decorum::E64;
+use decorum::{E32, E64};
 use egui::{Color32, Stroke};
 use egui_snarl::{
-    InPinId, NodeId, OutPinId, Snarl,
+    InPinId, Node as SnarlNode, NodeId, OutPinId, Snarl,
     ui::{PinInfo, WireStyle},
 };
 use kinded::Kinded;
 use rig::message::Message;
-use std::sync::Arc;
+use serde::{Deserialize, Serialize};
+use std::{hash::Hash, sync::Arc};
 
 use crate::{
     ChatHistory, Toolbox, Toolset,
@@ -87,15 +88,68 @@ pub struct RunContext {
     pub errors: ErrorList<anyhow::Error>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetaNode<T> {
+    /// Node generic value.
+    pub value: T,
+
+    /// Position of the top-left corner of the node.
+    /// This does not include frame margin.
+    pub pos: egui::Pos2,
+
+    /// Flag indicating that the node is open - not collapsed.
+    pub open: bool,
+}
+
+impl<T> Hash for MetaNode<T>
+where
+    T: Hash + PartialEq,
+{
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.value.hash(state);
+        let egui::Pos2 { x, y } = self.pos;
+        let (x, y): (E32, E32) = (E32::assert(x), E32::assert(y));
+        x.hash(state);
+        y.hash(state);
+        self.open.hash(state);
+    }
+}
+
+impl<T> From<SnarlNode<T>> for MetaNode<T> {
+    fn from(other: SnarlNode<T>) -> Self {
+        Self {
+            value: other.value,
+            pos: other.pos,
+            open: other.open,
+        }
+    }
+}
+
+// Copy of egui_snarl::Wire
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Wire {
+    pub out_pin: OutPinId,
+    pub in_pin: InPinId,
+}
+
+impl From<(OutPinId, InPinId)> for Wire {
+    fn from((out_pin, in_pin): (OutPinId, InPinId)) -> Self {
+        Self { out_pin, in_pin }
+    }
+}
+
 /// The shadow graph is incrementally updated when edits are made through the viewer.
 /// Each change creates a new generation. The underlying collections use structure sharing
 /// to make cloning-on-write cheap. This allows shadow graphs to be quickly compared using
 /// top-level pointer comparison. We could also use this to support undo/redo operations,
 /// though the shadow doesn't currently track positions.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct ShadowGraph<T> {
-    pub nodes: im::HashMap<NodeId, T>,
-    pub wires: im::HashSet<(OutPinId, InPinId)>,
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShadowGraph<T>
+where
+    T: Clone + PartialEq,
+{
+    pub nodes: im::OrdMap<NodeId, MetaNode<T>>,
+    pub wires: im::OrdSet<Wire>,
 }
 
 impl<T: Clone + PartialEq> ShadowGraph<T> {
@@ -103,17 +157,22 @@ impl<T: Clone + PartialEq> ShadowGraph<T> {
         let mut baseline = Self::default();
 
         // Initialize with bulk mutators since we're not tracking generations yet
-        baseline
-            .nodes
-            .extend(snarl.node_ids().map(|(id, node)| (id, node.clone())));
+        baseline.nodes.extend(
+            snarl
+                .nodes_ids_data()
+                .map(|(id, node)| (id, MetaNode::from(node.clone()))),
+        );
 
-        baseline.wires.extend(snarl.wires());
+        baseline.wires.extend(snarl.wires().map(Wire::from));
 
         baseline
     }
 }
 
-impl<T> Default for ShadowGraph<T> {
+impl<T> Default for ShadowGraph<T>
+where
+    T: Clone + PartialEq,
+{
     fn default() -> Self {
         Self {
             nodes: Default::default(),
@@ -122,7 +181,32 @@ impl<T> Default for ShadowGraph<T> {
     }
 }
 
-impl<T: PartialEq + Clone + std::fmt::Debug> ShadowGraph<T> {
+impl<T> From<&Snarl<T>> for ShadowGraph<T>
+where
+    T: Clone + PartialEq,
+{
+    fn from(value: &Snarl<T>) -> Self {
+        ShadowGraph::from_snarl(value)
+    }
+}
+
+// TODO: get a handle on generics here
+impl TryFrom<ShadowGraph<WorkNode>> for Snarl<WorkNode> {
+    type Error = anyhow::Error;
+
+    fn try_from(that: ShadowGraph<WorkNode>) -> Result<Self, Self::Error> {
+        // Well, this is less than ideal. Can't construct snarl nodes, let alone programmatically
+        // recreate the graph with same ids. API only allows us to insert/remove with inner data.
+        let value = serde_json::to_value(that)?;
+
+        Ok(serde_json::from_value(value)?)
+    }
+}
+
+impl<T> ShadowGraph<T>
+where
+    T: PartialEq + Clone,
+{
     /// Quickly see if the collections have the same memory address.
     /// Does not account for identical copies in different addresses.
     /// Use the standard comparator to do a deep check instead.
@@ -131,8 +215,9 @@ impl<T: PartialEq + Clone + std::fmt::Debug> ShadowGraph<T> {
     }
 
     #[must_use]
-    pub fn with_node(&self, id: &NodeId, t: &T) -> Self {
-        let nodes = self.nodes.with(id, t);
+    pub fn with_node(&self, id: &NodeId, t: Option<&SnarlNode<T>>) -> Self {
+        let t = t.unwrap();
+        let nodes = self.nodes.with(id, &MetaNode::from(t.clone()));
         if nodes.ptr_eq(&self.nodes) {
             self.clone()
         } else {
@@ -159,7 +244,7 @@ impl<T: PartialEq + Clone + std::fmt::Debug> ShadowGraph<T> {
 
     #[must_use]
     pub fn with_wire(&self, out_pin: OutPinId, in_pin: InPinId) -> Self {
-        let wire = (out_pin, in_pin);
+        let wire = (out_pin, in_pin).into();
         let wires = self.wires.with(&wire);
         if wires.ptr_eq(&self.wires) {
             self.clone()
@@ -173,7 +258,7 @@ impl<T: PartialEq + Clone + std::fmt::Debug> ShadowGraph<T> {
 
     #[must_use]
     pub fn without_wire(&self, out_pin: OutPinId, in_pin: InPinId) -> Self {
-        let wire = (out_pin, in_pin);
+        let wire = (out_pin, in_pin).into();
         if self.wires.contains(&wire) {
             Self {
                 nodes: self.nodes.clone(),

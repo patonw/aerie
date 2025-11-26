@@ -119,10 +119,7 @@ impl WorkflowState {
         let workflows = WorkflowStore::load(path)?;
 
         let edit_workflow = Some("default".to_string());
-        let workflow = workflows
-            .get(edit_workflow.as_deref().unwrap())
-            .cloned()
-            .unwrap_or_default();
+        let workflow = workflows.get(edit_workflow.as_deref().unwrap());
 
         let baseline: ShadowGraph<WorkNode> = ShadowGraph::from_snarl(&workflow);
 
