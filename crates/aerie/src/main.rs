@@ -125,7 +125,7 @@ fn main() -> anyhow::Result<()> {
     let mut agent_factory = AgentFactory {
         rt: rt.handle().to_owned(),
         settings: settings.clone(),
-        toolbox: Toolbox::default(),
+        toolbox: Arc::new(Toolbox::default()),
     };
 
     agent_factory.reload_tools()?;

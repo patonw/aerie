@@ -279,6 +279,13 @@ impl ChatHistory {
         buffer.into_iter()
     }
 
+    pub fn iter_msgs(&self) -> impl Iterator<Item = &Message> {
+        self.iter().filter_map(|entry| match &entry.content {
+            ChatContent::Message(message) => Some(message),
+            _ => None,
+        })
+    }
+
     pub fn lineage(&self) -> BTreeMap<String, BTreeSet<String>> {
         let mut buffer: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for entry in self.store.values() {

@@ -57,10 +57,19 @@ impl WorkflowStore {
 }
 
 pub fn fixup_workflow(mut snarl: Snarl<WorkNode>) -> Snarl<WorkNode> {
-    tracing::info!("Examining graph {snarl:?}");
+    tracing::debug!("Examining graph {snarl:?}");
+
     if snarl.nodes().count() < 1 || !snarl.nodes().any(|n| matches!(n, WorkNode::Start(_))) {
-        tracing::info!("Missing start node");
+        tracing::info!("Inserting missing start node");
         snarl.insert_node(egui::pos2(0.0, 0.0), WorkNode::Start(Default::default()));
+    }
+
+    if !snarl.nodes().any(|n| matches!(n, WorkNode::Finish(_))) {
+        tracing::info!("Inserting missing finish node");
+        snarl.insert_node(
+            egui::pos2(1000.0, 0.0),
+            WorkNode::Finish(Default::default()),
+        );
     }
 
     snarl

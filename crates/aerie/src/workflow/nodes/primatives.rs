@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::workflow::WorkflowError;
+
 use super::{DynNode, EditContext, MIN_WIDTH, RunContext, UiNode, Value, ValueKind};
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,8 +25,8 @@ impl DynNode for Text {
 }
 
 impl UiNode for Text {
-    fn title(&self) -> String {
-        "Text".into()
+    fn title(&self) -> &str {
+        "Text"
     }
 
     fn has_body(&self) -> bool {
@@ -63,7 +65,7 @@ impl Text {
         &mut self,
         _ctx: &RunContext,
         _inputs: Vec<Option<Value>>,
-    ) -> Result<(), Vec<String>> {
+    ) -> Result<(), WorkflowError> {
         Ok(())
     }
 }
@@ -103,8 +105,8 @@ impl DynNode for Preview {
 }
 
 impl UiNode for Preview {
-    fn title(&self) -> String {
-        "Preview".into()
+    fn title(&self) -> &str {
+        "Preview"
     }
 
     fn has_body(&self) -> bool {
@@ -132,7 +134,7 @@ impl Preview {
         &mut self,
         _ctx: &RunContext,
         inputs: Vec<Option<Value>>,
-    ) -> Result<(), Vec<String>> {
+    ) -> Result<(), WorkflowError> {
         if let Some(value) = inputs.first().and_then(|it| it.as_ref()) {
             self.value = value.to_owned();
         }
