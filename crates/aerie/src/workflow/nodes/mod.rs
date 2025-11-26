@@ -1,16 +1,20 @@
 use delegate::delegate;
 use serde::{Deserialize, Serialize};
 
+pub mod chat;
 pub mod primatives;
 pub mod scaffold;
 pub mod tools;
 
+pub use chat::*;
 pub use primatives::*;
 pub use scaffold::*;
 pub use tools::*;
 
 pub const MIN_WIDTH: f32 = 128.0;
 pub const MIN_HEIGHT: f32 = 32.0;
+
+use crate::workflow::WorkflowError;
 
 pub use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
@@ -32,15 +36,19 @@ pub enum WorkNode {
     Text(Text),
     Tools(Tools),
     Start(Start),
+    Finish(Finish),
+    LLM(LLM),
 }
 
 impl WorkNode {
     delegate! {
         to match self {
-            WorkNode::Preview(dummy) => dummy,
-            WorkNode::Text(text) => text,
-            WorkNode::Tools(tools) => tools,
+            WorkNode::Preview(node) => node,
+            WorkNode::Text(node) => node,
+            WorkNode::Tools(node) => node,
             WorkNode::Start(node) => node,
+            WorkNode::Finish(node) => node,
+            WorkNode::LLM(node) => node,
         } {
             #[call(noop)]
             pub fn as_dyn(&self) -> &dyn DynNode;
@@ -54,7 +62,7 @@ impl WorkNode {
             #[call(noop)]
             pub fn as_ui(&self) -> &dyn UiNode;
 
-            pub async fn forward(&mut self, ctx: &RunContext, inputs: Vec<Option<Value>>) -> Result<(), Vec<String>>;
+            pub async fn forward(&mut self, ctx: &RunContext, inputs: Vec<Option<Value>>) -> Result<(), WorkflowError>;
         }
     }
 }

@@ -7,7 +7,10 @@ use rmcp::model::Tool;
 use std::{
     ops::DerefMut,
     path::Path,
-    sync::{Arc, RwLock, atomic::AtomicU16},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, AtomicU16},
+    },
 };
 use uuid::Uuid;
 
@@ -105,6 +108,7 @@ impl egui_tiles::Behavior<Pane> for AppState {
 
 #[derive(Default)]
 pub struct WorkflowState {
+    pub running: Arc<AtomicBool>,
     pub editing: Option<String>,
     pub store: WorkflowStore,
     pub snarl: Arc<tokio::sync::RwLock<Snarl<WorkNode>>>,
@@ -126,6 +130,7 @@ impl WorkflowState {
         let snarl = Arc::new(tokio::sync::RwLock::new(workflow));
 
         Ok(Self {
+            running: Arc::new(AtomicBool::new(false)),
             editing: edit_workflow.clone(),
             store: workflows.clone(),
             snarl: snarl.clone(),

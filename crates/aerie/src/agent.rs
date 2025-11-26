@@ -21,7 +21,7 @@ type AgentT = AgentBuilder<CompletionModel>;
 pub struct AgentFactory {
     pub rt: tokio::runtime::Handle,
     pub settings: Arc<std::sync::RwLock<Settings>>,
-    pub toolbox: Toolbox,
+    pub toolbox: Arc<Toolbox>,
 }
 
 impl AgentFactory {
@@ -81,7 +81,7 @@ impl AgentFactory {
             toolbox.with_provider(&tool_name, toolkit);
         }
 
-        self.toolbox = toolbox;
+        self.toolbox = Arc::new(toolbox);
 
         Ok(())
     }

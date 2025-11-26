@@ -11,7 +11,7 @@ pub enum ExecState {
     Done,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct WorkflowRunner {
     pub run_ctx: RunContext,
     pub successors: BTreeMap<NodeId, BTreeSet<NodeId>>,
@@ -66,11 +66,10 @@ impl WorkflowRunner {
             let other = snarl[remote.node].as_dyn();
             let value = other.value(remote.output);
 
-            println!("Setting input {in_pin} to {value:?}");
             inputs[*in_pin] = Some(value);
         }
 
-        println!("Collected inputs {inputs:?}");
+        tracing::debug!("Collected inputs {inputs:?}");
 
         snarl[node_id].forward(&self.run_ctx, inputs).await.unwrap();
 
@@ -99,9 +98,6 @@ impl WorkflowRunner {
     }
 
     pub async fn exec(&mut self, snarl: &mut Snarl<WorkNode>) {
-        println!("Executing {self:?}");
         while self.step(snarl).await.is_some() {}
-
-        println!("Executed {self:?}");
     }
 }

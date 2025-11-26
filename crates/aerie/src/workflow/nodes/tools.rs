@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ToolProvider, Toolset};
+use crate::{ToolProvider, Toolset, workflow::WorkflowError};
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
@@ -27,8 +27,8 @@ impl DynNode for Tools {
 }
 
 impl UiNode for Tools {
-    fn title(&self) -> String {
-        "Tools".into()
+    fn title(&self) -> &str {
+        "Tools"
     }
 
     fn has_body(&self) -> bool {
@@ -57,7 +57,7 @@ impl Tools {
         &mut self,
         _ctx: &RunContext,
         _inputs: Vec<Option<Value>>,
-    ) -> Result<(), Vec<String>> {
+    ) -> Result<(), WorkflowError> {
         Ok(())
     }
 }

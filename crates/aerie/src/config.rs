@@ -1,5 +1,6 @@
 use cached::proc_macro::cached;
 use glob::{Pattern, PatternError};
+use itertools::Itertools as _;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
@@ -12,7 +13,7 @@ use serde_with::skip_serializing_none;
 
 use clap::{Parser, Subcommand};
 
-use crate::Pipeline;
+use crate::{Pipeline, ToolProvider, Toolbox};
 
 #[derive(Parser, Clone, Debug)]
 #[command(version, about, long_about = None)]
@@ -97,6 +98,27 @@ impl ConfigExt for Arc<RwLock<Settings>> {
 pub struct ToolSettings {
     pub provider: BTreeMap<String, ToolSpec>,
     pub toolset: BTreeMap<String, Toolset>,
+}
+
+impl ToolSettings {
+    pub async fn load_toolbox(&self) -> anyhow::Result<Toolbox> {
+        let mut toolbox = Toolbox::default();
+
+        let providers = self
+            .provider
+            .iter()
+            .filter(|(_, spec)| matches!(spec, ToolSpec::MCP { enabled, .. } if *enabled))
+            .map(|(name, spec)| (name.clone(), spec.clone()))
+            .collect_vec();
+
+        for (tool_name, tool_spec) in providers {
+            let toolkit = ToolProvider::from_spec(&tool_spec).await?;
+
+            toolbox.with_provider(&tool_name, toolkit);
+        }
+
+        Ok(toolbox)
+    }
 }
 
 /// Configuration to access a tool provider

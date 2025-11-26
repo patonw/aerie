@@ -1,13 +1,16 @@
+use arc_swap::ArcSwap;
 use decorum::{E32, E64};
 use egui::{Color32, Stroke};
 use egui_snarl::{
     InPinId, Node as SnarlNode, NodeId, OutPinId, Snarl,
     ui::{PinInfo, WireStyle},
 };
+use itertools::Itertools as _;
 use kinded::Kinded;
 use rig::message::Message;
 use serde::{Deserialize, Serialize};
 use std::{hash::Hash, sync::Arc};
+use thiserror::Error;
 
 use crate::{
     ChatHistory, Toolbox, Toolset,
@@ -67,13 +70,15 @@ impl ValueKind {
 }
 
 pub struct EditContext {
-    pub toolbox: Toolbox,
+    pub toolbox: Arc<Toolbox>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct RunContext {
+    pub toolbox: Arc<Toolbox>,
+
     /// Snapshot of the chat before the workflow is run
-    pub history: Arc<ChatHistory>,
+    pub history: Arc<ArcSwap<ChatHistory>>,
 
     /// The user's prompt that initiated the workflow run
     pub user_prompt: String,
@@ -300,6 +305,40 @@ pub trait DynNode {
         ValueKind::all()
     }
 
+    fn validate(&self, inputs: &[Option<Value>]) -> Result<(), WorkflowError> {
+        tracing::debug!(
+            "Validating inputs for {} -- {inputs:?}",
+            std::any::type_name_of_val(self)
+        );
+
+        if inputs.len() != self.inputs() {
+            Err(WorkflowError::Validation(vec![
+                "Incorrect number of inputs".into(),
+            ]))?
+        }
+
+        let errors = inputs
+            .iter()
+            .enumerate()
+            .filter(|(_, input)| input.is_some())
+            .filter_map(|(i, input)| {
+                let Some(value) = input else { unreachable!() };
+                let kinds = self.in_kinds(i);
+                if kinds.contains(&value.kind()) {
+                    None::<String>
+                } else {
+                    Some(format!("{value:?} is not one of {kinds:?}"))
+                }
+            })
+            .collect_vec();
+
+        if !errors.is_empty() {
+            Err(WorkflowError::Validation(errors))
+        } else {
+            Ok(())
+        }
+    }
+
     #[expect(unused_variables)]
     // We're more concerned about type validation here than updating UI visuals
     fn out_kind(&self, out_pin: usize) -> ValueKind {
@@ -321,8 +360,12 @@ pub trait UiNode: DynNode {
         self.value(out_pin)
     }
 
-    fn title(&self) -> String {
-        String::new()
+    fn title(&self) -> &str {
+        ""
+    }
+
+    fn tooltip(&self) -> &str {
+        ""
     }
 
     fn has_body(&self) -> bool {
@@ -359,5 +402,23 @@ pub trait UiNode: DynNode {
     #[expect(unused_variables)]
     fn show_output(&mut self, ui: &mut egui::Ui, ctx: &EditContext, pin_id: usize) -> PinInfo {
         self.out_kind(pin_id).default_pin()
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum WorkflowError {
+    #[error("Validation error")]
+    Validation(Vec<String>),
+
+    #[error("Input error")]
+    Input(Vec<String>),
+
+    #[error("{0}")]
+    Unknown(String),
+}
+
+impl From<anyhow::Error> for WorkflowError {
+    fn from(value: anyhow::Error) -> Self {
+        WorkflowError::Unknown(format!("anyhow... {value:?}"))
     }
 }

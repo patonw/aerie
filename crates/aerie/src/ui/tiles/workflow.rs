@@ -1,8 +1,3 @@
-use std::{
-    collections::BTreeSet,
-    hash::{DefaultHasher, Hasher as _},
-};
-
 use egui::Ui;
 use egui_snarl::{
     NodeId, Snarl,
@@ -25,7 +20,23 @@ struct WorkflowViewer {
 // TODO: button to reset input pins
 impl SnarlViewer<WorkNode> for WorkflowViewer {
     fn title(&mut self, node: &WorkNode) -> String {
-        node.as_ui().title()
+        node.as_ui().title().to_string()
+    }
+
+    fn has_on_hover_popup(&mut self, node: &WorkNode) -> bool {
+        !node.as_ui().tooltip().is_empty()
+    }
+
+    fn show_on_hover_popup(
+        &mut self,
+        node: NodeId,
+        _inputs: &[egui_snarl::InPin],
+        _outputs: &[egui_snarl::OutPin],
+        ui: &mut Ui,
+        snarl: &mut Snarl<WorkNode>,
+    ) {
+        let tooltip = snarl[node].as_ui().tooltip();
+        ui.label(tooltip);
     }
 
     fn inputs(&mut self, node: &WorkNode) -> usize {
@@ -101,9 +112,8 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             ui.close();
         }
 
-        // TODO: add start to empty graph by default. Don't allow insert or deletion
-        if ui.button("Start").clicked() {
-            snarl.insert_node(pos, WorkNode::Start(Default::default()));
+        if ui.button("LLM").clicked() {
+            snarl.insert_node(pos, WorkNode::LLM(Default::default()));
             ui.close();
         }
     }
@@ -176,33 +186,41 @@ impl super::AppState {
     pub fn workflow_ui(&mut self, ui: &mut egui::Ui) {
         egui::TopBottomPanel::top("Controls").show_inside(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                // TODO: remove button. run only during chat
                 if ui.button("Run").clicked() {
                     let snarl_ = self.workflows.snarl.clone();
+                    let mut target = { self.workflows.snarl.blocking_read().clone() };
+
                     let mut exec = {
-                        let snarl = snarl_.blocking_read();
                         let mut exec = WorkflowRunner::default();
-                        exec.init(&snarl);
+                        exec.init(&target);
 
                         // TODO: clean this up
-                        exec.run_ctx.history = self.session.history.load().clone();
+                        exec.run_ctx.history = self.session.history.clone();
                         exec.run_ctx.user_prompt = self.prompt.read().unwrap().clone();
                         exec.run_ctx.model = self.settings.view(|s| s.llm_model.clone());
                         exec.run_ctx.temperature = self.settings.view(|s| s.temperature);
                         exec.run_ctx.errors = self.errors.clone();
+                        exec.run_ctx.toolbox = self.agent_factory.toolbox.clone();
 
                         exec
                     };
 
+                    let running = self.workflows.running.clone();
                     self.rt.spawn(async move {
+                        running.store(true, std::sync::atomic::Ordering::Relaxed);
+
                         loop {
                             // This would block workflow rendering while waiting for LLM to respond
                             // TODO: explore how to use ArcSwap to snapshot snarl graphs
-                            let mut snarl = snarl_.write().await;
-                            if exec.step(&mut snarl).await.is_none() {
+                            if exec.step(&mut target).await.is_none() {
                                 break;
                             }
+
+                            let mut snarl = snarl_.write().await;
+                            *snarl = target.clone();
                         }
+
+                        running.store(false, std::sync::atomic::Ordering::Relaxed);
                     });
                 }
 
@@ -234,9 +252,20 @@ impl super::AppState {
             let mut viewer = WorkflowViewer { edit_ctx, shadow };
             let mut snarl = self.workflows.snarl.blocking_write();
 
-            SnarlWidget::new()
-                .style(self.workflows.style)
-                .show(&mut snarl, &mut viewer, ui);
+            // TODO: Allow pan/zoom while running
+            ui.add_enabled_ui(
+                !self
+                    .workflows
+                    .running
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                |ui| {
+                    SnarlWidget::new().style(self.workflows.style).show(
+                        &mut snarl,
+                        &mut viewer,
+                        ui,
+                    );
+                },
+            );
 
             self.workflows.shadow = viewer.shadow;
         });
