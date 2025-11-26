@@ -111,6 +111,18 @@ where
         }
     }
 }
+impl<V> ImmutableSetExt<V> for im::OrdSet<V>
+where
+    V: Ord + Eq + Clone,
+{
+    fn with(&self, v: &V) -> Self {
+        if self.contains(v) {
+            self.clone()
+        } else {
+            self.update(v.clone())
+        }
+    }
+}
 
 pub trait ImmutableMapExt<K, V> {
     /// Construct a new hash map by inserting a key/value mapping into a map.
@@ -121,6 +133,22 @@ pub trait ImmutableMapExt<K, V> {
 impl<K, V> ImmutableMapExt<K, V> for im::HashMap<K, V>
 where
     K: Hash + Eq + Clone,
+    V: PartialEq + Clone,
+{
+    fn with(&self, k: &K, v: &V) -> Self {
+        if let Some(old_value) = self.get(k)
+            && old_value == v
+        {
+            self.clone()
+        } else {
+            self.update(k.clone(), v.clone())
+        }
+    }
+}
+
+impl<K, V> ImmutableMapExt<K, V> for im::OrdMap<K, V>
+where
+    K: Ord + Eq + Clone,
     V: PartialEq + Clone,
 {
     fn with(&self, k: &K, v: &V) -> Self {
