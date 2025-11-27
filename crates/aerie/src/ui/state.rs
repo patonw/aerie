@@ -1,7 +1,8 @@
+use arc_swap::ArcSwap;
 use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
-use egui_snarl::{Snarl, ui::SnarlStyle};
+use egui_snarl::{NodeId, Snarl, ui::SnarlStyle};
 use rig::message::Message;
 use rmcp::model::Tool;
 use std::{
@@ -19,7 +20,7 @@ use crate::{
     AgentFactory, LogEntry, Settings, ToolSpec,
     chat::ChatSession,
     utils::ErrorList,
-    workflow::{ShadowGraph, WorkNode, store::WorkflowStore},
+    workflow::{ShadowGraph, WorkNode, runner::ExecState, store::WorkflowStore},
 };
 
 pub enum ToolEditorState {
@@ -115,6 +116,7 @@ pub struct WorkflowState {
     pub style: SnarlStyle,
     pub baseline: ShadowGraph<WorkNode>,
     pub shadow: ShadowGraph<WorkNode>,
+    pub node_state: Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>>,
 }
 
 impl WorkflowState {
@@ -154,6 +156,7 @@ impl WorkflowState {
             },
             baseline: baseline.clone(),
             shadow: baseline.clone(),
+            node_state: Default::default(),
         })
     }
 }
