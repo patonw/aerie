@@ -1,17 +1,24 @@
-use std::collections::{BTreeMap, BTreeSet};
-
+use arc_swap::ArcSwap;
 use egui_snarl::{NodeId, OutPinId, Snarl};
+use im::OrdSet;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::Deref,
+    sync::Arc,
+};
 
 use crate::workflow::{ShadowGraph, Wire, WorkflowError};
 
 use super::{RunContext, Value, WorkNode};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExecState {
-    Waiting(BTreeSet<NodeId>),
+    Waiting(im::OrdSet<NodeId>),
     Ready,
+    Running,
     Done,
     Disabled,
+    Failed,
 }
 
 #[derive(Default)]
@@ -20,14 +27,18 @@ pub struct WorkflowRunner {
     pub run_ctx: RunContext,
     pub successors: BTreeMap<NodeId, BTreeSet<NodeId>>,
     pub dependencies: BTreeMap<NodeId, BTreeMap<usize, OutPinId>>,
-    pub node_state: BTreeMap<NodeId, ExecState>,
+    pub node_state: Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>>,
     pub ready_nodes: BTreeSet<NodeId>,
 }
 
 // TODO methods to alter status when node controls or connections changed
 impl WorkflowRunner {
-    pub fn init(&mut self, graph: &ShadowGraph<WorkNode>) {
+    pub fn init(
+        &mut self,
+        graph: &ShadowGraph<WorkNode>,
+    ) -> Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>> {
         self.graph = graph.clone();
+        let mut node_state: im::OrdMap<NodeId, ExecState> = Default::default();
 
         for Wire { out_pin, in_pin } in &graph.wires {
             self.successors
@@ -42,8 +53,8 @@ impl WorkflowRunner {
         }
 
         for (key, value) in &self.dependencies {
-            let deps = value.values().map(|it| it.node).collect::<BTreeSet<_>>();
-            self.node_state.insert(*key, ExecState::Waiting(deps));
+            let deps = value.values().map(|it| it.node).collect::<im::OrdSet<_>>();
+            node_state.insert(*key, ExecState::Waiting(deps));
         }
 
         for ready_node in graph
@@ -53,12 +64,16 @@ impl WorkflowRunner {
             .filter(|id| !self.dependencies.contains_key(id))
             .filter(|id| !graph.is_disabled(*id))
         {
-            self.node_state.insert(ready_node, ExecState::Ready);
+            node_state.insert(ready_node, ExecState::Ready);
             self.ready_nodes.insert(ready_node);
         }
+
+        self.node_state.store(Arc::new(node_state));
+        self.node_state.clone()
     }
 
     pub async fn step(&mut self, snarl: &mut Snarl<WorkNode>) -> Result<bool, WorkflowError> {
+        let node_state = self.node_state.load_full();
         let Some(node_id) = self.ready_nodes.pop_first() else {
             // Nothing ready to run, halt
             tracing::info!(
@@ -67,6 +82,10 @@ impl WorkflowRunner {
             );
             return Ok(false);
         };
+
+        let mut node_state = node_state.deref().clone();
+        node_state.insert(node_id, ExecState::Running);
+        self.node_state.store(Arc::new(node_state.clone()));
 
         println!("Preparing to execute node {node_id:?}");
         let mut inputs = (0..(snarl[node_id]).as_dyn().inputs())
@@ -86,29 +105,42 @@ impl WorkflowRunner {
 
         tracing::debug!("Collected inputs {inputs:?}");
 
-        snarl[node_id].forward(&self.run_ctx, inputs).await?;
+        if let Err(err) = snarl[node_id].forward(&self.run_ctx, inputs).await {
+            node_state.insert(node_id, ExecState::Failed);
+            self.node_state.store(Arc::new(node_state.clone()));
+            return Err(err);
+        };
 
         println!("** Executed {node_id:?}");
-        self.node_state.insert(node_id, ExecState::Done);
+        node_state.insert(node_id, ExecState::Done);
+        self.node_state.store(Arc::new(node_state.clone()));
 
         if let Some(successors) = self.successors.get(&node_id) {
             for successor in successors {
                 println!("Updating successor {successor:?}");
-                if let Some(node_state) = self.node_state.get_mut(successor) {
-                    match node_state {
+                if let Some(state) = node_state.get(successor).cloned() {
+                    match state {
                         ExecState::Waiting(deps) => {
-                            deps.retain(|v| *v != node_id);
-                            if deps.is_empty() {
+                            let deps = deps
+                                .into_iter()
+                                .filter(|v| *v != node_id)
+                                .collect::<OrdSet<NodeId>>();
+
+                            let next_state = if deps.is_empty() {
                                 if self.graph.is_disabled(*successor) {
                                     // TODO: mark downstream disabled too
-                                    *node_state = ExecState::Disabled;
                                     tracing::info!("Node {successor:?} is disabled. Skipping.");
+                                    ExecState::Disabled
                                 } else {
                                     self.ready_nodes.insert(*successor);
-                                    *node_state = ExecState::Ready;
                                     tracing::info!("Node {successor:?} is now ready");
+                                    ExecState::Ready
                                 }
-                            }
+                            } else {
+                                ExecState::Waiting(deps)
+                            };
+
+                            node_state.insert(*successor, next_state);
                         }
                         ExecState::Disabled => {}
                         _ => todo!(),
@@ -116,6 +148,9 @@ impl WorkflowRunner {
                 }
             }
         }
+
+        self.node_state.store(Arc::new(node_state));
+
         Ok(true)
     }
 }

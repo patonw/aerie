@@ -1,4 +1,8 @@
-use egui::Ui;
+use std::sync::Arc;
+
+use arc_swap::ArcSwap;
+use egui::{Color32, RichText, Ui};
+use egui_phosphor::regular::{CHECK_CIRCLE, HAND_PALM, HOURGLASS_MEDIUM, PLAY_CIRCLE, WARNING};
 use egui_snarl::{
     NodeId, Snarl,
     ui::{SnarlViewer, SnarlWidget},
@@ -7,7 +11,10 @@ use egui_snarl::{
 use crate::{
     config::ConfigExt as _,
     utils::ErrorDistiller as _,
-    workflow::{EditContext, ShadowGraph, WorkNode, runner::WorkflowRunner},
+    workflow::{
+        EditContext, ShadowGraph, WorkNode,
+        runner::{ExecState, WorkflowRunner},
+    },
 };
 
 struct WorkflowViewer {
@@ -15,6 +22,8 @@ struct WorkflowViewer {
 
     // TODO: store this in the app state so it isn't clobbered every frame
     shadow: ShadowGraph<WorkNode>,
+
+    pub node_state: Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>>,
 }
 
 // TODO maintain a shadow graph that uses immutables
@@ -22,6 +31,51 @@ struct WorkflowViewer {
 impl SnarlViewer<WorkNode> for WorkflowViewer {
     fn title(&mut self, node: &WorkNode) -> String {
         node.as_ui().title().to_string()
+    }
+
+    fn show_header(
+        &mut self,
+        node: NodeId,
+        _inputs: &[egui_snarl::InPin],
+        _outputs: &[egui_snarl::OutPin],
+        ui: &mut Ui,
+        snarl: &mut Snarl<WorkNode>,
+    ) {
+        let title = self.title(&snarl[node]);
+        let node_state = self.node_state.load();
+
+        egui::Sides::new().show(
+            ui,
+            |ui| {
+                ui.label(title);
+            },
+            |ui| match node_state.get(&node) {
+                Some(ExecState::Waiting(_)) => {
+                    ui.label(RichText::new(HOURGLASS_MEDIUM).color(Color32::ORANGE))
+                        .on_hover_text("Waiting");
+                }
+                Some(ExecState::Ready) => {
+                    ui.label(RichText::new(PLAY_CIRCLE).color(Color32::BLUE))
+                        .on_hover_text("Ready");
+                }
+                Some(ExecState::Running) => {
+                    ui.add(egui::Spinner::new().color(Color32::LIGHT_GREEN))
+                        .on_hover_text("Running");
+                }
+                Some(ExecState::Done) => {
+                    ui.label(RichText::new(CHECK_CIRCLE).color(Color32::GREEN))
+                        .on_hover_text("Done");
+                }
+                Some(ExecState::Disabled) => {
+                    ui.label(HAND_PALM).on_hover_text("Disabled");
+                }
+                Some(ExecState::Failed) => {
+                    ui.label(RichText::new(WARNING).color(Color32::RED))
+                        .on_hover_text("Failed");
+                }
+                None => {}
+            },
+        );
     }
 
     fn final_node_rect(
@@ -234,7 +288,7 @@ impl super::AppState {
 
                     let mut exec = {
                         let mut exec = WorkflowRunner::default();
-                        exec.init(&self.workflows.shadow);
+                        self.workflows.node_state = exec.init(&self.workflows.shadow);
 
                         // TODO: clean this up
                         exec.run_ctx.history = self.session.history.clone();
@@ -294,7 +348,11 @@ impl super::AppState {
             };
 
             let shadow = self.workflows.shadow.clone();
-            let mut viewer = WorkflowViewer { edit_ctx, shadow };
+            let mut viewer = WorkflowViewer {
+                edit_ctx,
+                shadow,
+                node_state: self.workflows.node_state.clone(),
+            };
             let mut snarl = self.workflows.snarl.blocking_write();
 
             // TODO: Allow pan/zoom while running
