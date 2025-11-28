@@ -141,8 +141,8 @@ impl Deref for ChatEntry {
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Hash, Eq, Clone, Serialize, Deserialize)]
 pub struct ChatHistory {
-    pub store: im::HashMap<Uuid, ChatEntry>,
-    pub branches: im::HashMap<String, Uuid>,
+    pub store: im::OrdMap<Uuid, ChatEntry>,
+    pub branches: im::OrdMap<String, Uuid>,
     pub head: String,
 }
 
