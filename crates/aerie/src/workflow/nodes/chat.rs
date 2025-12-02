@@ -3,7 +3,7 @@ use std::sync::Arc;
 use decorum::E64;
 use itertools::Itertools;
 use rig::{
-    agent::PromptRequest,
+    agent::{AgentBuilderSimple, PromptRequest},
     client::{CompletionClient as _, ProviderClient as _},
     message::Message,
     providers::ollama,
@@ -287,8 +287,8 @@ impl LLM {
         };
 
         let llm_client = ollama::Client::from_env();
-        let mut agent = llm_client
-            .agent(model)
+
+        let mut agent = AgentBuilderSimple::new(llm_client.completion_model(model))
             .temperature(temperature.into())
             .preamble(preamble);
 

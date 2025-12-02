@@ -2,7 +2,7 @@ use itertools::Itertools;
 use std::sync::Arc;
 
 use rig::{
-    agent::{Agent, AgentBuilder},
+    agent::{Agent, AgentBuilderSimple},
     client::{CompletionClient as _, ProviderClient as _},
     providers::ollama::{self, CompletionModel},
 };
@@ -15,7 +15,7 @@ pub use super::logging::{LogChannelLayer, LogEntry};
 pub use super::pipeline::{Pipeline, Workstep};
 pub use super::toolbox::{ToolProvider, Toolbox};
 
-type AgentT = AgentBuilder<CompletionModel>;
+type AgentT = AgentBuilderSimple<CompletionModel>;
 
 #[derive(Clone)]
 pub struct AgentFactory {
@@ -34,8 +34,7 @@ impl AgentFactory {
             settings.llm_model.as_str()
         };
 
-        llm_client
-            .agent(model)
+        AgentBuilderSimple::new(llm_client.completion_model(model))
             .preamble(&settings.preamble)
             .temperature(settings.temperature)
     }

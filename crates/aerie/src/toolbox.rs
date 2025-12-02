@@ -2,7 +2,7 @@ use itertools::Itertools;
 use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
 use tokio::process::Command;
 
-use rig::{agent::AgentBuilder, providers::ollama::CompletionModel};
+use rig::{agent::AgentBuilderSimple, providers::ollama::CompletionModel};
 use rmcp::{
     RoleClient, ServiceExt as _,
     model::Tool,
@@ -12,7 +12,7 @@ use rmcp::{
 
 use super::config::{ToolSpec, Toolset};
 
-type AgentT = AgentBuilder<CompletionModel>;
+type AgentT = AgentBuilderSimple<CompletionModel>;
 
 #[derive(Clone)]
 pub enum ToolProvider {
@@ -25,13 +25,14 @@ pub enum ToolProvider {
 impl ToolProvider {
     pub fn select_tools(&self, agent: AgentT, selector: impl Fn(&Tool) -> bool) -> AgentT {
         match self {
-            ToolProvider::MCP { client, tools } => tools
-                .iter()
-                .filter(|it| selector(it))
-                .cloned()
-                .fold(agent, |agent, tool| {
-                    agent.rmcp_tool(tool, client.peer().clone())
-                }),
+            ToolProvider::MCP { client, tools } => {
+                let selection = tools
+                    .iter()
+                    .filter(|it| selector(it))
+                    .cloned()
+                    .collect_vec();
+                agent.rmcp_tools(selection, client.peer().clone())
+            }
         }
     }
 
