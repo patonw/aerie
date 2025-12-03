@@ -192,6 +192,10 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             snarl.insert_node(pos, WorkNode::LLM(Default::default()));
             ui.close();
         }
+        if ui.button("Side Chat").clicked() {
+            snarl.insert_node(pos, WorkNode::GraftChat(Default::default()));
+            ui.close();
+        }
     }
 
     fn has_body(&mut self, node: &WorkNode) -> bool {
@@ -301,6 +305,7 @@ impl super::AppState {
                         exec
                     };
 
+                    let session = self.session.clone();
                     let running = self.workflows.running.clone();
                     let errors = self.errors.clone();
                     self.rt.spawn(async move {
@@ -317,6 +322,7 @@ impl super::AppState {
                             }
                         }
 
+                        errors.distil(session.save());
                         running.store(false, std::sync::atomic::Ordering::Relaxed);
                     });
                 }

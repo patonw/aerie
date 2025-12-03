@@ -318,3 +318,78 @@ impl LLM {
         Ok(())
     }
 }
+
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
+pub struct GraftChat {
+    #[serde(skip)]
+    pub chat: Arc<ChatHistory>,
+}
+
+impl DynNode for GraftChat {
+    fn value(&self, _out_pin: usize) -> Value {
+        Value::Chat(self.chat.clone())
+    }
+
+    fn inputs(&self) -> usize {
+        2
+    }
+
+    fn in_kinds(&self, _in_pin: usize) -> &'static [ValueKind] {
+        &[ValueKind::Chat]
+    }
+
+    fn out_kind(&self, _out_pin: usize) -> ValueKind {
+        ValueKind::Chat
+    }
+}
+
+impl UiNode for GraftChat {
+    fn title(&self) -> &str {
+        "Side Conversation"
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+        _remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => ui.label("main"),
+            1 => ui.label("aside"),
+            _ => unreachable!(),
+        };
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+}
+
+impl GraftChat {
+    pub async fn forward(
+        &mut self,
+        _ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        self.validate(&inputs)?;
+
+        let chat = match &inputs[0] {
+            Some(Value::Chat(history)) => history,
+            None => Err(WorkflowError::Input(vec!["Chat history required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        let aside = match &inputs[1] {
+            Some(Value::Chat(history)) => history,
+            None => Err(WorkflowError::Input(vec!["Chat history required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        let common = chat.find_common(aside);
+
+        let result = chat.aside(aside.with_base(common).iter().map(|it| it.content.clone()))?;
+        self.chat = Arc::new(result.into_owned());
+
+        Ok(())
+    }
+}
