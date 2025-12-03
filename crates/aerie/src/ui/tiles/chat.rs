@@ -1,6 +1,7 @@
 use eframe::egui;
 use egui_commonmark::*;
 use egui_phosphor::regular::GIT_BRANCH;
+use itertools::Itertools as _;
 use minijinja::{Environment, context};
 use rig::{
     agent::PromptRequest,
@@ -73,8 +74,21 @@ impl super::AppState {
                 };
 
                 let cache = &mut self.cache;
-                self.session.view(|session_r| {
-                    for msg in session_r.iter() {
+                self.session.view(|history| {
+                    for msg in history.iter() {
+                        let aside = history.iter_aside(msg).collect_vec();
+                        if !aside.is_empty() {
+                            egui::CollapsingHeader::new("details")
+                                .id_salt(msg.id)
+                                .show(ui, |ui| {
+                                    for entry in aside {
+                                        if let ChatContent::Message(message) = &entry.content {
+                                            render_message(ui, cache, message);
+                                        }
+                                    }
+                                });
+                        }
+
                         match &msg.content {
                             ChatContent::Message(message) => {
                                 // TODO: only on user prompt

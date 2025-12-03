@@ -4,6 +4,7 @@ use egui_graphs::{
     SettingsNavigation,
 };
 use egui_phosphor::regular::ARROW_CLOCKWISE;
+use itertools::Itertools;
 use node::TextBlockNode;
 use petgraph::{
     Directed, graph::NodeIndex, prelude::StableGraph, stable_graph::DefaultIx,
@@ -12,6 +13,8 @@ use petgraph::{
 use uuid::Uuid;
 
 use crate::{ChatEntry, ChatHistory};
+
+// TODO: show tags for branch heads
 
 // Account for precision loss when transforming between screen and canvas sizes
 const RELAYOUT_THRESHOLD: f32 = 32.0;
@@ -131,24 +134,35 @@ impl MessageGraph {
                 if let Some(node) = self.g.node_mut(*ix) {
                     // Only support updating branches currently
                     node.payload_mut().branch = entry.branch.clone();
-                    node.set_color(
-                        colors
-                            .get(&entry.branch)
-                            .cloned()
-                            .unwrap_or(Color32::DARK_GRAY),
-                    );
+                    node.set_color(colors.get(&entry.branch).cloned().unwrap_or(Color32::BLACK));
                 }
             } else {
                 let ix = self.g.add_node(entry.clone());
-                self.g.node_mut(ix).unwrap().set_color(
-                    colors
-                        .get(&entry.branch)
-                        .cloned()
-                        .unwrap_or(Color32::DARK_GRAY),
-                );
+                self.g
+                    .node_mut(ix)
+                    .unwrap()
+                    .set_color(colors.get(&entry.branch).cloned().unwrap_or(Color32::BLACK));
 
                 self.idx_map.insert(*uuid, ix);
             }
+        }
+
+        let removed = self
+            .g
+            .nodes_iter()
+            .filter_map(|(ix, node)| {
+                let uuid = node.payload().id;
+                if history.store.contains_key(&uuid) {
+                    None
+                } else {
+                    Some((ix, uuid))
+                }
+            })
+            .collect_vec();
+
+        for (ix, uuid) in removed {
+            self.idx_map.remove(&uuid);
+            self.g.remove_node(ix);
         }
 
         for (uuid, entry) in history.store.iter() {
@@ -159,6 +173,19 @@ impl MessageGraph {
                 continue;
             };
             let Some(pix) = self.idx_map.get(parent) else {
+                continue;
+            };
+
+            if !self.g.g().contains_edge(*pix, *ix) {
+                self.g.add_edge(*pix, *ix, ());
+            }
+
+            // TODO: tag the edge so we can render it differently
+            let Some(aside) = &entry.aside else {
+                continue;
+            };
+
+            let Some(pix) = self.idx_map.get(aside) else {
                 continue;
             };
 
