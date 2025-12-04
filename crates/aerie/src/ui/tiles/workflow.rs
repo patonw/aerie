@@ -1,12 +1,14 @@
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
 
 use arc_swap::ArcSwap;
-use egui::{Color32, RichText, Ui};
+use egui::{Color32, ComboBox, RichText, Ui};
 use egui_phosphor::regular::{CHECK_CIRCLE, HAND_PALM, HOURGLASS_MEDIUM, PLAY_CIRCLE, WARNING};
 use egui_snarl::{
     NodeId, Snarl,
     ui::{SnarlViewer, SnarlWidget},
 };
+use itertools::Itertools;
+use uuid::Uuid;
 
 use crate::{
     config::ConfigExt as _,
@@ -286,64 +288,54 @@ impl super::AppState {
     pub fn workflow_ui(&mut self, ui: &mut egui::Ui) {
         egui::TopBottomPanel::top("Controls").show_inside(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Run").clicked() {
-                    let snarl_ = self.workflows.snarl.clone();
-                    let mut target = { self.workflows.snarl.blocking_read().clone() };
-
-                    let mut exec = {
-                        let mut exec = WorkflowRunner::default();
-                        self.workflows.node_state = exec.init(&self.workflows.shadow);
-
-                        // TODO: clean this up
-                        exec.run_ctx.history = self.session.history.clone();
-                        exec.run_ctx.user_prompt = self.prompt.read().unwrap().clone();
-                        exec.run_ctx.model = self.settings.view(|s| s.llm_model.clone());
-                        exec.run_ctx.temperature = self.settings.view(|s| s.temperature);
-                        exec.run_ctx.errors = self.errors.clone();
-                        exec.run_ctx.toolbox = self.agent_factory.toolbox.clone();
-
-                        exec
-                    };
-
-                    let session = self.session.clone();
-                    let running = self.workflows.running.clone();
-                    let errors = self.errors.clone();
-                    self.rt.spawn(async move {
-                        running.store(true, std::sync::atomic::Ordering::Relaxed);
-
-                        loop {
-                            match exec.step(&mut target).await {
-                                Ok(false) => break,
-                                Ok(true) => {
-                                    let mut snarl = snarl_.write().await;
-                                    *snarl = target.clone();
-                                }
-                                Err(err) => errors.push(err.into()),
+                ComboBox::from_id_salt("workflow")
+                    .selected_text(&self.workflows.editing)
+                    .show_ui(ui, |ui| {
+                        let names = self.workflows.store.workflows.keys().cloned().collect_vec();
+                        for name in &names {
+                            let original = self.workflows.editing.clone();
+                            let mut current = &original;
+                            ui.selectable_value(&mut current, name, name);
+                            if current != &original {
+                                self.workflows.switch(current);
                             }
                         }
-
-                        errors.distil(session.save());
-                        running.store(false, std::sync::atomic::Ordering::Relaxed);
                     });
+
+                if ui.button("New").clicked() {
+                    self.workflows.switch(&Uuid::new_v4().to_string());
                 }
 
+                if let Some(renaming) = self.workflows.renaming.as_mut() {
+                    if ui.text_edit_singleline(renaming).lost_focus() {
+                        self.workflows.rename();
+                    }
+                } else if ui.button("Rename").clicked() {
+                    self.workflows.renaming = Some(self.workflows.editing.clone());
+                }
+
+                ui.separator();
                 // TODO: autosave based on change detection
-                if ui.button("Save").clicked()
-                    && let Some(name) = self.workflows.editing.as_deref()
-                {
+                if ui.button("Save").clicked() {
                     tracing::info!(
-                        "Saving {name} to workflows...changed? {}",
+                        "Saving {} to workflows...changed? {}",
+                        &self.workflows.editing,
                         !self.workflows.shadow.fast_eq(&self.workflows.baseline)
                     );
 
                     self.workflows
                         .store
-                        .put(name, self.workflows.shadow.clone());
+                        .put(&self.workflows.editing, self.workflows.shadow.clone());
                     self.workflows.store.save().unwrap();
 
                     let mut snarl = self.workflows.snarl.blocking_write();
                     *snarl = Snarl::try_from(self.workflows.shadow.clone()).unwrap();
                     self.workflows.baseline = self.workflows.shadow.clone();
+                }
+
+                ui.add_space(32.0);
+                if ui.button("Run").clicked() {
+                    self.exec_workflow();
                 }
             });
         });
@@ -377,6 +369,53 @@ impl super::AppState {
             );
 
             self.workflows.shadow = viewer.shadow;
+        });
+    }
+
+    // TODO: decouple editing and execution workflows
+    /// Runs the workflow currently being edited and updates nodes in the viewer with results.
+    pub fn exec_workflow(&mut self) {
+        let snarl_ = self.workflows.snarl.clone();
+        let mut target = { self.workflows.snarl.blocking_read().clone() };
+        let task_count_ = self.task_count.clone();
+
+        let mut exec = {
+            let mut exec = WorkflowRunner::default();
+            self.workflows.node_state = exec.init(&self.workflows.shadow);
+
+            // TODO: clean this up
+            exec.run_ctx.history = self.session.history.clone();
+            exec.run_ctx.user_prompt = self.prompt.read().unwrap().clone();
+            exec.run_ctx.model = self.settings.view(|s| s.llm_model.clone());
+            exec.run_ctx.temperature = self.settings.view(|s| s.temperature);
+            exec.run_ctx.errors = self.errors.clone();
+            exec.run_ctx.toolbox = self.agent_factory.toolbox.clone();
+
+            exec
+        };
+
+        let session = self.session.clone();
+        let running = self.workflows.running.clone();
+        let errors = self.errors.clone();
+
+        self.rt.spawn(async move {
+            task_count_.fetch_add(1, Ordering::Relaxed);
+            running.store(true, std::sync::atomic::Ordering::Relaxed);
+
+            loop {
+                match exec.step(&mut target).await {
+                    Ok(false) => break,
+                    Ok(true) => {
+                        let mut snarl = snarl_.write().await;
+                        *snarl = target.clone();
+                    }
+                    Err(err) => errors.push(err.into()),
+                }
+            }
+
+            errors.distil(session.save());
+            running.store(false, std::sync::atomic::Ordering::Relaxed);
+            task_count_.fetch_sub(1, Ordering::Relaxed);
         });
     }
 }

@@ -2,7 +2,16 @@ use eframe::egui;
 use itertools::Itertools;
 use std::collections::BTreeSet;
 
-use crate::{Pipeline, Workstep, ui::toggled_field};
+use minijinja::{Environment, context};
+use rig::{agent::PromptRequest, message::Message};
+use std::{borrow::Cow, collections::VecDeque, sync::atomic::Ordering, time::Instant};
+use tracing::Level;
+
+use crate::{
+    ChatContent, LogEntry, Pipeline, Workstep,
+    ui::toggled_field,
+    utils::{CowExt as _, ErrorDistiller as _},
+};
 
 impl super::AppState {
     pub fn pipeline_ui(&mut self, ui: &mut egui::Ui) {
@@ -155,6 +164,138 @@ impl super::AppState {
                     }
                 }
             });
+        });
+    }
+
+    pub fn exec_pipeline(&mut self, pipeline: Pipeline, user_prompt: String) {
+        let session_ = self.session.clone();
+        let scratch_ = self.scratch.clone();
+        let task_count_ = self.task_count.clone();
+        let agent_factory_ = self.agent_factory.clone();
+        let log_history_ = self.log_history.clone();
+        let branch = self.session.view(|hist| hist.head.clone());
+        let errors = self.errors.clone();
+
+        self.rt.spawn(async move {
+            task_count_.fetch_add(1, Ordering::Relaxed);
+            let start = Instant::now();
+            let env = Environment::new();
+
+            for workstep in pipeline.steps {
+                if workstep.disabled {
+                    continue;
+                }
+
+                let Ok(tmpl) = env.template_from_str(&workstep.prompt) else {
+                    tracing::warn!("Cannot load template from step: {workstep:?}");
+                    continue;
+                };
+
+                let Ok(prompt) = tmpl.render(context! {user_prompt}) else {
+                    tracing::warn!("Cannot render prompt for step: {workstep:?}");
+                    continue;
+                };
+
+                let mut history = session_.view(|session| {
+                    let mut buffer: VecDeque<&Message> = if let Some(depth) = workstep.depth {
+                        VecDeque::with_capacity(depth)
+                    } else {
+                        VecDeque::new()
+                    };
+
+                    for entry in session.iter() {
+                        match &entry.content {
+                            ChatContent::Message(message) => buffer.push_back(message),
+                            ChatContent::Aside { content, .. } => {
+                                if let Some(message) = content.last() {
+                                    buffer.push_back(message);
+                                }
+                            }
+                            ChatContent::Error(_) => {}
+                        }
+                    }
+
+                    let mut scratch = scratch_.write().unwrap();
+                    scratch.push(Ok(Message::user(&prompt)));
+
+                    for message in scratch[..scratch.len() - 1]
+                        .iter()
+                        .filter_map(|it| it.as_ref().ok())
+                    {
+                        buffer.push_back(message);
+                    }
+
+                    // Laziness avoids cloning older items we won't use
+                    buffer.into_iter().cloned().collect::<Vec<_>>()
+                });
+
+                let agent = agent_factory_.agent(&workstep);
+                let request = PromptRequest::new(&agent, &prompt)
+                    .multi_turn(5)
+                    .with_history(&mut history);
+
+                match request.await {
+                    Ok(response) => {
+                        let mut chat = scratch_.write().unwrap();
+                        chat.push(Ok(Message::assistant(response)));
+                    }
+
+                    Err(err) => {
+                        tracing::warn!("Failed chat: {err:?}");
+
+                        let mut chat = scratch_.write().unwrap();
+                        let err_str = format!("{err}");
+                        chat.push(Err(err_str.clone()));
+
+                        let mut log_rw = log_history_.write().unwrap();
+                        log_rw.push(LogEntry(Level::ERROR, format!("Error: {err:?}")));
+                    }
+                }
+            }
+
+            let scratch = std::mem::take(&mut *scratch_.write().unwrap());
+            errors.distil(session_.transform(|history| {
+                let history = Cow::Borrowed(history);
+                if scratch.len() <= 2 {
+                    history.try_moo(|h| {
+                        h.extend(scratch.into_iter().map(|it| it.into()), Some(&branch))
+                    })
+                } else {
+                    use itertools::{Either, Itertools as _};
+
+                    // Split scratch so messages can be collapsed but errors will appear inline
+                    let mut iter = scratch.into_iter();
+                    let Some(prompt_msg) = iter.next() else {
+                        unreachable!()
+                    };
+
+                    let (content, errors): (Vec<_>, Vec<_>) = iter.partition_map(|r| match r {
+                        Ok(v) => Either::Left(v),
+                        Err(v) => Either::Right(v),
+                    });
+
+                    let aside_msgs = ChatContent::Aside {
+                        automation: pipeline.name,
+                        prompt: user_prompt,
+                        collapsed: true,
+                        content,
+                    };
+
+                    let error_msgs = errors.into_iter().map(ChatContent::Error);
+
+                    // No inconsistent partial updates if intermediate ops fail
+                    history
+                        .try_moo(|h| h.push(prompt_msg.into(), Some(&branch)))?
+                        .try_moo(|h| h.push(aside_msgs, Some(&branch)))?
+                        .try_moo(|h| h.extend(error_msgs, Some(&branch)))
+                }
+            }));
+
+            task_count_.fetch_sub(1, Ordering::Relaxed);
+            tracing::info!(
+                "Request completed in {} seconds.",
+                Instant::now().duration_since(start).as_secs_f32()
+            );
         });
     }
 }

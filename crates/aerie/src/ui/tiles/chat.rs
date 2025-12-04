@@ -2,19 +2,15 @@ use eframe::egui;
 use egui_commonmark::*;
 use egui_phosphor::regular::GIT_BRANCH;
 use itertools::Itertools as _;
-use minijinja::{Environment, context};
-use rig::{
-    agent::PromptRequest,
-    message::{AssistantContent, Message, UserContent},
+use rig::message::{AssistantContent, Message, UserContent};
+use std::{f32, sync::atomic::Ordering};
+
+use crate::{
+    ChatContent,
+    config::ConfigExt,
+    ui::{agent_bubble, error_bubble, user_bubble},
+    utils::ErrorDistiller as _,
 };
-use std::{borrow::Cow, collections::VecDeque, f32, sync::atomic::Ordering, time::Instant};
-use tracing::Level;
-
-// use super::{Pane, agent_bubble, error_bubble, tiles, user_bubble};
-use crate::{ChatContent, LogEntry, utils::ErrorDistiller as _};
-
-use crate::ui::{agent_bubble, error_bubble, user_bubble};
-use crate::utils::CowExt as _;
 
 // Too many refs to self for a free function. Need to clean this up
 impl super::AppState {
@@ -60,7 +56,24 @@ impl super::AppState {
                 });
 
                 if submitted {
-                    self.on_submit(ui);
+                    let prompt_ = self.prompt.clone();
+
+                    if let Some(automation) = self.settings.view(|s| s.automation.clone())
+                        && self.workflows.names().contains(&automation)
+                    {
+                        // TODO: deal with this nuking any edits in progress
+                        self.workflows.switch(&automation);
+                        self.exec_workflow();
+
+                        let _user_prompt = std::mem::take(&mut *prompt_.write().unwrap());
+                    } else {
+                        let pipeline = self
+                            .settings
+                            .view(|s| s.get_pipeline().cloned().unwrap_or_default());
+
+                        let user_prompt = std::mem::take(&mut *prompt_.write().unwrap());
+                        self.exec_pipeline(pipeline, user_prompt);
+                    }
                 }
             });
 
@@ -244,166 +257,6 @@ impl super::AppState {
                 self.branch_point = None;
             }
         }
-    }
-
-    fn on_submit(&mut self, ui: &mut egui::Ui) {
-        let ui_ctx = ui.ctx().clone();
-        let session_ = self.session.clone();
-        let scratch_ = self.scratch.clone();
-        let prompt_ = self.prompt.clone();
-        let task_count_ = self.task_count.clone();
-        let agent_factory_ = self.agent_factory.clone();
-        let log_history_ = self.log_history.clone();
-        let branch = self.session.view(|hist| hist.head.clone());
-        let errors = self.errors.clone();
-
-        let workflow = {
-            let settings_r = self.settings.read().unwrap();
-            settings_r.get_automation().cloned().unwrap_or_default()
-        };
-
-        self.rt.spawn(async move {
-            task_count_.fetch_add(1, Ordering::Relaxed);
-            let user_prompt = std::mem::take(&mut *prompt_.write().unwrap());
-            let start = Instant::now();
-            let env = Environment::new();
-
-            for workstep in workflow.steps {
-                if workstep.disabled {
-                    continue;
-                }
-
-                let Ok(tmpl) = env.template_from_str(&workstep.prompt) else {
-                    tracing::warn!("Cannot load template from step: {workstep:?}");
-                    continue;
-                };
-
-                // TODO: implement last_message
-                // let last_message = {
-                //     let session = session_.read().unwrap();
-                //     let last_message = session
-                //         .last()
-                //         .map(|msg| match msg.content {
-                //             ChatContent::Message(message) => message.content,
-                //             ChatContent::Aside {
-                //                 workflow,
-                //                 prompt,
-                //                 collapsed,
-                //                 content,
-                //             } => todo!(),
-                //             ChatContent::Error(err) => err,
-                //         })
-                //         .unwrap_or(String::default());
-                // };
-
-                let Ok(prompt) = tmpl.render(context! {user_prompt}) else {
-                    tracing::warn!("Cannot render prompt for step: {workstep:?}");
-                    continue;
-                };
-
-                let mut history = session_.view(|session| {
-                    let mut buffer: VecDeque<&Message> = if let Some(depth) = workstep.depth {
-                        VecDeque::with_capacity(depth)
-                    } else {
-                        VecDeque::new()
-                    };
-
-                    for entry in session.iter() {
-                        match &entry.content {
-                            ChatContent::Message(message) => buffer.push_back(message),
-                            ChatContent::Aside { content, .. } => {
-                                if let Some(message) = content.last() {
-                                    buffer.push_back(message);
-                                }
-                            }
-                            ChatContent::Error(_) => {}
-                        }
-                    }
-
-                    let mut scratch = scratch_.write().unwrap();
-                    scratch.push(Ok(Message::user(&prompt)));
-
-                    for message in scratch[..scratch.len() - 1]
-                        .iter()
-                        .filter_map(|it| it.as_ref().ok())
-                    {
-                        buffer.push_back(message);
-                    }
-
-                    // Laziness avoids cloning older items we won't use
-                    buffer.into_iter().cloned().collect::<Vec<_>>()
-                });
-
-                let agent = agent_factory_.agent(&workstep);
-                let request = PromptRequest::new(&agent, &prompt)
-                    .multi_turn(5)
-                    .with_history(&mut history);
-
-                match request.await {
-                    Ok(response) => {
-                        let mut chat = scratch_.write().unwrap();
-                        chat.push(Ok(Message::assistant(response)));
-                        ui_ctx.request_repaint();
-                    }
-
-                    Err(err) => {
-                        tracing::warn!("Failed chat: {err:?}");
-
-                        let mut chat = scratch_.write().unwrap();
-                        let err_str = format!("{err}");
-                        chat.push(Err(err_str.clone()));
-                        ui_ctx.request_repaint();
-
-                        let mut log_rw = log_history_.write().unwrap();
-                        log_rw.push(LogEntry(Level::ERROR, format!("Error: {err:?}")));
-                    }
-                }
-            }
-
-            let scratch = std::mem::take(&mut *scratch_.write().unwrap());
-            errors.distil(session_.transform(|history| {
-                let history = Cow::Borrowed(history);
-                if scratch.len() <= 2 {
-                    history.try_moo(|h| {
-                        h.extend(scratch.into_iter().map(|it| it.into()), Some(&branch))
-                    })
-                } else {
-                    use itertools::{Either, Itertools as _};
-
-                    // Split scratch so messages can be collapsed but errors will appear inline
-                    let mut iter = scratch.into_iter();
-                    let Some(prompt_msg) = iter.next() else {
-                        unreachable!()
-                    };
-
-                    let (content, errors): (Vec<_>, Vec<_>) = iter.partition_map(|r| match r {
-                        Ok(v) => Either::Left(v),
-                        Err(v) => Either::Right(v),
-                    });
-
-                    let aside_msgs = ChatContent::Aside {
-                        automation: workflow.name,
-                        prompt: user_prompt,
-                        collapsed: true,
-                        content,
-                    };
-
-                    let error_msgs = errors.into_iter().map(ChatContent::Error);
-
-                    // No inconsistent partial updates if intermediate ops fail
-                    history
-                        .try_moo(|h| h.push(prompt_msg.into(), Some(&branch)))?
-                        .try_moo(|h| h.push(aside_msgs, Some(&branch)))?
-                        .try_moo(|h| h.extend(error_msgs, Some(&branch)))
-                }
-            }));
-
-            task_count_.fetch_sub(1, Ordering::Relaxed);
-            tracing::info!(
-                "Request completed in {} seconds.",
-                Instant::now().duration_since(start).as_secs_f32()
-            );
-        });
     }
 }
 
