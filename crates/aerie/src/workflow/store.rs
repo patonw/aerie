@@ -41,14 +41,23 @@ impl WorkflowStore {
         Ok(())
     }
 
-    pub fn get(&self, key: &str) -> Snarl<WorkNode> {
+    pub fn get(&self, key: &str) -> Option<ShadowGraph<WorkNode>> {
+        self.workflows.get(key).cloned()
+    }
+
+    pub fn get_snarl(&self, key: &str) -> Option<Snarl<WorkNode>> {
         self.workflows
             .get(key)
             .map(|it| Snarl::try_from(it.clone()).unwrap())
-            .unwrap_or_default()
     }
 
     pub fn put(&mut self, key: &str, value: ShadowGraph<WorkNode>) {
         self.workflows.insert(key.into(), value);
+    }
+
+    pub fn rename(&mut self, old_name: &str, new_name: &str) {
+        if let Some(value) = self.workflows.remove(old_name) {
+            self.put(new_name, value);
+        }
     }
 }

@@ -67,7 +67,7 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn get_automation(&self) -> Option<&Pipeline> {
+    pub fn get_pipeline(&self) -> Option<&Pipeline> {
         let name = self.automation.as_ref()?;
 
         self.pipelines.iter().find(|it| it.name == *name)

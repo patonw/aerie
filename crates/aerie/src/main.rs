@@ -13,7 +13,7 @@ use tracing_subscriber::{
 use aerie::{
     AgentFactory, LogChannelLayer, LogEntry, Settings, Toolbox, Toolset,
     chat::ChatSession,
-    config::{Args, Command, SessionCommand},
+    config::{Args, Command, ConfigExt, SessionCommand},
     ui::{AppState, Pane, state::WorkflowState},
     utils::{ErrorDistiller as _, new_errlist},
 };
@@ -154,7 +154,9 @@ fn main() -> anyhow::Result<()> {
 
     let mut tree = egui_tiles::Tree::new("my_tree", root, tiles);
 
-    let flow_state = WorkflowState::from_path(settings_path.with_file_name("workflow.yml"))?;
+    let flow_name = settings.view(|s| s.automation.clone());
+    let flow_state =
+        WorkflowState::from_path(settings_path.with_file_name("workflow.yml"), flow_name)?;
 
     let mut behavior = AppState {
         errors: new_errlist(),

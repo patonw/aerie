@@ -6,7 +6,6 @@ use egui_snarl::{NodeId, Snarl, ui::SnarlStyle};
 use rig::message::Message;
 use rmcp::model::Tool;
 use std::{
-    ops::DerefMut,
     path::Path,
     sync::{
         Arc, RwLock,
@@ -21,7 +20,7 @@ use crate::{
     chat::ChatSession,
     ui::tiles::messages::MessageGraph,
     utils::ErrorList,
-    workflow::{ShadowGraph, WorkNode, runner::ExecState, store::WorkflowStore},
+    workflow::{ShadowGraph, WorkNode, fixup_workflow, runner::ExecState, store::WorkflowStore},
 };
 
 pub enum ToolEditorState {
@@ -83,8 +82,7 @@ impl egui_tiles::Behavior<Pane> for AppState {
     ) -> egui_tiles::UiResponse {
         match pane {
             Pane::Settings => {
-                let mut settings_rw = self.settings.write().unwrap();
-                tiles::settings::settings_ui(ui, settings_rw.deref_mut());
+                self.settings_ui(ui);
             }
             Pane::Navigator => {
                 self.nav_ui(ui);
@@ -117,7 +115,8 @@ impl egui_tiles::Behavior<Pane> for AppState {
 #[derive(Default)]
 pub struct WorkflowState {
     pub running: Arc<AtomicBool>,
-    pub editing: Option<String>,
+    pub editing: String,
+    pub renaming: Option<String>,
     pub store: WorkflowStore,
     pub snarl: Arc<tokio::sync::RwLock<Snarl<WorkNode>>>,
     pub style: SnarlStyle,
@@ -127,26 +126,25 @@ pub struct WorkflowState {
 }
 
 impl WorkflowState {
-    pub fn from_path(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+    pub fn from_path(path: impl AsRef<Path>, flow_name: Option<String>) -> anyhow::Result<Self> {
         use egui_snarl::ui::{BackgroundPattern, Grid, NodeLayout, PinPlacement, SnarlStyle};
-        let workflows = WorkflowStore::load(path)?;
+        let store = WorkflowStore::load(path)?;
 
-        let edit_workflow = Some("default".to_string());
-        let workflow_name = edit_workflow.as_deref().unwrap();
-        let workflow = workflows.get(workflow_name);
+        let edit_workflow = flow_name
+            .filter(|n| store.workflows.contains_key(n))
+            .unwrap_or("default".to_string());
 
-        let baseline: ShadowGraph<WorkNode> = workflows
-            .workflows
-            .get(workflow_name)
-            .cloned()
-            .unwrap_or_default();
+        let snarl = store.get_snarl(edit_workflow.as_ref()).unwrap_or_default();
+        let snarl = fixup_workflow(snarl);
+        let baseline: ShadowGraph<WorkNode> = store.get(edit_workflow.as_ref()).unwrap_or_default();
 
-        let snarl = Arc::new(tokio::sync::RwLock::new(workflow));
+        let snarl = Arc::new(tokio::sync::RwLock::new(snarl));
 
         Ok(Self {
             running: Arc::new(AtomicBool::new(false)),
             editing: edit_workflow.clone(),
-            store: workflows.clone(),
+            renaming: None,
+            store: store.clone(),
             snarl: snarl.clone(),
             style: SnarlStyle {
                 crisp_magnified_text: Some(true),
@@ -165,5 +163,40 @@ impl WorkflowState {
             shadow: baseline.clone(),
             node_state: Default::default(),
         })
+    }
+
+    pub fn switch(&mut self, workflow_name: &str) {
+        if self.editing.as_str() == workflow_name {
+            return;
+        }
+
+        let snarl = self.store.get_snarl(workflow_name).unwrap_or_default();
+        let snarl = fixup_workflow(snarl);
+        self.snarl = Arc::new(tokio::sync::RwLock::new(snarl));
+        self.editing = workflow_name.to_string();
+        self.renaming = None;
+        self.baseline = self.store.get(workflow_name).unwrap_or_default();
+        self.shadow = self.baseline.clone();
+    }
+
+    pub fn rename(&mut self) {
+        if Some(&self.editing) == self.renaming.as_ref() {
+            self.renaming = None;
+        }
+
+        let Some(new_name) = self.renaming.take() else {
+            return;
+        };
+
+        if self.store.workflows.contains_key(&new_name) {
+            return;
+        }
+
+        self.store.rename(&self.editing, &new_name);
+        self.editing = new_name;
+    }
+
+    pub fn names(&self) -> impl Iterator<Item = &String> {
+        self.store.workflows.keys()
     }
 }
