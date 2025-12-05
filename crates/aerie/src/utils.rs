@@ -6,6 +6,7 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
+use rig::message::Message;
 use rpds::{List, ListSync};
 
 pub trait CowExt<'a, T: Clone, E> {
@@ -159,5 +160,25 @@ where
         } else {
             self.update(k.clone(), v.clone())
         }
+    }
+}
+
+pub fn message_party(message: &Message) -> &str {
+    match message {
+        Message::User { .. } => "User",
+        Message::Assistant { .. } => "Assistant",
+    }
+}
+
+pub fn message_text(message: &Message) -> String {
+    match message {
+        Message::User { content } => match content.first() {
+            rig::message::UserContent::Text(text) => text.text,
+            _ => todo!(),
+        },
+        Message::Assistant { content, .. } => match content.first() {
+            rig::message::AssistantContent::Text(text) => text.text,
+            _ => todo!(),
+        },
     }
 }

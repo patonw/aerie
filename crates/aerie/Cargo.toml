@@ -23,6 +23,7 @@ egui-snarl = { version = "0.9.0", features = ["serde"] }
 egui_commonmark = "0.22.0"
 egui_extras = { version = "0.33.2", features = ["http", "image", "syntect"] }
 egui_tiles = "0.14.0"
+egui_graphs = "0.29.0"
 env_logger = "0.11.8"
 flume = { version = "0.11.1", features = ["async"] }
 glob = "0.3.3"
@@ -32,6 +33,9 @@ itertools = "0.14.0"
 kinded = "0.4.0"
 log = "0.4.28"
 minijinja = { version = "2.11.0", features = ["loader"] }
+petgraph = { version = "0.8", default-features = false, features = [
+  "stable_graph",
+] }
 regex = "1.12.2"
 rig-core = { version = "0.24.0", features = ["derive", "rmcp"] }
 rmcp = { version = "0.8.5", features = [
@@ -56,3 +60,4 @@ tracing-subscriber = { version = "0.3.20", features = [
 ] }
 typed-builder = "0.23.1"
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
+colorous = "1.0.16"
