@@ -14,6 +14,7 @@ pub enum Pane {
     Pipeline,
     Tools,
     Workflow,
+    Messages,
 }
 
 fn user_bubble<R>(ui: &mut egui::Ui, cb_r: impl FnMut(&mut egui::Ui) -> R) -> R {

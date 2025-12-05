@@ -134,6 +134,7 @@ fn main() -> anyhow::Result<()> {
     let tabs: Vec<TileId> = vec![
         tiles.insert_pane(Pane::Chat),
         tiles.insert_pane(Pane::Logs),
+        tiles.insert_pane(Pane::Messages),
         tiles.insert_pane(Pane::Pipeline),
         tiles.insert_pane(Pane::Tools),
         tiles.insert_pane(Pane::Workflow),
@@ -173,6 +174,7 @@ fn main() -> anyhow::Result<()> {
         edit_toolset: String::new(),
         tool_editor: None,
         workflows: flow_state,
+        message_graph: Default::default(),
     };
 
     let rt_ = rt.handle().clone();

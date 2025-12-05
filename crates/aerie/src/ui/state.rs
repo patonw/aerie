@@ -19,6 +19,7 @@ use super::{Pane, tiles};
 use crate::{
     AgentFactory, LogEntry, Settings, ToolSpec,
     chat::ChatSession,
+    ui::tiles::messages::MessageGraph,
     utils::ErrorList,
     workflow::{ShadowGraph, WorkNode, runner::ExecState, store::WorkflowStore},
 };
@@ -56,6 +57,8 @@ pub struct AppState {
     pub tool_editor: Option<ToolEditorState>,
 
     pub workflows: WorkflowState,
+
+    pub message_graph: MessageGraph,
 }
 
 impl egui_tiles::Behavior<Pane> for AppState {
@@ -68,6 +71,7 @@ impl egui_tiles::Behavior<Pane> for AppState {
             Pane::Pipeline => "Pipeline".into(),
             Pane::Tools => "Tools".into(),
             Pane::Workflow => "Workflow".into(),
+            Pane::Messages => "Lineage".into(),
         }
     }
 
@@ -100,6 +104,9 @@ impl egui_tiles::Behavior<Pane> for AppState {
             }
             Pane::Workflow => {
                 self.workflow_ui(ui);
+            }
+            Pane::Messages => {
+                self.message_graph(ui);
             }
         };
 
