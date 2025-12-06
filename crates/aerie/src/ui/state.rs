@@ -3,7 +3,6 @@ use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
 use egui_snarl::{NodeId, Snarl, ui::SnarlStyle};
-use rig::message::Message;
 use rmcp::model::Tool;
 use std::{
     path::Path,
@@ -39,7 +38,6 @@ pub struct AppState {
     pub settings: Arc<RwLock<Settings>>,
     pub task_count: Arc<AtomicU16>,
     pub log_history: Arc<RwLock<Vec<LogEntry>>>,
-    pub scratch: Arc<RwLock<Vec<Result<Message, String>>>>,
     pub session: ChatSession,
     pub cache: CommonMarkCache,
     pub prompt: Arc<RwLock<String>>,

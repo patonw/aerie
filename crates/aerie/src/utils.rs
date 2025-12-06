@@ -6,8 +6,10 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
-use rig::message::Message;
+use itertools::Itertools;
+use rig::message::{AssistantContent, Message, ToolResultContent, UserContent};
 use rpds::{List, ListSync};
+use serde_json::Value;
 
 pub trait CowExt<'a, T: Clone, E> {
     /// Flat map for cows.
@@ -170,15 +172,72 @@ pub fn message_party(message: &Message) -> &str {
     }
 }
 
-pub fn message_text(message: &Message) -> String {
-    match message {
-        Message::User { content } => match content.first() {
-            rig::message::UserContent::Text(text) => text.text,
-            _ => todo!(),
-        },
-        Message::Assistant { content, .. } => match content.first() {
-            rig::message::AssistantContent::Text(text) => text.text,
-            _ => todo!(),
-        },
+#[derive(Debug, Clone)]
+pub enum FormatOpts {
+    Plain,
+    Pre,
+    Markdown,
+    Unknown,
+    Separator,
+}
+
+pub trait MessageExt {
+    fn text_fmt_opts(&self) -> Vec<(String, FormatOpts)>;
+}
+
+impl MessageExt for Message {
+    fn text_fmt_opts(&self) -> Vec<(String, FormatOpts)> {
+        match self {
+            Message::User { content } => {
+                content.iter().flat_map(extract_user_content).collect_vec()
+            }
+            Message::Assistant { content, .. } => content
+                .iter()
+                .flat_map(extract_assistant_content)
+                .collect_vec(),
+        }
     }
+}
+
+pub fn extract_user_content(content: &UserContent) -> Vec<(String, FormatOpts)> {
+    match content {
+        UserContent::Text(text) => vec![(text.text.clone(), FormatOpts::Markdown)],
+        UserContent::ToolResult(tool_result) => tool_result
+            .content
+            .iter()
+            .filter_map(|m| match m {
+                ToolResultContent::Text(text) => {
+                    let pretty = serde_json::from_str(text.text())
+                        .and_then(|v: Value| serde_json::to_string_pretty(&v))
+                        .unwrap_or_else(|_| text.text().to_string());
+                    Some((pretty, FormatOpts::Pre))
+                }
+                _ => None,
+            })
+            .collect_vec(),
+        other => vec![(format!("{other:?}"), FormatOpts::Unknown)],
+    }
+}
+
+pub fn extract_assistant_content(content: &AssistantContent) -> Vec<(String, FormatOpts)> {
+    match content {
+        AssistantContent::Text(text) => vec![(text.text.clone(), FormatOpts::Markdown)],
+        AssistantContent::ToolCall(tool_call) => {
+            let text = serde_json::to_string_pretty(&tool_call)
+                .unwrap_or_else(|_| format!("{tool_call:?}"));
+            vec![(text, FormatOpts::Pre)]
+        }
+        AssistantContent::Reasoning(reasoning) => vec![(
+            reasoning.reasoning.join("\n\n---\n\n"),
+            FormatOpts::Markdown,
+        )],
+    }
+}
+
+pub fn message_text(message: &Message) -> String {
+    let Some((text, _)) = message.text_fmt_opts().into_iter().next() else {
+        panic!()
+    };
+
+    text
 }

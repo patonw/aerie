@@ -1,9 +1,9 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use decorum::E64;
 use egui::TextEdit;
 use itertools::Itertools;
-use rig::{agent::PromptRequest, message::Message};
+use rig::agent::PromptRequest;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -84,11 +84,11 @@ impl DynNode for LLM {
 
 impl UiNode for LLM {
     fn title(&self) -> &str {
-        "Completion"
+        "Chat"
     }
 
     fn tooltip(&self) -> &str {
-        "Invoke an LLM completion model"
+        "Invoke an LLM completion model in conversation mode"
     }
 
     fn show_output(
@@ -290,18 +290,24 @@ impl LLM {
         let agent = agent.build();
 
         let mut history = chat.iter_msgs().cloned().collect_vec();
+        let last_idx = history.len();
         let request = PromptRequest::new(&agent, &prompt)
             .multi_turn(5)
             .with_history(&mut history);
 
         match request.await {
-            Ok(resp) => {
-                let conversation = chat
-                    .push(Ok(Message::user(&prompt)).into(), None::<String>)?
-                    .try_moo(|c| c.push(Ok(Message::assistant(resp)).into(), None::<String>))?
-                    .into_owned();
+            Ok(_) => {
+                let mut chat = Cow::Borrowed(chat.as_ref());
+                for msg in history.into_iter().skip(last_idx) {
+                    chat = chat.try_moo(|c| c.push(Ok(msg).into(), None::<String>))?;
+                }
 
-                self.chat = Arc::new(conversation);
+                // let conversation = chat
+                //     .push(Ok(Message::user(&prompt)).into(), None::<String>)?
+                //     .try_moo(|c| c.push(Ok(Message::assistant(resp)).into(), None::<String>))?
+                //     .into_owned();
+
+                self.chat = Arc::new(chat.into_owned());
             }
             Err(err) => Err(WorkflowError::Provider(err.into()))?,
         }

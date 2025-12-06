@@ -61,3 +61,4 @@ tracing-subscriber = { version = "0.3.20", features = [
 typed-builder = "0.23.1"
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
 colorous = "1.0.16"
+derive_builder = "0.20.2"

@@ -190,7 +190,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             ui.close();
         }
 
-        if ui.button("LLM").clicked() {
+        if ui.button("Chat").clicked() {
             snarl.insert_node(pos, WorkNode::LLM(Default::default()));
             ui.close();
         }

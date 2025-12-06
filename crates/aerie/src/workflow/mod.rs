@@ -387,7 +387,7 @@ pub trait DynNode {
     }
 
     fn validate(&self, inputs: &[Option<Value>]) -> Result<(), WorkflowError> {
-        tracing::debug!(
+        tracing::trace!(
             "Validating inputs for {} -- {inputs:?}",
             std::any::type_name_of_val(self)
         );

@@ -114,7 +114,7 @@ impl WorkflowRunner {
             inputs[*in_pin] = Some(value);
         }
 
-        tracing::debug!("Collected inputs {inputs:?}");
+        tracing::trace!("Collected inputs {inputs:?}");
 
         if let Err(err) = snarl[node_id].forward(&self.run_ctx, inputs).await {
             node_state.insert(node_id, ExecState::Failed);

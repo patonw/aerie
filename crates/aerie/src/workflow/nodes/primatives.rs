@@ -1,6 +1,13 @@
+use egui::RichText;
+use egui_commonmark::CommonMarkCache;
 use serde::{Deserialize, Serialize};
 
-use crate::workflow::WorkflowError;
+use crate::{
+    ChatContent,
+    ui::tiles::chat::render_message_width,
+    utils::{message_party, message_text},
+    workflow::WorkflowError,
+};
 
 use super::{DynNode, EditContext, MIN_WIDTH, RunContext, UiNode, Value, ValueKind};
 
@@ -114,15 +121,33 @@ impl UiNode for Preview {
     }
 
     fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
-        // TODO: special case for chat history: show current branch
+        let mut cache = CommonMarkCache::default();
+
         egui::Frame::new().inner_margin(4).show(ui, |ui| {
             egui::Resize::default()
                 .min_width(MIN_WIDTH)
                 .min_height(MIN_WIDTH)
+                .default_width(300.0)
                 .with_stroke(false)
                 .show(ui, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.add(egui::Label::new(format!("{:?}", self.value)).wrap());
+                    egui::ScrollArea::vertical().show(ui, |ui| match &self.value {
+                        Value::Chat(history) => {
+                            ui.vertical(|ui| {
+                                for entry in history.iter() {
+                                    if let ChatContent::Message(msg) = &entry.content {
+                                        ui.label(RichText::new(message_party(msg)).strong());
+                                        ui.add(egui::Label::new(message_text(msg)).wrap());
+                                        ui.separator();
+                                    }
+                                }
+                            });
+                        }
+                        Value::Message(msg) => {
+                            render_message_width(ui, &mut cache, msg, Some(600.0));
+                        }
+                        _ => {
+                            ui.add(egui::Label::new(format!("{:?}", self.value)).wrap());
+                        }
                     });
                 });
         });
