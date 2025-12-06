@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ChatContent, ChatHistory, Toolset,
-    utils::CowExt as _,
+    utils::{CowExt as _, message_text},
     workflow::{
         WorkflowError,
         nodes::{MIN_HEIGHT, MIN_WIDTH},
@@ -37,7 +37,7 @@ pub struct LLM {
 
 impl DynNode for LLM {
     fn inputs(&self) -> usize {
-        6
+        7
     }
 
     fn outputs(&self) -> usize {
@@ -51,7 +51,8 @@ impl DynNode for LLM {
             2 => &[ValueKind::Number],
             3 => &[ValueKind::Toolset],
             4 => &[ValueKind::Text],
-            5 => &[ValueKind::Text],
+            5 => &[ValueKind::Text, ValueKind::Message],
+            6 => &[ValueKind::Text, ValueKind::Message],
             _ => ValueKind::all(),
         }
     }
@@ -194,6 +195,9 @@ impl UiNode for LLM {
                     })
                     .inner;
             }
+            6 => {
+                ui.label("context");
+            }
             _ => unreachable!(),
         };
 
@@ -217,7 +221,7 @@ impl UiNode for LLM {
 impl LLM {
     pub async fn forward(
         &mut self,
-        ctx: &RunContext,
+        run_ctx: &RunContext,
         inputs: Vec<Option<Value>>,
     ) -> Result<(), WorkflowError> {
         self.validate(&inputs)?;
@@ -251,6 +255,7 @@ impl LLM {
             None => None,
             _ => unreachable!(),
         };
+
         let preamble = match &inputs[4] {
             Some(Value::Text(text)) => text.as_str(),
             None => self.preamble.as_str(),
@@ -258,32 +263,41 @@ impl LLM {
         };
 
         let prompt = match &inputs[5] {
-            Some(Value::Text(text)) => text.as_str(),
-            None => self.prompt.as_str(),
+            Some(Value::Text(text)) => text.clone(),
+            Some(Value::Message(msg)) => message_text(msg),
+            None => self.prompt.clone(),
             _ => unreachable!(),
         };
 
-        let mut agent = ctx
+        let context = match &inputs[5] {
+            Some(Value::Text(text)) => text.clone(),
+            Some(Value::Message(msg)) => message_text(msg),
+            None => "".to_string(),
+            _ => unreachable!(),
+        };
+
+        let mut agent = run_ctx
             .agent_factory
             .builder(model)?
             .temperature(temperature.into())
+            .context(&context)
             .preamble(preamble);
 
         if let Some(tools) = toolset {
-            agent = ctx.agent_factory.toolbox.apply(agent, &tools);
+            agent = run_ctx.agent_factory.toolbox.apply(agent, &tools);
         }
 
         let agent = agent.build();
 
         let mut history = chat.iter_msgs().cloned().collect_vec();
-        let request = PromptRequest::new(&agent, prompt)
+        let request = PromptRequest::new(&agent, &prompt)
             .multi_turn(5)
             .with_history(&mut history);
 
         match request.await {
             Ok(resp) => {
                 let conversation = chat
-                    .push(Ok(Message::user(prompt)).into(), None::<String>)?
+                    .push(Ok(Message::user(&prompt)).into(), None::<String>)?
                     .try_moo(|c| c.push(Ok(Message::assistant(resp)).into(), None::<String>))?
                     .into_owned();
 
@@ -362,10 +376,120 @@ impl GraftChat {
             _ => unreachable!(),
         };
 
-        let common = chat.find_common(aside);
+        let common = chat
+            .with_base(None)
+            .find_common(aside.with_base(None).as_ref());
 
         let result = chat.aside(aside.with_base(common).iter().map(|it| it.content.clone()))?;
         self.chat = Arc::new(result.into_owned());
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
+pub struct MaskChat {
+    pub limit: usize,
+
+    #[serde(skip)]
+    pub chat: Arc<ChatHistory>,
+}
+
+impl DynNode for MaskChat {
+    fn inputs(&self) -> usize {
+        2
+    }
+
+    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
+        match in_pin {
+            0 => &[ValueKind::Chat],
+            1 => &[ValueKind::Integer],
+            _ => unreachable!(),
+        }
+    }
+
+    fn out_kind(&self, _out_pin: usize) -> ValueKind {
+        ValueKind::Chat
+    }
+
+    fn value(&self, _out_pin: usize) -> Value {
+        Value::Chat(self.chat.clone())
+    }
+}
+
+impl UiNode for MaskChat {
+    fn title(&self) -> &str {
+        "Mask Chat"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Non-destructively limit the number of history entries visible.\nCan also remove an existing mask."
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>, // TODO: rename to "wired" this should be ValueKind!
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("conversation");
+            }
+            1 => {
+                if remote.is_none() {
+                    let widget = egui::Slider::new(&mut self.limit, 0..=100);
+                    ui.add(widget);
+
+                    ui.label("#")
+                } else {
+                    ui.label("limit")
+                }
+                .on_hover_text(
+                    "Number of entries to expose. If 100 or more, shows, the entire history.",
+                );
+            }
+            _ => unreachable!(),
+        }
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+}
+
+impl MaskChat {
+    pub async fn forward(
+        &mut self,
+        _ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        self.validate(&inputs)?;
+
+        let chat = match &inputs[0] {
+            Some(Value::Chat(history)) => history,
+            None => Err(WorkflowError::Input(vec!["Chat history required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        let limit = match &inputs[1] {
+            Some(Value::Integer(limit)) => *limit as usize,
+            None => self.limit,
+            _ => unreachable!(),
+        };
+
+        let masked = if (0..100).contains(&limit)
+            && let Some((_i, entry)) = chat
+                .with_base(None)
+                .rev_iter()
+                .enumerate()
+                .find(|(i, _)| *i == limit)
+        {
+            tracing::debug!("Setting base to {entry:?}");
+            chat.with_base(Some(entry.id))
+        } else {
+            chat.with_base(None)
+        };
+
+        self.chat = Arc::new(masked.into_owned());
 
         Ok(())
     }

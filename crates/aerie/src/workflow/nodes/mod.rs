@@ -39,6 +39,7 @@ pub enum WorkNode {
     Finish(Finish),
     LLM(LLM),
     GraftChat(GraftChat),
+    MaskChat(MaskChat),
 }
 
 impl WorkNode {
@@ -51,6 +52,7 @@ impl WorkNode {
             WorkNode::Finish(node) => node,
             WorkNode::LLM(node) => node,
             WorkNode::GraftChat(node) => node,
+            WorkNode::MaskChat(node) => node,
         } {
             #[call(noop)]
             pub fn as_dyn(&self) -> &dyn DynNode;

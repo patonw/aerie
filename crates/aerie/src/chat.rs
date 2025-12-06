@@ -331,6 +331,13 @@ impl ChatHistory {
             .flat_map(|end_msg| self.iter_between(None, *end_msg))
     }
 
+    pub fn rev_iter(&self) -> impl Iterator<Item = &ChatEntry> {
+        self.branches
+            .get(&self.head)
+            .into_iter()
+            .flat_map(|end_msg| ChatRevIter(self, Some(*end_msg)))
+    }
+
     pub fn iter_aside(&self, entry: &ChatEntry) -> impl Iterator<Item = &ChatEntry> {
         entry.aside.iter().flat_map(|end| {
             let start = entry.parent;
@@ -585,5 +592,23 @@ impl ChatHistory {
         }
 
         None
+    }
+}
+
+struct ChatRevIter<'a>(&'a ChatHistory, Option<Uuid>);
+
+impl<'a> Iterator for ChatRevIter<'a> {
+    type Item = &'a ChatEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(id) = &self.1
+            && let Some(entry) = self.0.store.get(id)
+            && Some(entry.id) != self.0.base
+        {
+            self.1 = entry.parent;
+            Some(entry)
+        } else {
+            None
+        }
     }
 }

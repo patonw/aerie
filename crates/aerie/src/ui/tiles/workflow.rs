@@ -194,8 +194,14 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             snarl.insert_node(pos, WorkNode::LLM(Default::default()));
             ui.close();
         }
+
         if ui.button("Side Chat").clicked() {
             snarl.insert_node(pos, WorkNode::GraftChat(Default::default()));
+            ui.close();
+        }
+
+        if ui.button("Mask Chat").clicked() {
+            snarl.insert_node(pos, WorkNode::MaskChat(Default::default()));
             ui.close();
         }
     }
@@ -360,11 +366,10 @@ impl super::AppState {
                     .running
                     .load(std::sync::atomic::Ordering::Relaxed),
                 |ui| {
-                    SnarlWidget::new().style(self.workflows.style).show(
-                        &mut snarl,
-                        &mut viewer,
-                        ui,
-                    );
+                    SnarlWidget::new()
+                        .id_salt(&self.workflows.editing)
+                        .style(self.workflows.style)
+                        .show(&mut snarl, &mut viewer, ui);
                 },
             );
 
