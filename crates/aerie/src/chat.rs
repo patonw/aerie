@@ -1,36 +1,40 @@
+use anyhow::anyhow;
+use arc_swap::ArcSwap;
+use derive_builder::Builder;
+use rig::message::Message;
+use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     ops::Deref,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
-
-use anyhow::anyhow;
-use arc_swap::ArcSwap;
-use rig::message::Message;
-use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Clone, Builder)]
 pub struct ChatSession {
     pub path: Arc<Option<PathBuf>>,
     pub history: Arc<ArcSwap<ChatHistory>>, // Interior mutability without locking
+
+    #[builder(default)]
+    pub scratch: Arc<RwLock<Vec<Result<Message, String>>>>,
 }
 
 impl ChatSession {
-    pub fn load(path: Option<impl AsRef<Path>>) -> Self {
+    pub fn load(path: Option<impl AsRef<Path>>) -> ChatSessionBuilder {
         let history = path
             .as_ref()
             .and_then(|p| std::fs::read_to_string(p).ok())
             .and_then(|s| serde_yml::from_str::<ChatHistory>(&s).ok())
             .unwrap_or_default();
 
-        Self {
-            path: Arc::new(path.map(|p| p.as_ref().to_path_buf())),
-            history: Arc::new(ArcSwap::from_pointee(history)),
-        }
+        let mut builder = ChatSessionBuilder::default();
+        builder
+            .path(Arc::new(path.map(|p| p.as_ref().to_path_buf())))
+            .history(Arc::new(ArcSwap::from_pointee(history)));
+        builder
     }
 
     fn save_ref(&self, history: &ChatHistory) -> anyhow::Result<()> {

@@ -169,7 +169,7 @@ impl super::AppState {
 
     pub fn exec_pipeline(&mut self, pipeline: Pipeline, user_prompt: String) {
         let session_ = self.session.clone();
-        let scratch_ = self.scratch.clone();
+        let scratch_ = self.session.scratch.clone();
         let task_count_ = self.task_count.clone();
         let agent_factory_ = self.agent_factory.clone();
         let log_history_ = self.log_history.clone();

@@ -51,7 +51,7 @@ fn main() -> anyhow::Result<()> {
         .session
         .map(|s| sessions_dir.join(s).with_extension("yml"));
 
-    let session = ChatSession::load(session_path.as_ref());
+    let session = ChatSession::load(session_path.as_ref()).build()?;
 
     tracing_subscriber::registry()
         .with(
@@ -163,7 +163,6 @@ fn main() -> anyhow::Result<()> {
         settings: settings.clone(),
         log_history: log_history.clone(),
         task_count: task_count.clone(),
-        scratch: Default::default(),
         session,
         cache,
         prompt: prompt.clone(),

@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_commonmark::*;
 use egui_phosphor::regular::GIT_BRANCH;
-use itertools::Itertools as _;
+use itertools::Itertools;
 use rig::message::{AssistantContent, Message, UserContent};
 use std::{f32, sync::atomic::Ordering};
 
@@ -9,7 +9,7 @@ use crate::{
     ChatContent,
     config::ConfigExt,
     ui::{agent_bubble, error_bubble, user_bubble},
-    utils::ErrorDistiller as _,
+    utils::{ErrorDistiller as _, FormatOpts},
 };
 
 // Too many refs to self for a free function. Need to clean this up
@@ -143,7 +143,7 @@ impl super::AppState {
                     }
                 });
 
-                let chat_r = self.scratch.read().unwrap();
+                let chat_r = self.session.scratch.read().unwrap();
                 for msg in chat_r.iter() {
                     match msg {
                         Ok(Message::User { content }) => {
@@ -260,35 +260,125 @@ impl super::AppState {
     }
 }
 
-fn render_message(ui: &mut egui::Ui, cache: &mut CommonMarkCache, message: &Message) {
+pub fn render_message(ui: &mut egui::Ui, cache: &mut CommonMarkCache, message: &Message) {
+    render_message_width(ui, cache, message, None);
+}
+
+pub fn render_message_width(
+    ui: &mut egui::Ui,
+    cache: &mut CommonMarkCache,
+    message: &Message,
+    width: Option<f32>,
+) {
+    use crate::utils::MessageExt as _;
     use base64::prelude::*;
 
     match message {
-        Message::User { content } => {
-            let UserContent::Text(text) = content.first() else {
-                todo!();
-            };
-
+        Message::User { .. } => {
             user_bubble(ui, |ui| {
-                ui.set_width(ui.available_width() * 0.75);
-                CommonMarkViewer::new().show(ui, cache, text.text());
+                ui.set_width(width.unwrap_or(ui.available_width() * 0.75));
+
+                ui.vertical(|ui| {
+                    for (text, fmt) in Itertools::intersperse(
+                        message.text_fmt_opts().into_iter(),
+                        (String::default(), FormatOpts::Separator),
+                    ) {
+                        match fmt {
+                            FormatOpts::Plain => {
+                                ui.label(&text);
+                            }
+                            FormatOpts::Pre => {
+                                egui::ScrollArea::horizontal().id_salt(&text[..100]).show(
+                                    ui,
+                                    |ui| {
+                                        ui.with_layout(
+                                            egui::Layout::left_to_right(egui::Align::TOP),
+                                            |ui| {
+                                                let language = "json";
+                                                let theme =
+                                        egui_extras::syntax_highlighting::CodeTheme::from_memory(
+                                            ui.ctx(),
+                                            ui.style(),
+                                        );
+
+                                                egui_extras::syntax_highlighting::code_view_ui(
+                                                    ui, &theme, &text, language,
+                                                );
+                                            },
+                                        );
+                                    },
+                                );
+                            }
+                            FormatOpts::Markdown => {
+                                CommonMarkViewer::new().show(ui, cache, &text);
+                            }
+                            FormatOpts::Unknown => {
+                                ui.label(&text);
+                            }
+                            FormatOpts::Separator => {
+                                ui.separator();
+                            }
+                        }
+                    }
+                });
             });
         }
-        Message::Assistant { content, .. } => {
+        Message::Assistant { .. } => {
             use regex::Regex;
 
             let re = Regex::new(r"(?ms)```mermaid(.*)```").unwrap();
 
-            let AssistantContent::Text(text) = content.first() else {
-                todo!();
-            };
+            let mut all_text = String::new();
 
             agent_bubble(ui, |ui| {
-                ui.set_width(ui.available_width() * 0.75);
-                CommonMarkViewer::new().show(ui, cache, text.text());
+                ui.set_width(width.unwrap_or(ui.available_width() * 0.75));
+
+                ui.vertical(|ui| {
+                    for (text, fmt) in Itertools::intersperse(
+                        message.text_fmt_opts().into_iter(),
+                        (String::default(), FormatOpts::Separator),
+                    ) {
+                        match fmt {
+                            FormatOpts::Plain => {
+                                ui.label(&text);
+                                all_text.push_str(&text);
+                            }
+                            FormatOpts::Pre => {
+                                all_text.push_str(&text);
+
+                                egui::ScrollArea::horizontal().id_salt(&text[..100]).show(
+                                    ui,
+                                    |ui| {
+                                        let language = "json";
+                                        let theme =
+                                        egui_extras::syntax_highlighting::CodeTheme::from_memory(
+                                            ui.ctx(),
+                                            ui.style(),
+                                        );
+
+                                        egui_extras::syntax_highlighting::code_view_ui(
+                                            ui, &theme, &text, language,
+                                        );
+                                    },
+                                );
+                            }
+                            FormatOpts::Markdown => {
+                                all_text.push_str(&text);
+                                CommonMarkViewer::new().show(ui, cache, &text);
+                            }
+                            FormatOpts::Unknown => {
+                                all_text.push_str(&text);
+                                ui.label(&text);
+                            }
+                            FormatOpts::Separator => {
+                                ui.separator();
+                            }
+                        }
+                    }
+                });
             });
 
-            for (_, [diagram]) in re.captures_iter(text.text()).map(|m| m.extract()) {
+            for (_, [diagram]) in re.captures_iter(&all_text).map(|m| m.extract()) {
                 ui.scope_builder(egui::UiBuilder::new().id_salt(diagram), |ui| {
                     let enc = BASE64_URL_SAFE_NO_PAD.encode(diagram);
 
