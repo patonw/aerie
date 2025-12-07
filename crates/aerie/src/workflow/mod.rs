@@ -367,6 +367,10 @@ pub trait DynNode {
     #[expect(unused_variables)]
     fn reset(&mut self, in_pin: usize) {}
 
+    fn priority(&self) -> usize {
+        100
+    }
+
     #[expect(unused_variables)]
     fn value(&self, out_pin: usize) -> Value {
         Default::default()

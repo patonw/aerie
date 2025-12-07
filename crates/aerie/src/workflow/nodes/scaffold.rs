@@ -119,6 +119,10 @@ impl Start {
 pub struct Finish {}
 
 impl DynNode for Finish {
+    fn priority(&self) -> usize {
+        0
+    }
+
     fn outputs(&self) -> usize {
         0
     }

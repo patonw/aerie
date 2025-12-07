@@ -1,4 +1,5 @@
 use delegate::delegate;
+use kinded::Kinded;
 use serde::{Deserialize, Serialize};
 
 pub mod chat;
@@ -30,7 +31,7 @@ impl<T> NoopExt for T {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, PartialEq, Serialize, Deserialize, Kinded)]
 pub enum WorkNode {
     Preview(Preview),
     Text(Text),
@@ -40,6 +41,7 @@ pub enum WorkNode {
     LLM(LLM),
     GraftChat(GraftChat),
     MaskChat(MaskChat),
+    Panic(Panic),
 }
 
 impl WorkNode {
@@ -53,6 +55,7 @@ impl WorkNode {
             WorkNode::LLM(node) => node,
             WorkNode::GraftChat(node) => node,
             WorkNode::MaskChat(node) => node,
+            WorkNode::Panic(node) => node,
         } {
             #[call(noop)]
             pub fn as_dyn(&self) -> &dyn DynNode;
