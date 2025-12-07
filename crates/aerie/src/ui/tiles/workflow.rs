@@ -204,6 +204,11 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             snarl.insert_node(pos, WorkNode::MaskChat(Default::default()));
             ui.close();
         }
+
+        if ui.button("Panic").clicked() {
+            snarl.insert_node(pos, WorkNode::Panic(Default::default()));
+            ui.close();
+        }
     }
 
     fn has_body(&mut self, node: &WorkNode) -> bool {

@@ -98,6 +98,10 @@ impl PartialEq for Preview {
 impl Eq for Preview {}
 
 impl DynNode for Preview {
+    fn priority(&self) -> usize {
+        9999
+    }
+
     fn reset(&mut self, _in_pin: usize) {
         self.value = Default::default();
     }
@@ -163,6 +167,45 @@ impl Preview {
         if let Some(value) = inputs.first().and_then(|it| it.as_ref()) {
             self.value = value.to_owned();
         }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Panic {}
+
+impl DynNode for Panic {
+    fn priority(&self) -> usize {
+        9000
+    }
+}
+
+impl UiNode for Panic {
+    fn title(&self) -> &str {
+        "Panic"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Aborts run if the input is non-empty"
+    }
+}
+
+impl Panic {
+    pub async fn forward(
+        &mut self,
+        _ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        if let Some(value) = inputs.first().and_then(|it| it.as_ref()) {
+            match value {
+                Value::Placeholder(_) => {}
+                Value::Text(txt) if txt.is_empty() => {}
+                _ => Err(WorkflowError::Input(vec![format!(
+                    "Panic node received a non-empty input: {value:?}"
+                )]))?,
+            }
+        }
+
         Ok(())
     }
 }
