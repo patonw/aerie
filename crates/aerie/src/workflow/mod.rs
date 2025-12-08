@@ -15,6 +15,7 @@ use typed_builder::TypedBuilder;
 
 use crate::{
     AgentFactory, ChatHistory, Toolbox, Toolset,
+    agent::AgentSpec,
     utils::{ErrorList, ImmutableMapExt as _, ImmutableSetExt as _},
 };
 
@@ -37,6 +38,7 @@ pub enum Value {
     Integer(i64),
     Json(Arc<serde_json::Value>), // I think this is immutable?
     Model(String),
+    Agent(Arc<AgentSpec>),
     Toolset(Arc<Toolset>),
     Chat(Arc<ChatHistory>),
     Message(Message),
@@ -53,10 +55,11 @@ impl ValueKind {
         match self {
             ValueKind::Placeholder => Color32::LIGHT_GRAY,
             ValueKind::Text => Color32::CYAN,
-            ValueKind::Number => Color32::LIGHT_GREEN,
-            ValueKind::Integer => Color32::LIGHT_RED,
-            ValueKind::Json => Color32::ORANGE,
+            ValueKind::Number => Color32::from_rgb(0xff, 0x56, 0x78),
+            ValueKind::Integer => Color32::from_rgb(0xff, 0x65, 0x43),
+            ValueKind::Json => Color32::from_rgb(0xbb, 0x69, 0x78),
             ValueKind::Model => Color32::LIGHT_BLUE,
+            ValueKind::Agent => Color32::from_rgb(0x56, 0x78, 0xff),
             ValueKind::Toolset => Color32::PURPLE,
             ValueKind::Chat => Color32::GOLD,
             ValueKind::Message => Color32::from_rgb(0xe9, 0x74, 0x51),

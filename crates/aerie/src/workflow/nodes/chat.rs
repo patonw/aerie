@@ -16,6 +16,181 @@ use crate::{
 };
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
+// TODO: Hash & eq by hand to ignore chat
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ChatNode {
+    pub prompt: String,
+
+    #[serde(skip)]
+    pub history: Arc<ChatHistory>,
+}
+
+impl DynNode for ChatNode {
+    fn inputs(&self) -> usize {
+        3
+    }
+
+    fn outputs(&self) -> usize {
+        2
+    }
+
+    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
+        match in_pin {
+            0 => &[ValueKind::Agent],
+            1 => &[ValueKind::Chat],
+            2 => &[ValueKind::Text, ValueKind::Message],
+            _ => ValueKind::all(),
+        }
+    }
+
+    fn out_kind(&self, out_pin: usize) -> ValueKind {
+        match out_pin {
+            0 => ValueKind::Chat,
+            1 => ValueKind::Message,
+            _ => unreachable!(),
+        }
+    }
+
+    fn value(&self, out_pin: usize) -> Value {
+        match out_pin {
+            0 => Value::Chat(self.history.clone()),
+            1 => {
+                if let Some(entry) = self.history.last()
+                    && let ChatContent::Message(message) = &entry.content
+                {
+                    Value::Message(message.clone())
+                } else {
+                    Value::Placeholder(ValueKind::Message)
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl UiNode for ChatNode {
+    fn title(&self) -> &str {
+        "Chat"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Invoke an LLM completion model in conversation mode"
+    }
+
+    fn show_output(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("conversation");
+            }
+            1 => {
+                ui.label("response");
+            }
+            _ => unreachable!(),
+        }
+        self.out_kind(pin_id).default_pin()
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("agent");
+            }
+            1 => {
+                ui.label("conversation");
+            }
+            2 => {
+                return ui
+                    .vertical(|ui| {
+                        if remote.is_none() {
+                            egui::Resize::default()
+                                .id_salt("prompt_resize")
+                                .min_width(MIN_WIDTH)
+                                .min_height(MIN_HEIGHT)
+                                .with_stroke(false)
+                                .show(ui, |ui| {
+                                    let widget = egui::TextEdit::multiline(&mut self.prompt)
+                                        .id_salt("prompt")
+                                        .desired_width(f32::INFINITY)
+                                        .hint_text("Prompt");
+
+                                    ui.add_sized(ui.available_size(), widget)
+                                        .on_hover_text("Prompt");
+                                });
+                            self.ghost_pin(ValueKind::Text.color())
+                        } else {
+                            ui.label("prompt");
+                            ValueKind::Text.default_pin()
+                        }
+                    })
+                    .inner;
+            }
+            _ => unreachable!(),
+        };
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+}
+
+impl ChatNode {
+    pub async fn forward(
+        &mut self,
+        run_ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        self.validate(&inputs)?;
+
+        let agent_spec = match &inputs[0] {
+            Some(Value::Agent(spec)) => spec,
+            None => Err(WorkflowError::Input(vec!["Agent spec required".into()]))?,
+            _ => unreachable!(),
+        };
+        let chat = match &inputs[1] {
+            Some(Value::Chat(history)) => history,
+            None => Err(WorkflowError::Input(vec!["Chat history required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        let prompt = match &inputs[2] {
+            Some(Value::Text(text)) => text.clone(),
+            Some(Value::Message(msg)) => message_text(msg),
+            None => self.prompt.clone(),
+            _ => unreachable!(),
+        };
+
+        let agent = agent_spec.agent(&run_ctx.agent_factory)?;
+
+        let mut history = chat.iter_msgs().cloned().collect_vec();
+        let last_idx = history.len();
+        let request = PromptRequest::new(&agent, &prompt)
+            .multi_turn(5)
+            .with_history(&mut history);
+
+        match request.await {
+            Ok(_) => {
+                let mut chat = Cow::Borrowed(chat.as_ref());
+                for msg in history.into_iter().skip(last_idx) {
+                    chat = chat.try_moo(|c| c.push(Ok(msg).into(), None::<String>))?;
+                }
+
+                self.history = Arc::new(chat.into_owned());
+            }
+            Err(err) => Err(WorkflowError::Provider(err.into()))?,
+        }
+
+        Ok(())
+    }
+}
 
 // TODO: Hash & eq by hand to ignore chat
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
@@ -84,7 +259,7 @@ impl DynNode for LLM {
 
 impl UiNode for LLM {
     fn title(&self) -> &str {
-        "Chat"
+        "LLM (Deprecated)"
     }
 
     fn tooltip(&self) -> &str {
@@ -278,7 +453,7 @@ impl LLM {
 
         let mut agent = run_ctx
             .agent_factory
-            .builder(model)?
+            .agent_builder(model)?
             .temperature(temperature.into())
             .context(&context)
             .preamble(preamble);

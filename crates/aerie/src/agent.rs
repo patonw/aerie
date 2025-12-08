@@ -1,9 +1,14 @@
+use anyhow::anyhow;
+use arc_swap::ArcSwap;
+use decorum::E64;
+use derive_builder::Builder;
 use itertools::Itertools;
 use rig::{
     agent::{Agent, AgentBuilderSimple},
     client::{builder::DynClientBuilder, completion::CompletionModelHandle},
 };
-use std::sync::Arc;
+use std::{hash::Hash, sync::Arc};
+use typed_builder::TypedBuilder;
 
 use crate::config::ConfigExt as _;
 
@@ -16,15 +21,20 @@ pub use super::toolbox::{ToolProvider, Toolbox};
 pub type AgentBuilderT = AgentBuilderSimple<CompletionModelHandle<'static>>;
 pub type AgentT = Agent<CompletionModelHandle<'static>>;
 
-#[derive(Clone)]
+#[derive(TypedBuilder, Clone)]
 pub struct AgentFactory {
     pub rt: tokio::runtime::Handle,
     pub settings: Arc<std::sync::RwLock<Settings>>,
+
+    #[builder(default)]
     pub toolbox: Arc<Toolbox>,
+
+    #[builder(default)]
+    pub cache: Arc<ArcSwap<im::HashMap<AgentSpec, AgentT>>>,
 }
 
 impl AgentFactory {
-    pub fn builder(&self, provider_model: &str) -> anyhow::Result<AgentBuilderT> {
+    pub fn agent_builder(&self, provider_model: &str) -> anyhow::Result<AgentBuilderT> {
         let settings = self.settings.read().unwrap();
 
         let (provider, model) = self.parse_model(provider_model)?;
@@ -41,6 +51,41 @@ impl AgentFactory {
             .temperature(settings.temperature))
     }
 
+    pub fn spec_to_agent(&self, spec: &AgentSpec) -> anyhow::Result<AgentT> {
+        let cache = self.cache.load();
+        if let Some(cached) = cache.get(spec) {
+            return Ok(cached.clone());
+        }
+
+        let Some(model) = &spec.model else {
+            anyhow::bail!("A model is required")
+        };
+
+        let mut agent = self.agent_builder(model)?;
+
+        if let Some(temperature) = spec.temperature {
+            agent = agent.temperature(temperature.into_inner());
+        }
+
+        if let Some(preamble) = &spec.preamble {
+            agent = agent.preamble(preamble);
+        }
+
+        if let Some(context_doc) = &spec.context_doc {
+            agent = agent.context(context_doc);
+        }
+
+        if let Some(toolset) = &spec.tools {
+            agent = self.toolbox.apply(agent, toolset);
+        }
+
+        let agent = agent.build();
+        self.cache
+            .store(Arc::new(cache.update(spec.clone(), agent.clone())));
+
+        Ok(agent)
+    }
+
     fn parse_model(&self, provider_model: &str) -> anyhow::Result<(String, String)> {
         let (provider, model) = provider_model
             .split_once("/")
@@ -52,14 +97,12 @@ impl AgentFactory {
                         .map(|(p, m)| (p.to_string(), m.to_string()))
                 })
             })
-            .ok_or(anyhow::anyhow!(
-                "Could not determine LLM provider and model"
-            ))?;
+            .ok_or(anyhow!("Could not determine LLM provider and model"))?;
         Ok((provider, model))
     }
 
     pub fn agent(&self, step: &Workstep) -> AgentT {
-        let mut builder = self.builder("").unwrap();
+        let mut builder = self.agent_builder("").unwrap();
 
         if let Some(temperature) = step.temperature {
             builder = builder.temperature(temperature);
@@ -103,5 +146,26 @@ impl AgentFactory {
         self.toolbox = Arc::new(toolbox);
 
         Ok(())
+    }
+}
+
+#[derive(Builder)]
+#[builder(name = "AgentSpec", derive(Debug, Hash, PartialEq, Eq))]
+// For use via the derived builder, not directly
+pub struct _AgentSpec_ {
+    pub model: String,
+
+    pub temperature: E64,
+
+    pub preamble: String,
+
+    pub context_doc: String,
+
+    pub tools: Arc<Toolset>,
+}
+
+impl AgentSpec {
+    pub fn agent(&self, factory: &AgentFactory) -> anyhow::Result<AgentT> {
+        factory.spec_to_agent(self)
     }
 }

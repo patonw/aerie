@@ -2,15 +2,15 @@ use delegate::delegate;
 use kinded::Kinded;
 use serde::{Deserialize, Serialize};
 
+pub mod agent;
 pub mod chat;
 pub mod primatives;
 pub mod scaffold;
-pub mod tools;
 
+pub use agent::*;
 pub use chat::*;
 pub use primatives::*;
 pub use scaffold::*;
-pub use tools::*;
 
 pub const MIN_WIDTH: f32 = 128.0;
 pub const MIN_HEIGHT: f32 = 32.0;
@@ -42,6 +42,9 @@ pub enum WorkNode {
     GraftChat(GraftChat),
     MaskChat(MaskChat),
     Panic(Panic),
+    Agent(AgentNode),
+    Context(ChatContext),
+    Chat(ChatNode),
 }
 
 impl WorkNode {
@@ -56,6 +59,9 @@ impl WorkNode {
             WorkNode::GraftChat(node) => node,
             WorkNode::MaskChat(node) => node,
             WorkNode::Panic(node) => node,
+            WorkNode::Agent(node) => node,
+            WorkNode::Context(node) => node,
+            WorkNode::Chat(node) => node,
         } {
             #[call(noop)]
             pub fn as_dyn(&self) -> &dyn DynNode;

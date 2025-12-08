@@ -1,0 +1,463 @@
+use decorum::E64;
+use egui::TextEdit;
+use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
+use std::sync::Arc;
+
+use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
+use crate::{
+    ToolProvider, Toolset,
+    agent::AgentSpec,
+    workflow::{
+        WorkflowError,
+        nodes::{MIN_HEIGHT, MIN_WIDTH},
+    },
+};
+
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tools {
+    toolset: Arc<Toolset>,
+}
+
+impl DynNode for Tools {
+    fn inputs(&self) -> usize {
+        0
+    }
+
+    fn out_kind(&self, out_pin: usize) -> ValueKind {
+        assert_eq!(out_pin, 0);
+        ValueKind::Toolset
+    }
+    fn value(&self, out_pin: usize) -> Value {
+        assert_eq!(out_pin, 0);
+        Value::Toolset(self.toolset.clone())
+    }
+}
+
+impl UiNode for Tools {
+    fn title(&self) -> &str {
+        "Tools"
+    }
+
+    fn has_body(&self) -> bool {
+        true
+    }
+
+    fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
+        ui.vertical_centered_justified(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                if ui.selectable_label(self.toolset.is_all(), "all").clicked() {
+                    self.toolset = Arc::new(Toolset::all());
+                }
+
+                if ui
+                    .selectable_label(self.toolset.is_empty(), "none")
+                    .clicked()
+                {
+                    self.toolset = Arc::new(Toolset::empty());
+                }
+            });
+
+            ui.separator();
+
+            for (name, provider) in &ctx.toolbox.providers {
+                ui.collapsing(name, |ui| {
+                    let ToolProvider::MCP { tools, .. } = provider;
+                    for tool in tools {
+                        let mut active = self.toolset.apply(name, tool);
+
+                        if ui.checkbox(&mut active, tool.name.as_ref()).clicked() {
+                            // Cow-like cloning if other refs exist
+                            Arc::make_mut(&mut self.toolset).toggle(name, tool);
+                        }
+                    }
+                });
+            }
+        });
+    }
+}
+
+impl Tools {
+    pub async fn forward(
+        &mut self,
+        _ctx: &RunContext,
+        _inputs: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        Ok(())
+    }
+}
+
+#[skip_serializing_none]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
+pub struct AgentNode {
+    pub model: Option<String>,
+
+    pub preamble: Option<String>,
+
+    pub temperature: Option<E64>,
+
+    #[serde(skip)]
+    pub tools: Option<Arc<Toolset>>,
+
+    #[serde(skip)]
+    pub agent_spec: Arc<AgentSpec>,
+}
+
+impl DynNode for AgentNode {
+    fn inputs(&self) -> usize {
+        5
+    }
+
+    fn outputs(&self) -> usize {
+        1
+    }
+
+    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
+        match in_pin {
+            0 => &[ValueKind::Agent],
+            1 => &[ValueKind::Model],
+            2 => &[ValueKind::Number],
+            3 => &[ValueKind::Toolset],
+            4 => &[ValueKind::Text],
+            _ => ValueKind::all(),
+        }
+    }
+
+    fn out_kind(&self, out_pin: usize) -> ValueKind {
+        match out_pin {
+            0 => ValueKind::Agent,
+            _ => unreachable!(),
+        }
+    }
+
+    fn value(&self, _out_pin: usize) -> Value {
+        Value::Agent(self.agent_spec.clone())
+    }
+}
+
+impl UiNode for AgentNode {
+    fn title(&self) -> &str {
+        "Agent"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Create or modify an LLM Agent"
+    }
+
+    fn preview(&self, _out_pin: usize) -> Value {
+        Value::Placeholder(ValueKind::Agent)
+    }
+
+    fn show_output(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("agent");
+            }
+            _ => unreachable!(),
+        }
+        self.out_kind(pin_id).default_pin()
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            // TODO: Toggle enabling each field to override existing. If no agent input connected,
+            // do not allow toggling
+            0 => {
+                ui.label("Agent")
+                    .on_hover_text("An existing agent to modify.");
+            }
+            1 => {
+                if remote.is_none() {
+                    crate::ui::toggled_field(
+                        ui,
+                        "M",
+                        Some("model"),
+                        &mut self.model,
+                        |ui, value| {
+                            ui.add(TextEdit::singleline(value).hint_text("provider/model:tag"));
+                        },
+                    );
+                } else {
+                    ui.label("model");
+                }
+            }
+            2 => {
+                if remote.is_none() {
+                    crate::ui::toggled_field(
+                        ui,
+                        "T",
+                        Some("temperature"),
+                        &mut self.temperature,
+                        |ui, value| {
+                            let mut temp = value.into_inner();
+
+                            let widget = egui::Slider::new(&mut temp, 0.0..=1.0);
+                            ui.add(widget);
+                            *value = E64::assert(temp);
+                        },
+                    );
+                } else {
+                    ui.label("temperature");
+                }
+            }
+            3 => {
+                ui.label("Tools");
+            }
+            4 => {
+                if remote.is_none() {
+                    crate::ui::toggled_field(
+                        ui,
+                        "P",
+                        Some("preamble"),
+                        &mut self.preamble,
+                        |ui, value| {
+                            egui::Resize::default()
+                                .id_salt("preamble_resize")
+                                .min_width(MIN_WIDTH)
+                                .min_height(MIN_HEIGHT)
+                                .with_stroke(false)
+                                .show(ui, |ui| {
+                                    let widget = egui::TextEdit::multiline(value)
+                                        .id_salt("preamble")
+                                        .desired_width(f32::INFINITY)
+                                        .hint_text("Preamble");
+
+                                    ui.add_sized(ui.available_size(), widget)
+                                        .on_hover_text("Preamble");
+                                });
+                        },
+                    );
+                } else {
+                    ui.label("preamble");
+                }
+            }
+            _ => unreachable!(),
+        };
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+}
+
+impl AgentNode {
+    pub async fn forward(
+        &mut self,
+        _run_ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        self.validate(&inputs)?;
+
+        let agent = match &inputs[0] {
+            Some(Value::Agent(spec)) => Some(spec.clone()),
+            None => None,
+            _ => unreachable!(),
+        };
+
+        let model = match &inputs[1] {
+            Some(Value::Model(name)) => Some(name.clone()),
+            None => self.model.clone(),
+            _ => unreachable!(),
+        };
+
+        if agent.is_none() && model.is_none() {
+            return Err(WorkflowError::Input(vec![
+                "Either model name or an existing agent is required.".into(),
+            ]));
+        }
+
+        let temperature = match &inputs[2] {
+            Some(Value::Number(temp)) => Some(*temp),
+            None => self.temperature,
+            _ => unreachable!(),
+        };
+
+        let toolset = match &inputs[3] {
+            Some(Value::Toolset(tools)) => Some(tools.clone()),
+            None => None,
+            _ => unreachable!(),
+        };
+
+        let preamble = match &inputs[4] {
+            Some(Value::Text(text)) => Some(text.clone()),
+            None => self.preamble.clone(),
+            _ => unreachable!(),
+        };
+
+        let mut agent = agent.unwrap_or_default();
+        let builder = Arc::make_mut(&mut agent);
+
+        if let Some(model) = model {
+            builder.model(model);
+        }
+
+        if let Some(temp) = temperature {
+            tracing::debug!("Setting agent temperature {temp}");
+            builder.temperature(temp);
+        }
+
+        if let Some(preamble) = &preamble {
+            tracing::debug!("Setting agent preamble {preamble}");
+            builder.preamble(preamble.clone());
+        }
+
+        if let Some(tools) = toolset {
+            builder.tools(tools);
+        }
+
+        self.agent_spec = agent;
+
+        Ok(())
+    }
+}
+
+#[skip_serializing_none]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
+pub struct ChatContext {
+    pub context_doc: String,
+
+    #[serde(skip)]
+    pub agent_spec: Arc<AgentSpec>,
+}
+
+impl DynNode for ChatContext {
+    fn inputs(&self) -> usize {
+        2
+    }
+
+    fn outputs(&self) -> usize {
+        1
+    }
+
+    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
+        match in_pin {
+            0 => &[ValueKind::Agent],
+            1 => &[ValueKind::Text],
+            _ => ValueKind::all(),
+        }
+    }
+
+    fn out_kind(&self, out_pin: usize) -> ValueKind {
+        match out_pin {
+            0 => ValueKind::Agent,
+            _ => unreachable!(),
+        }
+    }
+
+    fn value(&self, _out_pin: usize) -> Value {
+        Value::Agent(self.agent_spec.clone())
+    }
+}
+
+impl UiNode for ChatContext {
+    fn title(&self) -> &str {
+        "Context"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Provide background context in the chat"
+    }
+
+    fn preview(&self, _out_pin: usize) -> Value {
+        Value::Placeholder(ValueKind::Agent)
+    }
+
+    fn show_output(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("agent");
+            }
+            _ => unreachable!(),
+        }
+        self.out_kind(pin_id).default_pin()
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            // TODO: Toggle enabling each field to override existing. If no agent input connected,
+            // do not allow toggling
+            0 => {
+                ui.label("agent").on_hover_text(
+                    "An existing agent to modify.\nNOTE: tools cannot be carried over.",
+                );
+            }
+            1 => {
+                return ui
+                    .vertical(|ui| {
+                        if remote.is_none() {
+                            egui::Resize::default()
+                                .id_salt("preamble_resize")
+                                .min_width(MIN_WIDTH)
+                                .min_height(MIN_HEIGHT)
+                                .with_stroke(false)
+                                .show(ui, |ui| {
+                                    let widget = egui::TextEdit::multiline(&mut self.context_doc)
+                                        .id_salt("context")
+                                        .desired_width(f32::INFINITY)
+                                        .hint_text("context");
+
+                                    ui.add_sized(ui.available_size(), widget)
+                                        .on_hover_text("Background context");
+                                });
+                            self.ghost_pin(ValueKind::Text.color())
+                        } else {
+                            ui.label("context");
+                            ValueKind::Text.default_pin()
+                        }
+                    })
+                    .inner;
+            }
+            _ => unreachable!(),
+        };
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+}
+
+impl ChatContext {
+    pub async fn forward(
+        &mut self,
+        _run_ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        self.validate(&inputs)?;
+
+        let mut agent_spec = match &inputs[0] {
+            Some(Value::Agent(spec)) => spec.clone(),
+            None => Err(WorkflowError::Input(vec!["Agent is required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        let context_doc = match &inputs[1] {
+            Some(Value::Text(text)) => text.clone(),
+            None => self.context_doc.clone(),
+            _ => unreachable!(),
+        };
+
+        Arc::make_mut(&mut agent_spec).context_doc(context_doc);
+
+        self.agent_spec = agent_spec;
+
+        Ok(())
+    }
+}

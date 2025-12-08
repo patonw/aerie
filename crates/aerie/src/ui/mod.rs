@@ -72,30 +72,32 @@ fn error_bubble<R>(
     })
 }
 
-fn toggled_field<'a, T: Default>(
+pub fn toggled_field<'a, T: Default>(
     ui: &mut egui::Ui,
     label: impl egui::IntoAtoms<'a>,
     tooltip: Option<impl Into<WidgetText>>,
     value: &mut Option<T>,
     cb: impl Fn(&mut egui::Ui, &mut T),
 ) {
-    let widget = ui.selectable_label(value.is_some(), label);
-    let widget = if let Some(text) = tooltip {
-        widget.on_hover_text(text)
-    } else {
-        widget
-    };
-
-    if widget.clicked() {
-        *value = match value {
-            Some(_) => None,
-            None => Some(Default::default()),
+    ui.horizontal_centered(|ui| {
+        let widget = ui.selectable_label(value.is_some(), label);
+        let widget = if let Some(text) = tooltip {
+            widget.on_hover_text(text)
+        } else {
+            widget
         };
-    }
 
-    if let Some(current) = value {
-        cb(ui, current);
-    } else {
-        ui.label("Toggle label to edit");
-    }
+        if widget.clicked() {
+            *value = match value {
+                Some(_) => None,
+                None => Some(Default::default()),
+            };
+        }
+
+        if let Some(current) = value {
+            cb(ui, current);
+        } else {
+            ui.weak("Toggle label to edit");
+        }
+    });
 }
