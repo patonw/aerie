@@ -166,6 +166,18 @@ impl Toolset {
         Self(Default::default())
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn all() -> Self {
+        Self::empty().with_include("*", "*")
+    }
+
+    pub fn is_all(&self) -> bool {
+        self.0.contains("*/*")
+    }
+
     pub fn with_include(mut self, provider: &str, tool: &str) -> Self {
         self.0.insert(format!("{provider}/{tool}"));
         self

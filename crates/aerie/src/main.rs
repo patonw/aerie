@@ -11,7 +11,7 @@ use tracing_subscriber::{
 };
 
 use aerie::{
-    AgentFactory, LogChannelLayer, LogEntry, Settings, Toolbox, Toolset,
+    AgentFactory, LogChannelLayer, LogEntry, Settings, Toolset,
     chat::ChatSession,
     config::{Args, Command, ConfigExt, SessionCommand},
     ui::{AppState, Pane, state::WorkflowState},
@@ -122,11 +122,10 @@ fn main() -> anyhow::Result<()> {
         }
     });
 
-    let mut agent_factory = AgentFactory {
-        rt: rt.handle().to_owned(),
-        settings: settings.clone(),
-        toolbox: Arc::new(Toolbox::default()),
-    };
+    let mut agent_factory = AgentFactory::builder()
+        .rt(rt.handle().to_owned())
+        .settings(settings.clone())
+        .build();
 
     agent_factory.reload_tools()?;
 

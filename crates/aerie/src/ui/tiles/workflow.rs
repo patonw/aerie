@@ -185,13 +185,23 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             ui.close();
         }
 
-        if ui.button("Tools").clicked() {
-            snarl.insert_node(pos, WorkNode::Tools(Default::default()));
+        if ui.button("Agent").clicked() {
+            snarl.insert_node(pos, WorkNode::Agent(Default::default()));
+            ui.close();
+        }
+
+        if ui.button("Context").clicked() {
+            snarl.insert_node(pos, WorkNode::Context(Default::default()));
             ui.close();
         }
 
         if ui.button("Chat").clicked() {
-            snarl.insert_node(pos, WorkNode::LLM(Default::default()));
+            snarl.insert_node(pos, WorkNode::Chat(Default::default()));
+            ui.close();
+        }
+
+        if ui.button("Tools").clicked() {
+            snarl.insert_node(pos, WorkNode::Tools(Default::default()));
             ui.close();
         }
 
