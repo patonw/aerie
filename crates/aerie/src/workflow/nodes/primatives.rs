@@ -135,6 +135,9 @@ impl UiNode for Preview {
                 .with_stroke(false)
                 .show(ui, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| match &self.value {
+                        Value::Text(text) => {
+                            ui.add(egui::Label::new(text).wrap());
+                        }
                         Value::Chat(history) => {
                             ui.vertical(|ui| {
                                 for entry in history.iter() {
@@ -148,6 +151,22 @@ impl UiNode for Preview {
                         }
                         Value::Message(msg) => {
                             render_message_width(ui, &mut cache, msg, Some(600.0));
+                        }
+                        Value::Json(value) => {
+                            if let Ok(text) = serde_json::to_string_pretty(value) {
+                                let language = "json";
+                                let theme =
+                                    egui_extras::syntax_highlighting::CodeTheme::from_memory(
+                                        ui.ctx(),
+                                        ui.style(),
+                                    );
+
+                                egui_extras::syntax_highlighting::code_view_ui(
+                                    ui, &theme, &text, language,
+                                );
+                            } else {
+                                ui.add(egui::Label::new(format!("{:?}", value)).wrap());
+                            }
                         }
                         _ => {
                             ui.add(egui::Label::new(format!("{:?}", self.value)).wrap());

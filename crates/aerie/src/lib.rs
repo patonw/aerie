@@ -4,6 +4,7 @@ pub mod config;
 pub mod logging;
 pub mod pipeline;
 pub mod toolbox;
+pub mod transmute;
 pub mod ui;
 pub mod utils;
 pub mod workflow;

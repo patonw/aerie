@@ -14,6 +14,7 @@ use aerie::{
     AgentFactory, LogChannelLayer, LogEntry, Settings, Toolset,
     chat::ChatSession,
     config::{Args, Command, ConfigExt, SessionCommand},
+    transmute::Transmuter,
     ui::{AppState, Pane, state::WorkflowState},
     utils::{ErrorDistiller as _, new_errlist},
 };
@@ -175,6 +176,7 @@ fn main() -> anyhow::Result<()> {
         tool_editor: None,
         workflows: flow_state,
         message_graph: Default::default(),
+        transmuter: Transmuter::builder().build(),
     };
 
     let rt_ = rt.handle().clone();

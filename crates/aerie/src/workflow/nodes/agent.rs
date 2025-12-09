@@ -141,7 +141,7 @@ impl UiNode for AgentNode {
     }
 
     fn tooltip(&self) -> &str {
-        "Create or modify an LLM Agent"
+        "Create or modify an LLM Agent."
     }
 
     fn preview(&self, _out_pin: usize) -> Value {

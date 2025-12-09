@@ -1,7 +1,7 @@
 use std::sync::{Arc, atomic::Ordering};
 
 use arc_swap::ArcSwap;
-use egui::{Color32, ComboBox, RichText, Ui};
+use egui::{Color32, ComboBox, Hyperlink, RichText, Ui};
 use egui_phosphor::regular::{CHECK_CIRCLE, HAND_PALM, HOURGLASS_MEDIUM, PLAY_CIRCLE, WARNING};
 use egui_snarl::{
     NodeId, Snarl,
@@ -175,48 +175,81 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
     }
 
     fn show_graph_menu(&mut self, pos: egui::Pos2, ui: &mut Ui, snarl: &mut Snarl<WorkNode>) {
+        ui.menu_button("Text", |ui| {
+            if ui.button("Plain Text").clicked() {
+                snarl.insert_node(pos, WorkNode::Text(Default::default()));
+                ui.close();
+            }
+
+            if ui.button("Template").clicked() {
+                snarl.insert_node(pos, WorkNode::TemplateNode(Default::default()));
+                ui.close();
+            }
+        });
+
+        ui.menu_button("LLM", |ui| {
+            if ui.button("Agent").clicked() {
+                snarl.insert_node(pos, WorkNode::Agent(Default::default()));
+                ui.close();
+            }
+
+            if ui.button("Context").clicked() {
+                snarl.insert_node(pos, WorkNode::Context(Default::default()));
+                ui.close();
+            }
+
+            if ui.button("Tools").clicked() {
+                snarl.insert_node(pos, WorkNode::Tools(Default::default()));
+                ui.close();
+            }
+
+            if ui.button("Chat").clicked() {
+                snarl.insert_node(pos, WorkNode::Chat(Default::default()));
+                ui.close();
+            }
+        });
+
+        ui.menu_button("Conversation", |ui| {
+            if ui.button("Side Chat").clicked() {
+                snarl.insert_node(pos, WorkNode::GraftChat(Default::default()));
+                ui.close();
+            }
+
+            if ui.button("Mask Chat").clicked() {
+                snarl.insert_node(pos, WorkNode::MaskChat(Default::default()));
+                ui.close();
+            }
+        });
+
+        ui.menu_button("JSON", |ui| {
+            if ui.button("Parse JSON").clicked() {
+                snarl.insert_node(pos, WorkNode::ParseJson(Default::default()));
+                ui.close();
+            }
+
+            if ui.button("Validate JSON").clicked() {
+                snarl.insert_node(pos, WorkNode::ValidateJson(Default::default()));
+                ui.close();
+            }
+
+            if ui.button("Transform JSON").clicked() {
+                snarl.insert_node(pos, WorkNode::TransformJson(Default::default()));
+                ui.close();
+            }
+        });
+
+        if ui.button("Panic").clicked() {
+            snarl.insert_node(pos, WorkNode::Panic(Default::default()));
+            ui.close();
+        }
+
         if ui.button("Preview").clicked() {
             snarl.insert_node(pos, WorkNode::Preview(Default::default()));
             ui.close();
         }
 
-        if ui.button("Text").clicked() {
-            snarl.insert_node(pos, WorkNode::Text(Default::default()));
-            ui.close();
-        }
-
-        if ui.button("Agent").clicked() {
-            snarl.insert_node(pos, WorkNode::Agent(Default::default()));
-            ui.close();
-        }
-
-        if ui.button("Context").clicked() {
-            snarl.insert_node(pos, WorkNode::Context(Default::default()));
-            ui.close();
-        }
-
-        if ui.button("Chat").clicked() {
-            snarl.insert_node(pos, WorkNode::Chat(Default::default()));
-            ui.close();
-        }
-
-        if ui.button("Tools").clicked() {
-            snarl.insert_node(pos, WorkNode::Tools(Default::default()));
-            ui.close();
-        }
-
-        if ui.button("Side Chat").clicked() {
-            snarl.insert_node(pos, WorkNode::GraftChat(Default::default()));
-            ui.close();
-        }
-
-        if ui.button("Mask Chat").clicked() {
-            snarl.insert_node(pos, WorkNode::MaskChat(Default::default()));
-            ui.close();
-        }
-
-        if ui.button("Panic").clicked() {
-            snarl.insert_node(pos, WorkNode::Panic(Default::default()));
+        if ui.button("Comment").clicked() {
+            snarl.insert_node(pos, WorkNode::Comment(Default::default()));
             ui.close();
         }
     }
@@ -274,8 +307,8 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         snarl.drop_outputs(pin.id);
     }
 
-    fn has_node_menu(&mut self, _node: &WorkNode) -> bool {
-        true
+    fn has_node_menu(&mut self, node: &WorkNode) -> bool {
+        !matches!(node, WorkNode::Start(_) | WorkNode::Finish(_))
     }
 
     fn show_node_menu(
@@ -286,6 +319,11 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui: &mut Ui,
         snarl: &mut Snarl<WorkNode>,
     ) {
+        let help_link = snarl[node].as_ui().help_link();
+        if !help_link.is_empty() {
+            ui.add(Hyperlink::from_label_and_url("Help", help_link).open_in_new_tab(true));
+        }
+
         if self.shadow.is_disabled(node) {
             if ui.button("Enable").clicked() {
                 self.shadow = self.shadow.enable_node(node);
@@ -296,12 +334,15 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             ui.close();
         }
 
-        if ui.button("Remove").clicked() {
-            snarl.remove_node(node);
-            self.shadow = self.shadow.enable_node(node).without_node(&node);
+        // Alleviate accidental clicks
+        ui.menu_button("Remove", |ui| {
+            if ui.button("OK").clicked() {
+                snarl.remove_node(node);
+                self.shadow = self.shadow.enable_node(node).without_node(&node);
 
-            ui.close();
-        }
+                ui.close();
+            }
+        });
     }
 }
 
@@ -401,12 +442,13 @@ impl super::AppState {
 
         let mut exec = {
             let run_ctx = RunContext::builder()
+                .agent_factory(self.agent_factory.clone())
+                .transmuter(self.transmuter.clone())
                 .history(self.session.history.clone())
                 .user_prompt(self.prompt.read().unwrap().clone())
                 .model(self.settings.view(|s| s.llm_model.clone()))
                 .temperature(self.settings.view(|s| s.temperature))
                 .errors(self.errors.clone())
-                .agent_factory(self.agent_factory.clone())
                 .build();
 
             let mut exec = WorkflowRunner::builder().run_ctx(run_ctx).build();

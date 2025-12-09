@@ -4,11 +4,15 @@ use serde::{Deserialize, Serialize};
 
 pub mod agent;
 pub mod chat;
+pub mod json;
+pub mod misc;
 pub mod primatives;
 pub mod scaffold;
 
 pub use agent::*;
 pub use chat::*;
+pub use json::*;
+pub use misc::*;
 pub use primatives::*;
 pub use scaffold::*;
 
@@ -33,6 +37,7 @@ impl<T> NoopExt for T {
 
 #[derive(Debug, Clone, Hash, PartialEq, Serialize, Deserialize, Kinded)]
 pub enum WorkNode {
+    Comment(CommentNode),
     Preview(Preview),
     Text(Text),
     Tools(Tools),
@@ -45,11 +50,16 @@ pub enum WorkNode {
     Agent(AgentNode),
     Context(ChatContext),
     Chat(ChatNode),
+    ParseJson(ParseJson),
+    ValidateJson(ValidateJson),
+    TransformJson(TransformJson),
+    TemplateNode(TemplateNode),
 }
 
 impl WorkNode {
     delegate! {
         to match self {
+            WorkNode::Comment(node) => node,
             WorkNode::Preview(node) => node,
             WorkNode::Text(node) => node,
             WorkNode::Tools(node) => node,
@@ -62,6 +72,10 @@ impl WorkNode {
             WorkNode::Agent(node) => node,
             WorkNode::Context(node) => node,
             WorkNode::Chat(node) => node,
+            WorkNode::ParseJson(node) => node,
+            WorkNode::ValidateJson(node) => node,
+            WorkNode::TransformJson(node) => node,
+            WorkNode::TemplateNode(node) => node,
         } {
             #[call(noop)]
             pub fn as_dyn(&self) -> &dyn DynNode;
