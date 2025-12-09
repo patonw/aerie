@@ -17,6 +17,7 @@ use super::{Pane, tiles};
 use crate::{
     AgentFactory, LogEntry, Settings, ToolSpec,
     chat::ChatSession,
+    transmute::Transmuter,
     ui::tiles::messages::MessageGraph,
     utils::ErrorList,
     workflow::{ShadowGraph, WorkNode, fixup_workflow, runner::ExecState, store::WorkflowStore},
@@ -56,6 +57,8 @@ pub struct AppState {
     pub workflows: WorkflowState,
 
     pub message_graph: MessageGraph,
+
+    pub transmuter: Transmuter,
 }
 
 impl egui_tiles::Behavior<Pane> for AppState {

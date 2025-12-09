@@ -16,6 +16,7 @@ use typed_builder::TypedBuilder;
 use crate::{
     AgentFactory, ChatHistory, Toolbox, Toolset,
     agent::AgentSpec,
+    transmute::Transmuter,
     utils::{ErrorList, ImmutableMapExt as _, ImmutableSetExt as _},
 };
 
@@ -57,7 +58,7 @@ impl ValueKind {
             ValueKind::Text => Color32::CYAN,
             ValueKind::Number => Color32::from_rgb(0xff, 0x56, 0x78),
             ValueKind::Integer => Color32::from_rgb(0xff, 0x65, 0x43),
-            ValueKind::Json => Color32::from_rgb(0xbb, 0x69, 0x78),
+            ValueKind::Json => Color32::BROWN,
             ValueKind::Model => Color32::LIGHT_BLUE,
             ValueKind::Agent => Color32::from_rgb(0x56, 0x78, 0xff),
             ValueKind::Toolset => Color32::PURPLE,
@@ -80,6 +81,8 @@ pub struct EditContext {
 #[derive(TypedBuilder)]
 pub struct RunContext {
     pub agent_factory: AgentFactory,
+
+    pub transmuter: Transmuter,
 
     /// Snapshot of the chat before the workflow is run
     #[builder(default)]
@@ -359,6 +362,7 @@ where
     }
 }
 
+// TODO: help link property
 pub trait DynNode {
     // Moved to impl of each struct to avoid dealing with boxing
     // /// Update computed values with inputs from remotes.
@@ -453,6 +457,10 @@ pub trait UiNode: DynNode {
     }
 
     fn tooltip(&self) -> &str {
+        ""
+    }
+
+    fn help_link(&self) -> &str {
         ""
     }
 
