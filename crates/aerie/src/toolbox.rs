@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use rig::{agent::AgentBuilderSimple, completion::CompletionModel};
+use rig::{agent::AgentBuilderSimple, completion::CompletionModel, tool::ToolSet as RigToolSet};
 use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
 use tokio::process::Command;
 
@@ -21,6 +21,24 @@ pub enum ToolProvider {
 }
 
 impl ToolProvider {
+    pub fn get_tools(&self, selector: impl Fn(&Tool) -> bool) -> RigToolSet {
+        let mut result = RigToolSet::default();
+        match self {
+            ToolProvider::MCP { client, tools } => {
+                for tool in tools {
+                    if selector(tool) {
+                        result.add_tool(rig::tool::rmcp::McpTool::from_mcp_server(
+                            tool.clone(),
+                            client.peer().clone(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
     pub fn select_tools<M: CompletionModel>(
         &self,
         agent: AgentBuilderSimple<M>,
@@ -115,16 +133,26 @@ impl Toolbox {
             .fold(agent, |agent, chain| chain.select_tools(agent, |_| true))
     }
 
+    pub fn get_tools(&self, toolset: &Toolset) -> RigToolSet {
+        let mut result = RigToolSet::default();
+        for (name, provider) in &self.providers {
+            result.add_tools(provider.get_tools(|tool| toolset.apply(name, tool)))
+        }
+
+        result
+    }
+
     pub fn select_tools<M: CompletionModel>(
         &self,
         agent: AgentBuilderSimple<M>,
-        pred: impl Fn(&str, &Tool) -> bool,
+        pred: impl Fn(&str, &Tool) -> bool + Copy,
     ) -> AgentBuilderSimple<M> {
         self.providers.iter().fold(agent, |agent, (name, chain)| {
             chain.select_tools(agent, |tool| pred(name, tool))
         })
     }
 
+    // TODO: build the agent then manually create a ToolServer
     pub fn apply<M: CompletionModel>(
         &self,
         agent: AgentBuilderSimple<M>,

@@ -198,13 +198,24 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                 ui.close();
             }
 
-            if ui.button("Tools").clicked() {
-                snarl.insert_node(pos, WorkNode::Tools(Default::default()));
+            if ui.button("Chat").clicked() {
+                snarl.insert_node(pos, WorkNode::Chat(Default::default()));
                 ui.close();
             }
 
-            if ui.button("Chat").clicked() {
-                snarl.insert_node(pos, WorkNode::Chat(Default::default()));
+            if ui.button("Structured").clicked() {
+                snarl.insert_node(pos, WorkNode::Structured(Default::default()));
+                ui.close();
+            }
+        });
+
+        ui.menu_button("Tools", |ui| {
+            if ui.button("Select Tools").clicked() {
+                snarl.insert_node(pos, WorkNode::Tools(Default::default()));
+                ui.close();
+            }
+            if ui.button("Invoke Tools").clicked() {
+                snarl.insert_node(pos, WorkNode::InvokeTool(Default::default()));
                 ui.close();
             }
         });

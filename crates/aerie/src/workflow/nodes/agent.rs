@@ -1,12 +1,13 @@
 use decorum::E64;
 use egui::TextEdit;
+use rig::message::Message;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::sync::Arc;
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 use crate::{
-    ToolProvider, Toolset,
+    ChatContent, ChatHistory, ToolProvider, Toolset,
     agent::AgentSpec,
     workflow::{
         WorkflowError,
@@ -457,6 +458,335 @@ impl ChatContext {
         Arc::make_mut(&mut agent_spec).context_doc(context_doc);
 
         self.agent_spec = agent_spec;
+
+        Ok(())
+    }
+}
+
+#[skip_serializing_none]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
+pub struct InvokeToolViaAgent {
+    pub tool_name: String,
+
+    #[serde(skip)]
+    pub history: Arc<ChatHistory>,
+
+    #[serde(skip)]
+    pub tool_output: String,
+}
+
+impl DynNode for InvokeToolViaAgent {
+    fn inputs(&self) -> usize {
+        4
+    }
+
+    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
+        match in_pin {
+            0 => &[ValueKind::Agent],
+            1 => &[ValueKind::Chat],
+            2 => &[ValueKind::Text],
+            3 => &[ValueKind::Json],
+            _ => ValueKind::all(),
+        }
+    }
+
+    fn outputs(&self) -> usize {
+        2
+    }
+
+    fn out_kind(&self, out_pin: usize) -> ValueKind {
+        match out_pin {
+            0 => ValueKind::Chat,
+            1 => ValueKind::Text,
+            _ => unreachable!(),
+        }
+    }
+
+    fn value(&self, out_pin: usize) -> Value {
+        match out_pin {
+            0 => Value::Chat(self.history.clone()),
+            1 => Value::Text(self.tool_output.clone()),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl UiNode for InvokeToolViaAgent {
+    fn title(&self) -> &str {
+        "Invoke Tool (deprecated)"
+    }
+
+    fn show_output(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("history");
+            }
+            1 => {
+                ui.label("output");
+            }
+            _ => unreachable!(),
+        }
+        self.out_kind(pin_id).default_pin()
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("agent")
+                    .on_hover_text("An agent configured with the tool(s) to invoke");
+            }
+            1 => {
+                ui.label("history");
+            }
+            2 => {
+                if remote.is_none() {
+                    ui.add(TextEdit::singleline(&mut self.tool_name));
+                } else {
+                    ui.label("tool name");
+                }
+            }
+            3 => {
+                ui.label("arguments");
+            }
+            _ => unreachable!(),
+        };
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+}
+
+impl InvokeToolViaAgent {
+    pub async fn forward(
+        &mut self,
+        run_ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        self.validate(&inputs)?;
+
+        let agent_spec = match &inputs[0] {
+            Some(Value::Agent(spec)) => spec.clone(),
+            None => Err(WorkflowError::Input(vec!["Agent is required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        let chat = match &inputs[1] {
+            Some(Value::Chat(history)) => history,
+            None => Err(WorkflowError::Input(vec!["Chat history required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        // TODO: infer if only one tool on the agent
+        let tool_name = match &inputs[2] {
+            Some(Value::Text(text)) => text.as_str(),
+            None if !self.tool_name.is_empty() => self.tool_name.as_str(),
+            None => Err(WorkflowError::Input(vec!["Tool name required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        let args = match &inputs[3] {
+            Some(Value::Json(value)) => value.clone(),
+            None => Err(WorkflowError::Input(vec![
+                "Tool arguments are required".into(),
+            ]))?,
+            _ => unreachable!(),
+        };
+
+        let agent = agent_spec.agent(&run_ctx.agent_factory)?;
+        let output = agent
+            .tool_server_handle
+            .call_tool(tool_name, &args.to_string())
+            .await?;
+
+        let msg = Message::tool_result(tool_name, &output);
+        let chat = chat.extend(vec![Ok(msg).into()])?;
+        self.history = Arc::new(chat.into_owned());
+
+        // Should we even attempt to deseruakuze here? Can we get an output schema?
+        self.tool_output = output;
+
+        Ok(())
+    }
+}
+
+#[skip_serializing_none]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
+pub struct InvokeTool {
+    pub tool_name: String,
+
+    #[serde(skip)]
+    pub history: Arc<ChatHistory>,
+
+    #[serde(skip)]
+    pub tool_output: String,
+}
+
+impl DynNode for InvokeTool {
+    fn inputs(&self) -> usize {
+        4
+    }
+
+    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
+        match in_pin {
+            0 => &[ValueKind::Chat],
+            1 => &[ValueKind::Toolset],
+            2 => &[ValueKind::Text],
+            3 => &[ValueKind::Json],
+            _ => ValueKind::all(),
+        }
+    }
+
+    fn outputs(&self) -> usize {
+        3
+    }
+
+    fn out_kind(&self, out_pin: usize) -> ValueKind {
+        match out_pin {
+            0 => ValueKind::Chat,
+            1 => ValueKind::Message,
+            2 => ValueKind::Text,
+            _ => unreachable!(),
+        }
+    }
+
+    fn value(&self, out_pin: usize) -> Value {
+        match out_pin {
+            0 => Value::Chat(self.history.clone()),
+            1 => {
+                if let Some(entry) = self.history.last()
+                    && let ChatContent::Message(message) = &entry.content
+                {
+                    Value::Message(message.clone())
+                } else {
+                    Value::Placeholder(ValueKind::Message)
+                }
+            }
+            2 => Value::Text(self.tool_output.clone()),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl UiNode for InvokeTool {
+    fn title(&self) -> &str {
+        "Invoke Tool"
+    }
+
+    fn show_output(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("history");
+            }
+            1 => {
+                ui.label("response");
+            }
+            2 => {
+                ui.label("output");
+            }
+            _ => unreachable!(),
+        }
+        self.out_kind(pin_id).default_pin()
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("history");
+            }
+            1 => {
+                ui.label("tools");
+            }
+            2 => {
+                if remote.is_none() {
+                    ui.add(TextEdit::singleline(&mut self.tool_name));
+                } else {
+                    ui.label("tool name");
+                }
+            }
+            3 => {
+                ui.label("arguments");
+            }
+            _ => unreachable!(),
+        };
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+}
+
+impl InvokeTool {
+    pub async fn forward(
+        &mut self,
+        run_ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        self.validate(&inputs)?;
+
+        let chat = match &inputs[0] {
+            Some(Value::Chat(history)) => history,
+            None => Err(WorkflowError::Input(vec!["Chat history required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        let toolset = match &inputs[1] {
+            Some(Value::Toolset(spec)) => spec.clone(),
+            None => Err(WorkflowError::Input(vec!["Toolset is required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        let rig_tools = run_ctx.agent_factory.toolbox.get_tools(&toolset);
+        let single_tool = if let [tool] = rig_tools.get_tool_definitions().await.unwrap().as_slice()
+        {
+            Some(tool.name.clone())
+        } else {
+            None
+        };
+
+        // TODO: infer if only one tool on the agent
+        let tool_name = match &inputs[2] {
+            Some(Value::Text(text)) => text.as_str(),
+            None if !self.tool_name.is_empty() => self.tool_name.as_str(),
+            None if single_tool.is_some() => single_tool.as_ref().unwrap(),
+            None => Err(WorkflowError::Input(vec!["Tool name required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        let args = match &inputs[3] {
+            Some(Value::Json(value)) => value.clone(),
+            None => Err(WorkflowError::Input(vec![
+                "Tool arguments are required".into(),
+            ]))?,
+            _ => unreachable!(),
+        };
+
+        let output = rig_tools.call(tool_name, args.to_string()).await?;
+
+        let msg = Message::tool_result(tool_name, &output);
+        let chat = chat.extend(vec![Ok(msg).into()])?;
+        self.history = Arc::new(chat.into_owned());
+
+        // Should we even attempt to deseruakuze here? Can we get an output schema?
+        self.tool_output = output;
 
         Ok(())
     }

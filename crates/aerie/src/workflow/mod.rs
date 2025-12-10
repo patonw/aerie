@@ -6,8 +6,12 @@ use egui_snarl::{
     ui::{PinInfo, WireStyle},
 };
 use itertools::Itertools as _;
+use jsonschema::ValidationError;
 use kinded::Kinded;
-use rig::message::Message;
+use rig::{
+    message::Message,
+    tool::{ToolSetError, server::ToolServerError},
+};
 use serde::{Deserialize, Serialize};
 use std::{hash::Hash, sync::Arc};
 use thiserror::Error;
@@ -398,13 +402,11 @@ pub trait DynNode {
     }
 
     fn validate(&self, inputs: &[Option<Value>]) -> Result<(), WorkflowError> {
-        tracing::trace!(
-            "Validating inputs for {} -- {inputs:?}",
-            std::any::type_name_of_val(self)
-        );
+        tracing::debug!("Validating inputs for {}", std::any::type_name_of_val(self));
+        tracing::trace!("Input values: {inputs:?}");
 
         if inputs.len() != self.inputs() {
-            Err(WorkflowError::Validation(vec![
+            Err(WorkflowError::Input(vec![
                 "Incorrect number of inputs".into(),
             ]))?
         }
@@ -425,7 +427,7 @@ pub trait DynNode {
             .collect_vec();
 
         if !errors.is_empty() {
-            Err(WorkflowError::Validation(errors))
+            Err(WorkflowError::Input(errors))
         } else {
             Ok(())
         }
@@ -503,17 +505,38 @@ pub trait UiNode: DynNode {
 
 #[derive(Debug, Error)]
 pub enum WorkflowError {
-    #[error("Validation error")]
-    Validation(Vec<String>),
-
     #[error("Input error {0:?}")]
     Input(Vec<String>),
 
     #[error("Error while invoking provider")]
     Provider(#[source] anyhow::Error),
 
+    #[error("Expected a tool call, but received none")]
+    MissingToolCall,
+
+    #[error("Error while invoking tool")]
+    ToolCall(#[source] ToolSetError),
+
+    #[error("Error while invoking tool")]
+    ToolServerCall(#[source] ToolServerError),
+
+    #[error("Value does not conform to schema")]
+    Validation(#[source] ValidationError<'static>),
+
     #[error("{0}")]
     Unknown(String),
+}
+
+impl From<ToolSetError> for WorkflowError {
+    fn from(value: ToolSetError) -> Self {
+        WorkflowError::ToolCall(value)
+    }
+}
+
+impl From<ToolServerError> for WorkflowError {
+    fn from(value: ToolServerError) -> Self {
+        WorkflowError::ToolServerCall(value)
+    }
 }
 
 impl From<anyhow::Error> for WorkflowError {

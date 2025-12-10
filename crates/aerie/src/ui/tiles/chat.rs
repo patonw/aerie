@@ -89,57 +89,63 @@ impl super::AppState {
                 let cache = &mut self.cache;
                 self.session.view(|history| {
                     for msg in history.iter() {
-                        let aside = history.iter_aside(msg).collect_vec();
-                        if !aside.is_empty() {
-                            egui::CollapsingHeader::new("details")
-                                .id_salt(msg.id)
-                                .show(ui, |ui| {
-                                    for entry in aside {
-                                        if let ChatContent::Message(message) = &entry.content {
-                                            render_message(ui, cache, message);
-                                        }
-                                    }
-                                });
-                        }
-
-                        match &msg.content {
-                            ChatContent::Message(message) => {
-                                // TODO: only on user prompt
-                                if let Message::User { .. } = message
-                                    && ui.button(GIT_BRANCH).clicked()
-                                {
-                                    self.branch_point = Some(msg.id);
-                                }
-                                render_message(ui, cache, message);
-                            }
-                            ChatContent::Aside {
-                                automation: workflow,
-                                prompt: _,
-                                collapsed,
-                                content,
-                            } => {
-                                let resp =
-                                    egui::CollapsingHeader::new(format!("Workflow: {workflow}"))
-                                        .id_salt(msg.id)
-                                        .default_open(!collapsed)
-                                        .show(ui, |ui| {
-                                            for message in content {
+                        ui.push_id(msg.id, |ui| {
+                            let aside = history.iter_aside(msg).collect_vec();
+                            if !aside.is_empty() {
+                                egui::CollapsingHeader::new("details").id_salt(msg.id).show(
+                                    ui,
+                                    |ui| {
+                                        for entry in aside {
+                                            if let ChatContent::Message(message) = &entry.content {
                                                 render_message(ui, cache, message);
                                             }
-                                        });
-                                if resp.fully_closed()
-                                    && let Some(message) = content.last()
-                                {
+                                        }
+                                    },
+                                );
+                            }
+
+                            match &msg.content {
+                                ChatContent::Message(message) => {
+                                    // TODO: only on user prompt
+                                    if let Message::User { .. } = message
+                                        && ui.button(GIT_BRANCH).clicked()
+                                    {
+                                        self.branch_point = Some(msg.id);
+                                    }
                                     render_message(ui, cache, message);
                                 }
+                                ChatContent::Aside {
+                                    automation: workflow,
+                                    prompt: _,
+                                    collapsed,
+                                    content,
+                                } => {
+                                    let resp = egui::CollapsingHeader::new(format!(
+                                        "Workflow: {workflow}"
+                                    ))
+                                    .id_salt(msg.id)
+                                    .default_open(!collapsed)
+                                    .show(ui, |ui| {
+                                        for message in content {
+                                            render_message(ui, cache, message);
+                                        }
+                                    });
+                                    if resp.fully_closed()
+                                        && let Some(message) = content.last()
+                                    {
+                                        render_message(ui, cache, message);
+                                    }
+                                }
+                                ChatContent::Error { err } => {
+                                    error_bubble(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.label(
+                                            egui::RichText::new(err).color(egui::Color32::RED),
+                                        );
+                                    });
+                                }
                             }
-                            ChatContent::Error(err) => {
-                                error_bubble(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.label(egui::RichText::new(err).color(egui::Color32::RED));
-                                });
-                            }
-                        }
+                        });
                     }
                 });
 

@@ -211,7 +211,7 @@ impl super::AppState {
                                     buffer.push_back(message);
                                 }
                             }
-                            ChatContent::Error(_) => {}
+                            ChatContent::Error { .. } => {}
                         }
                     }
 
@@ -258,7 +258,7 @@ impl super::AppState {
                 let history = Cow::Borrowed(history);
                 if scratch.len() <= 2 {
                     history.try_moo(|h| {
-                        h.extend(scratch.into_iter().map(|it| it.into()), Some(&branch))
+                        h.extend_branch(scratch.into_iter().map(|it| it.into()), Some(&branch))
                     })
                 } else {
                     use itertools::{Either, Itertools as _};
@@ -281,13 +281,13 @@ impl super::AppState {
                         content,
                     };
 
-                    let error_msgs = errors.into_iter().map(ChatContent::Error);
+                    let error_msgs = errors.into_iter().map(|msg| Err(msg).into());
 
                     // No inconsistent partial updates if intermediate ops fail
                     history
-                        .try_moo(|h| h.push(prompt_msg.into(), Some(&branch)))?
-                        .try_moo(|h| h.push(aside_msgs, Some(&branch)))?
-                        .try_moo(|h| h.extend(error_msgs, Some(&branch)))
+                        .try_moo(|h| h.push_branch(prompt_msg.into(), Some(&branch)))?
+                        .try_moo(|h| h.push_branch(aside_msgs, Some(&branch)))?
+                        .try_moo(|h| h.extend_branch(error_msgs, Some(&branch)))
                 }
             }));
 

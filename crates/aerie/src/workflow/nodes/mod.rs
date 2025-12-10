@@ -50,10 +50,13 @@ pub enum WorkNode {
     Agent(AgentNode),
     Context(ChatContext),
     Chat(ChatNode),
+    Structured(StructuredChat),
     ParseJson(ParseJson),
     ValidateJson(ValidateJson),
     TransformJson(TransformJson),
     TemplateNode(TemplateNode),
+    InvokeTool(InvokeTool),
+    InvokeToolViaAgent(InvokeToolViaAgent),
 }
 
 impl WorkNode {
@@ -72,10 +75,13 @@ impl WorkNode {
             WorkNode::Agent(node) => node,
             WorkNode::Context(node) => node,
             WorkNode::Chat(node) => node,
+            WorkNode::Structured(node) => node,
             WorkNode::ParseJson(node) => node,
             WorkNode::ValidateJson(node) => node,
             WorkNode::TransformJson(node) => node,
             WorkNode::TemplateNode(node) => node,
+            WorkNode::InvokeTool(node) => node,
+            WorkNode::InvokeToolViaAgent(node) => node,
         } {
             #[call(noop)]
             pub fn as_dyn(&self) -> &dyn DynNode;
