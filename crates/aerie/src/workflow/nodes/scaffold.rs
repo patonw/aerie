@@ -50,9 +50,9 @@ impl DynNode for Start {
 
     fn out_kind(&self, out_pin: usize) -> ValueKind {
         match out_pin {
-            0 => ValueKind::Chat,
-            1 => ValueKind::Model,
-            2 => ValueKind::Number,
+            0 => ValueKind::Model,
+            1 => ValueKind::Number,
+            2 => ValueKind::Chat,
             3 => ValueKind::Text,
             _ => unreachable!(),
         }
@@ -60,9 +60,9 @@ impl DynNode for Start {
 
     fn value(&self, out_pin: usize) -> Value {
         match out_pin {
-            0 => Value::Chat(self.history.clone()),
-            1 => Value::Model(self.model.clone()),
-            2 => Value::Number(self.temperature),
+            0 => Value::Model(self.model.clone()),
+            1 => Value::Number(self.temperature),
+            2 => Value::Chat(self.history.clone()),
             3 => Value::Text(self.user_prompt.clone()),
             _ => unreachable!(),
         }
@@ -82,13 +82,13 @@ impl UiNode for Start {
     ) -> egui_snarl::ui::PinInfo {
         match pin_id {
             0 => {
-                ui.label("conversation");
-            }
-            1 => {
                 ui.label("model");
             }
-            2 => {
+            1 => {
                 ui.label("temperature");
+            }
+            2 => {
+                ui.label("conversation");
             }
             3 => {
                 ui.label("prompt");
@@ -167,9 +167,18 @@ impl Finish {
         inputs: Vec<Option<Value>>,
     ) -> Result<(), WorkflowError> {
         self.validate(&inputs)?;
+
         match &inputs[0] {
             Some(Value::Chat(chat)) => {
-                ctx.history.store(chat.clone());
+                if ctx.history.load().is_subset(chat) {
+                    ctx.history
+                        .store(Arc::new(chat.with_base(None).into_owned()));
+                } else {
+                    Err(WorkflowError::Input(vec![
+                        "Final chat history is not related to the session. Refusing to overwrite."
+                            .into(),
+                    ]))?;
+                }
             }
             None => {}
             _ => unreachable!(),

@@ -7,6 +7,7 @@ use serde_with::skip_serializing_none;
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
+    error::Error,
     ops::Deref,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
@@ -104,7 +105,9 @@ pub enum ChatContent {
         collapsed: bool,
         content: Vec<Message>,
     },
-    Error(String),
+    Error {
+        err: String,
+    },
 }
 
 impl std::cmp::Eq for ChatContent {} // ???
@@ -120,7 +123,7 @@ impl From<Result<Message, String>> for ChatContent {
     fn from(value: Result<Message, String>) -> Self {
         match value {
             Ok(msg) => ChatContent::Message(msg),
-            Err(err) => ChatContent::Error(err),
+            Err(err) => ChatContent::Error { err },
         }
     }
 }
@@ -169,6 +172,10 @@ impl Default for ChatHistory {
 }
 
 impl ChatHistory {
+    pub fn is_subset(&self, other: &Self) -> bool {
+        self.store.is_submap(&other.store)
+    }
+
     pub fn switch(&'_ self, head: &str) -> Cow<'_, Self> {
         let mut result = Cow::Borrowed(self);
         if self.head != head {
@@ -187,15 +194,33 @@ impl ChatHistory {
         result
     }
 
-    pub fn push(
+    pub fn push_branch(
         &'_ self,
         content: ChatContent,
         branch: Option<impl AsRef<str>>,
     ) -> anyhow::Result<Cow<'_, Self>> {
-        self.extend(std::iter::once(content), branch)
+        self.extend_branch(std::iter::once(content), branch)
+    }
+
+    pub fn push(&'_ self, content: ChatContent) -> anyhow::Result<Cow<'_, Self>> {
+        self.extend_branch(std::iter::once(content), None::<String>)
+    }
+
+    pub fn push_error<E: Error>(&'_ self, err: E) -> anyhow::Result<Cow<'_, Self>> {
+        self.extend_branch(
+            std::iter::once(Err(format!("{err}:\n{err:?}",)).into()),
+            None::<String>,
+        )
     }
 
     pub fn extend(
+        &'_ self,
+        contents: impl std::iter::IntoIterator<Item = ChatContent>,
+    ) -> anyhow::Result<Cow<'_, Self>> {
+        self.extend_branch(contents, None::<String>)
+    }
+
+    pub fn extend_branch(
         &'_ self,
         contents: impl std::iter::IntoIterator<Item = ChatContent>,
         branch: Option<impl AsRef<str>>,
@@ -375,9 +400,12 @@ impl ChatHistory {
         buffer.into_iter()
     }
 
-    pub fn iter_msgs(&self) -> impl Iterator<Item = &Message> {
+    pub fn iter_msgs(&self) -> impl Iterator<Item = Cow<'_, Message>> {
         self.iter().filter_map(|entry| match &entry.content {
-            ChatContent::Message(message) => Some(message),
+            ChatContent::Message(message) => Some(Cow::Borrowed(message)),
+            ChatContent::Error { err } => {
+                Some(Cow::Owned(Message::user(format!("Error:\n{err:?}"))))
+            }
             _ => None,
         })
     }
