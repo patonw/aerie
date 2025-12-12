@@ -18,7 +18,7 @@ use thiserror::Error;
 use typed_builder::TypedBuilder;
 
 use crate::{
-    AgentFactory, ChatHistory, Toolbox, Toolset,
+    AgentFactory, ChatHistory, ToolSelector, Toolbox,
     agent::AgentSpec,
     transmute::Transmuter,
     utils::{ErrorList, ImmutableMapExt as _, ImmutableSetExt as _},
@@ -44,7 +44,7 @@ pub enum Value {
     Json(Arc<serde_json::Value>), // I think this is immutable?
     Model(String),
     Agent(Arc<AgentSpec>),
-    Toolset(Arc<Toolset>),
+    Tools(Arc<ToolSelector>),
     Chat(Arc<ChatHistory>),
     Message(Message),
 }
@@ -65,7 +65,7 @@ impl ValueKind {
             ValueKind::Json => Color32::BROWN,
             ValueKind::Model => Color32::LIGHT_BLUE,
             ValueKind::Agent => Color32::from_rgb(0x56, 0x78, 0xff),
-            ValueKind::Toolset => Color32::PURPLE,
+            ValueKind::Tools => Color32::PURPLE,
             ValueKind::Chat => Color32::GOLD,
             ValueKind::Message => Color32::from_rgb(0xe9, 0x74, 0x51),
         }

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 use crate::{
-    ChatContent, ChatHistory, ToolProvider, Toolset,
+    ChatContent, ChatHistory, ToolProvider, ToolSelector,
     agent::AgentSpec,
     workflow::{
         WorkflowError,
@@ -17,7 +17,7 @@ use crate::{
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tools {
-    toolset: Arc<Toolset>,
+    toolset: Arc<ToolSelector>,
 }
 
 impl DynNode for Tools {
@@ -27,11 +27,11 @@ impl DynNode for Tools {
 
     fn out_kind(&self, out_pin: usize) -> ValueKind {
         assert_eq!(out_pin, 0);
-        ValueKind::Toolset
+        ValueKind::Tools
     }
     fn value(&self, out_pin: usize) -> Value {
         assert_eq!(out_pin, 0);
-        Value::Toolset(self.toolset.clone())
+        Value::Tools(self.toolset.clone())
     }
 }
 
@@ -48,14 +48,14 @@ impl UiNode for Tools {
         ui.vertical_centered_justified(|ui| {
             ui.horizontal_wrapped(|ui| {
                 if ui.selectable_label(self.toolset.is_all(), "all").clicked() {
-                    self.toolset = Arc::new(Toolset::all());
+                    self.toolset = Arc::new(ToolSelector::all());
                 }
 
                 if ui
                     .selectable_label(self.toolset.is_empty(), "none")
                     .clicked()
                 {
-                    self.toolset = Arc::new(Toolset::empty());
+                    self.toolset = Arc::new(ToolSelector::empty());
                 }
             });
 
@@ -98,7 +98,7 @@ pub struct AgentNode {
     pub temperature: Option<E64>,
 
     #[serde(skip)]
-    pub tools: Option<Arc<Toolset>>,
+    pub tools: Option<Arc<ToolSelector>>,
 
     #[serde(skip)]
     pub agent_spec: Arc<AgentSpec>,
@@ -118,7 +118,7 @@ impl DynNode for AgentNode {
             0 => &[ValueKind::Agent],
             1 => &[ValueKind::Model],
             2 => &[ValueKind::Number],
-            3 => &[ValueKind::Toolset],
+            3 => &[ValueKind::Tools],
             4 => &[ValueKind::Text],
             _ => ValueKind::all(),
         }
@@ -283,7 +283,7 @@ impl AgentNode {
         };
 
         let toolset = match &inputs[3] {
-            Some(Value::Toolset(tools)) => Some(tools.clone()),
+            Some(Value::Tools(tools)) => Some(tools.clone()),
             None => None,
             _ => unreachable!(),
         };
@@ -483,7 +483,7 @@ impl DynNode for InvokeTool {
     fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
         match in_pin {
             0 => &[ValueKind::Chat],
-            1 => &[ValueKind::Toolset],
+            1 => &[ValueKind::Tools],
             2 => &[ValueKind::Text],
             3 => &[ValueKind::Json],
             _ => ValueKind::all(),
@@ -593,7 +593,7 @@ impl InvokeTool {
         };
 
         let toolset = match &inputs[1] {
-            Some(Value::Toolset(spec)) => spec.clone(),
+            Some(Value::Tools(spec)) => spec.clone(),
             None => Err(WorkflowError::Input(vec!["Toolset is required".into()]))?,
             _ => unreachable!(),
         };

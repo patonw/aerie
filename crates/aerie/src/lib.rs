@@ -11,7 +11,7 @@ pub mod workflow;
 
 pub use agent::AgentFactory;
 pub use chat::{ChatContent, ChatEntry, ChatHistory, ChatSession};
-pub use config::{Settings, ToolSpec, Toolset};
+pub use config::{Settings, ToolSelector, ToolSpec};
 pub use logging::{LogChannelLayer, LogEntry};
 pub use pipeline::{Pipeline, Workstep};
 pub use toolbox::{ToolProvider, Toolbox};
