@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -303,6 +304,104 @@ impl TransformJson {
         let value = run_ctx.transmuter.run_filter(&filter, input)?;
 
         self.value = Arc::new(value);
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatherJson {
+    count: usize,
+
+    #[serde(skip)]
+    value: Arc<serde_json::Value>,
+}
+
+impl DynNode for GatherJson {
+    fn inputs(&self) -> usize {
+        self.count + 1 // Extra slot to add another document
+    }
+
+    fn in_kinds(&self, _in_pin: usize) -> &'static [ValueKind] {
+        &[
+            ValueKind::Json,
+            ValueKind::Text,
+            ValueKind::Number,
+            ValueKind::Integer,
+            ValueKind::Message,
+        ]
+    }
+
+    fn out_kind(&self, _out_pin: usize) -> ValueKind {
+        ValueKind::Json
+    }
+
+    fn value(&self, _out_pin: usize) -> Value {
+        Value::Json(self.value.clone())
+    }
+}
+
+impl UiNode for GatherJson {
+    fn title(&self) -> &str {
+        "Gather JSON"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Combine multiple JSON documents into a single array.\n\
+            The output can be transformed using shallow, deep or arbitrary merging"
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        if pin_id == self.count && remote.is_some() {
+            self.count += 1;
+        } else if pin_id + 1 == self.count && remote.is_none() {
+            self.count -= 1;
+        }
+
+        if pin_id < self.count {
+            ui.label(format!(".[{pin_id}]"));
+        }
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+}
+
+impl GatherJson {
+    pub async fn forward(
+        &mut self,
+        _run_ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        use crate::utils::message_text;
+        use serde_json::Number;
+
+        self.validate(&inputs)?;
+
+        let values = inputs
+            .into_iter()
+            .take(self.count)
+            .map(|it| match it {
+                Some(Value::Json(value)) => value.as_ref().clone(),
+                Some(Value::Text(value)) => serde_json::Value::String(value),
+                Some(Value::Number(value)) => {
+                    serde_json::Value::Number(Number::from_f64(value.into_inner()).unwrap())
+                }
+                Some(Value::Integer(value)) => {
+                    serde_json::Value::Number(Number::from_i128(value as i128).unwrap())
+                }
+                Some(Value::Message(value)) => serde_json::Value::String(message_text(&value)),
+                None => serde_json::Value::Null,
+                _ => unreachable!(),
+            })
+            .collect_vec();
+
+        self.value = Arc::new(serde_json::Value::Array(values));
 
         Ok(())
     }

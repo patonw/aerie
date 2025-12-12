@@ -221,13 +221,23 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         });
 
         ui.menu_button("Conversation", |ui| {
-            if ui.button("Side Chat").clicked() {
-                snarl.insert_node(pos, WorkNode::GraftChat(Default::default()));
+            if ui.button("Create Message").clicked() {
+                snarl.insert_node(pos, WorkNode::CreateMessage(Default::default()));
                 ui.close();
             }
 
-            if ui.button("Mask Chat").clicked() {
+            if ui.button("Mask History").clicked() {
                 snarl.insert_node(pos, WorkNode::MaskChat(Default::default()));
+                ui.close();
+            }
+
+            if ui.button("Extend History").clicked() {
+                snarl.insert_node(pos, WorkNode::ExtendHistory(Default::default()));
+                ui.close();
+            }
+
+            if ui.button("Side Chat").clicked() {
+                snarl.insert_node(pos, WorkNode::GraftChat(Default::default()));
                 ui.close();
             }
         });
@@ -235,6 +245,11 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui.menu_button("JSON", |ui| {
             if ui.button("Parse JSON").clicked() {
                 snarl.insert_node(pos, WorkNode::ParseJson(Default::default()));
+                ui.close();
+            }
+
+            if ui.button("Gather JSON").clicked() {
+                snarl.insert_node(pos, WorkNode::GatherJson(Default::default()));
                 ui.close();
             }
 

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod agent;
 pub mod chat;
+pub mod history;
 pub mod json;
 pub mod misc;
 pub mod primatives;
@@ -11,6 +12,7 @@ pub mod scaffold;
 
 pub use agent::*;
 pub use chat::*;
+pub use history::*;
 pub use json::*;
 pub use misc::*;
 pub use primatives::*;
@@ -43,18 +45,21 @@ pub enum WorkNode {
     Tools(Tools),
     Start(Start),
     Finish(Finish),
-    GraftChat(GraftChat),
-    MaskChat(MaskChat),
+    CreateMessage(CreateMessage),
+    GraftChat(GraftHistory),
+    MaskChat(MaskHistory),
+    ExtendHistory(ExtendHistory),
     Panic(Panic),
     Agent(AgentNode),
     Context(ChatContext),
     Chat(ChatNode),
     Structured(StructuredChat),
+    InvokeTool(InvokeTool),
     ParseJson(ParseJson),
     ValidateJson(ValidateJson),
     TransformJson(TransformJson),
     TemplateNode(TemplateNode),
-    InvokeTool(InvokeTool),
+    GatherJson(GatherJson),
 }
 
 impl WorkNode {
@@ -66,18 +71,21 @@ impl WorkNode {
             WorkNode::Tools(node) => node,
             WorkNode::Start(node) => node,
             WorkNode::Finish(node) => node,
+            WorkNode::CreateMessage(node) => node,
             WorkNode::GraftChat(node) => node,
             WorkNode::MaskChat(node) => node,
+            WorkNode::ExtendHistory(node) => node,
             WorkNode::Panic(node) => node,
             WorkNode::Agent(node) => node,
             WorkNode::Context(node) => node,
             WorkNode::Chat(node) => node,
             WorkNode::Structured(node) => node,
+            WorkNode::InvokeTool(node) => node,
             WorkNode::ParseJson(node) => node,
             WorkNode::ValidateJson(node) => node,
             WorkNode::TransformJson(node) => node,
             WorkNode::TemplateNode(node) => node,
-            WorkNode::InvokeTool(node) => node,
+            WorkNode::GatherJson(node) => node,
         } {
             #[call(noop)]
             pub fn as_dyn(&self) -> &dyn DynNode;
