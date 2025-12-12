@@ -5,7 +5,7 @@ use egui_phosphor::regular::FILE_PLUS;
 use itertools::Itertools;
 
 use crate::{
-    Settings, ToolProvider, ToolSpec, Toolset,
+    Settings, ToolProvider, ToolSelector, ToolSpec,
     config::ConfigExt as _,
     ui::{state::ToolEditorState, toggled_field},
 };
@@ -215,7 +215,7 @@ impl super::AppState {
                         settings_rw
                             .tools
                             .toolset
-                            .insert(new_name.to_owned(), Toolset::empty());
+                            .insert(new_name.to_owned(), ToolSelector::empty());
                         ui.close();
                     }
                 });

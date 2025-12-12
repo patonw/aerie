@@ -10,7 +10,7 @@ use rmcp::{
     transport::{ConfigureCommandExt, TokioChildProcess},
 };
 
-use super::config::{ToolSpec, Toolset};
+use super::config::{ToolSelector, ToolSpec};
 
 #[derive(Clone)]
 pub enum ToolProvider {
@@ -133,7 +133,7 @@ impl Toolbox {
             .fold(agent, |agent, chain| chain.select_tools(agent, |_| true))
     }
 
-    pub fn get_tools(&self, toolset: &Toolset) -> RigToolSet {
+    pub fn get_tools(&self, toolset: &ToolSelector) -> RigToolSet {
         let mut result = RigToolSet::default();
         for (name, provider) in &self.providers {
             result.add_tools(provider.get_tools(|tool| toolset.apply(name, tool)))
@@ -156,7 +156,7 @@ impl Toolbox {
     pub fn apply<M: CompletionModel>(
         &self,
         agent: AgentBuilderSimple<M>,
-        toolset: &Toolset,
+        toolset: &ToolSelector,
     ) -> AgentBuilderSimple<M> {
         self.select_tools(agent, |name, tool| toolset.apply(name, tool))
     }

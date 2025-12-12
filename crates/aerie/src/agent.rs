@@ -15,7 +15,7 @@ use typed_builder::TypedBuilder;
 use crate::config::ConfigExt as _;
 
 pub use super::chat::{ChatContent, ChatEntry, ChatHistory, ChatSession};
-pub use super::config::{Settings, ToolSpec, Toolset};
+pub use super::config::{Settings, ToolSelector, ToolSpec};
 pub use super::logging::{LogChannelLayer, LogEntry};
 pub use super::pipeline::{Pipeline, Workstep};
 pub use super::toolbox::{ToolProvider, Toolbox};
@@ -204,7 +204,7 @@ pub struct _AgentSpec_ {
 
     pub context_doc: String,
 
-    pub tools: Arc<Toolset>,
+    pub tools: Arc<ToolSelector>,
 
     pub schema: Arc<serde_json::Value>,
 }

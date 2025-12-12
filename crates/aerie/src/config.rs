@@ -100,7 +100,7 @@ impl ConfigExt for Arc<RwLock<Settings>> {
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Clone)]
 pub struct ToolSettings {
     pub provider: BTreeMap<String, ToolSpec>,
-    pub toolset: BTreeMap<String, Toolset>,
+    pub toolset: BTreeMap<String, ToolSelector>,
 }
 
 impl ToolSettings {
@@ -159,9 +159,9 @@ impl Default for ToolSpec {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Toolset(BTreeSet<String>);
+pub struct ToolSelector(BTreeSet<String>);
 
-impl Toolset {
+impl ToolSelector {
     pub fn empty() -> Self {
         Self(Default::default())
     }
@@ -226,7 +226,7 @@ pub fn tool_glob(pattern: String) -> Result<Pattern, PatternError> {
     Pattern::new(&pattern)
 }
 
-impl Default for Toolset {
+impl Default for ToolSelector {
     fn default() -> Self {
         Self(["*/*".into()].into())
     }

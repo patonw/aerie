@@ -11,7 +11,7 @@ use tracing_subscriber::{
 };
 
 use aerie::{
-    AgentFactory, LogChannelLayer, LogEntry, Settings, Toolset,
+    AgentFactory, LogChannelLayer, LogEntry, Settings, ToolSelector,
     chat::ChatSession,
     config::{Args, Command, ConfigExt, SessionCommand},
     transmute::Transmuter,
@@ -100,7 +100,7 @@ fn main() -> anyhow::Result<()> {
         settings
             .tools
             .toolset
-            .insert("all".into(), Toolset::default());
+            .insert("all".into(), ToolSelector::default());
     }
 
     let mut stored_settings = Arc::new(settings.clone());
