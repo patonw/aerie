@@ -43,7 +43,6 @@ pub enum WorkNode {
     Tools(Tools),
     Start(Start),
     Finish(Finish),
-    LLM(LLM),
     GraftChat(GraftChat),
     MaskChat(MaskChat),
     Panic(Panic),
@@ -56,7 +55,6 @@ pub enum WorkNode {
     TransformJson(TransformJson),
     TemplateNode(TemplateNode),
     InvokeTool(InvokeTool),
-    InvokeToolViaAgent(InvokeToolViaAgent),
 }
 
 impl WorkNode {
@@ -68,7 +66,6 @@ impl WorkNode {
             WorkNode::Tools(node) => node,
             WorkNode::Start(node) => node,
             WorkNode::Finish(node) => node,
-            WorkNode::LLM(node) => node,
             WorkNode::GraftChat(node) => node,
             WorkNode::MaskChat(node) => node,
             WorkNode::Panic(node) => node,
@@ -81,7 +78,6 @@ impl WorkNode {
             WorkNode::TransformJson(node) => node,
             WorkNode::TemplateNode(node) => node,
             WorkNode::InvokeTool(node) => node,
-            WorkNode::InvokeToolViaAgent(node) => node,
         } {
             #[call(noop)]
             pub fn as_dyn(&self) -> &dyn DynNode;
