@@ -492,7 +492,7 @@ pub trait UiNode: DynNode {
         ui: &mut egui::Ui,
         ctx: &EditContext,
         pin_id: usize,
-        remote: Option<Value>, // TODO: rename to "wired" this should be ValueKind!
+        remote: Option<Value>,
     ) -> PinInfo {
         self.in_kinds(pin_id).first().unwrap().default_pin()
     }
