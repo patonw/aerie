@@ -28,7 +28,6 @@ impl DynNode for CommentNode {
     }
 }
 
-// TODO: render as a yellow sticky note without a header
 impl UiNode for CommentNode {
     fn title(&self) -> &str {
         "Comment"
@@ -44,8 +43,9 @@ impl UiNode for CommentNode {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let widget = egui::TextEdit::multiline(&mut self.comment)
                         .desired_width(f32::INFINITY)
+                        .background_color(Self::bg_color())
+                        .text_color_opt(Some(egui::Color32::BLACK))
                         .hint_text("Comment body\u{1F64B}");
-
                     ui.add_sized(ui.available_size(), widget);
                 });
             });
@@ -54,6 +54,9 @@ impl UiNode for CommentNode {
 }
 
 impl CommentNode {
+    pub fn bg_color() -> egui::Color32 {
+        egui::Color32::LIGHT_YELLOW.gamma_multiply(0.75)
+    }
     pub async fn forward(
         &mut self,
         _ctx: &RunContext,

@@ -15,6 +15,7 @@ use crate::{
     utils::ErrorDistiller as _,
     workflow::{
         EditContext, RunContext, ShadowGraph, WorkNode,
+        nodes::CommentNode,
         runner::{ExecState, WorkflowRunner},
     },
 };
@@ -35,6 +36,41 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         node.as_ui().title().to_string()
     }
 
+    fn node_frame(
+        &mut self,
+        default: egui::Frame,
+        node: NodeId,
+        _inputs: &[egui_snarl::InPin],
+        _outputs: &[egui_snarl::OutPin],
+        snarl: &Snarl<WorkNode>,
+    ) -> egui::Frame {
+        if matches!(snarl[node], WorkNode::Comment(_)) {
+            default.fill(CommentNode::bg_color())
+        } else {
+            default
+        }
+    }
+
+    fn header_frame(
+        &mut self,
+        default: egui::Frame,
+        node: NodeId,
+        _inputs: &[egui_snarl::InPin],
+        _outputs: &[egui_snarl::OutPin],
+        snarl: &Snarl<WorkNode>,
+    ) -> egui::Frame {
+        if matches!(snarl[node], WorkNode::Comment(_)) {
+            let node_info = snarl.get_node_info(node).unwrap();
+            if node_info.open {
+                default.fill(CommentNode::bg_color())
+            } else {
+                default.fill(Color32::from_rgb(0x88, 0x88, 0))
+            }
+        } else {
+            default
+        }
+    }
+
     fn show_header(
         &mut self,
         node: NodeId,
@@ -45,6 +81,10 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
     ) {
         let title = self.title(&snarl[node]);
         let node_state = self.node_state.load();
+
+        if matches!(snarl[node], WorkNode::Comment(_)) {
+            return;
+        }
 
         egui::Sides::new().show(
             ui,
@@ -350,14 +390,16 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             ui.add(Hyperlink::from_label_and_url("Help", help_link).open_in_new_tab(true));
         }
 
-        if self.shadow.is_disabled(node) {
-            if ui.button("Enable").clicked() {
-                self.shadow = self.shadow.enable_node(node);
+        if !matches!(snarl[node], WorkNode::Comment(_)) {
+            if self.shadow.is_disabled(node) {
+                if ui.button("Enable").clicked() {
+                    self.shadow = self.shadow.enable_node(node);
+                    ui.close();
+                }
+            } else if ui.button("Disable").clicked() {
+                self.shadow = self.shadow.disable_node(node);
                 ui.close();
             }
-        } else if ui.button("Disable").clicked() {
-            self.shadow = self.shadow.disable_node(node);
-            ui.close();
         }
 
         // Alleviate accidental clicks
