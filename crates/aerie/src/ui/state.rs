@@ -19,7 +19,7 @@ use crate::{
     chat::ChatSession,
     transmute::Transmuter,
     ui::tiles::messages::MessageGraph,
-    utils::ErrorList,
+    utils::{EVec2, ErrorList},
     workflow::{ShadowGraph, WorkNode, fixup_workflow, runner::ExecState, store::WorkflowStore},
 };
 
@@ -124,6 +124,8 @@ pub struct WorkflowState {
     pub baseline: ShadowGraph<WorkNode>,
     pub shadow: ShadowGraph<WorkNode>,
     pub node_state: Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>>,
+
+    pub desc_size: Option<EVec2>,
 }
 
 impl WorkflowState {
@@ -162,7 +164,7 @@ impl WorkflowState {
             },
             baseline: baseline.clone(),
             shadow: baseline.clone(),
-            node_state: Default::default(),
+            ..Default::default()
         })
     }
 
@@ -199,5 +201,9 @@ impl WorkflowState {
 
     pub fn names(&self) -> impl Iterator<Item = &String> {
         self.store.workflows.keys()
+    }
+
+    pub fn remove(&mut self) {
+        self.store.remove(&self.editing);
     }
 }
