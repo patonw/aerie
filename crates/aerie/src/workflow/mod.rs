@@ -175,6 +175,9 @@ where
 
     #[serde(default, skip_serializing_if = "im::OrdSet::is_empty")]
     pub disabled: im::OrdSet<NodeId>,
+
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: Arc<String>,
 }
 
 impl<T: Clone + PartialEq> ShadowGraph<T> {
@@ -194,6 +197,7 @@ impl<T: Clone + PartialEq> ShadowGraph<T> {
     }
 }
 
+// Strange the derive macro doesn't work for this
 impl<T> Default for ShadowGraph<T>
 where
     T: Clone + PartialEq,
@@ -203,6 +207,7 @@ where
             nodes: Default::default(),
             wires: Default::default(),
             disabled: Default::default(),
+            description: Default::default(),
         }
     }
 }
@@ -241,6 +246,7 @@ where
         self.nodes.ptr_eq(&other.nodes)
             && self.wires.ptr_eq(&other.wires)
             && self.disabled.ptr_eq(&other.disabled)
+            && Arc::ptr_eq(&self.description, &other.description)
     }
 
     #[must_use]
@@ -252,8 +258,7 @@ where
         } else {
             Self {
                 nodes,
-                wires: self.wires.clone(),
-                disabled: self.disabled.clone(),
+                ..self.clone()
             }
         }
     }
@@ -279,9 +284,8 @@ where
             self.clone()
         } else {
             Self {
-                nodes: self.nodes.clone(),
                 wires,
-                disabled: self.disabled.clone(),
+                ..self.clone()
             }
         }
     }
@@ -291,9 +295,8 @@ where
         let wire = (out_pin, in_pin).into();
         if self.wires.contains(&wire) {
             Self {
-                nodes: self.nodes.clone(),
                 wires: self.wires.without(&wire),
-                disabled: self.disabled.clone(),
+                ..self.clone()
             }
         } else {
             self.clone()
@@ -351,17 +354,22 @@ where
 
     pub fn enable_node(&self, id: NodeId) -> Self {
         Self {
-            nodes: self.nodes.clone(),
-            wires: self.wires.clone(),
             disabled: self.disabled.without(&id),
+            ..self.clone()
         }
     }
 
     pub fn disable_node(&self, id: NodeId) -> Self {
         Self {
-            nodes: self.nodes.clone(),
-            wires: self.wires.clone(),
             disabled: self.disabled.with(&id),
+            ..self.clone()
+        }
+    }
+
+    pub fn with_description(&self, desc: &str) -> Self {
+        Self {
+            description: Arc::new(desc.to_string()),
+            ..self.clone()
         }
     }
 }

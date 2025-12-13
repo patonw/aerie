@@ -54,6 +54,9 @@ impl WorkflowStore {
     pub fn put(&mut self, key: &str, value: ShadowGraph<WorkNode>) {
         self.workflows.insert(key.into(), value);
     }
+    pub fn remove(&mut self, key: &str) {
+        self.workflows.remove(key);
+    }
 
     pub fn rename(&mut self, old_name: &str, new_name: &str) {
         if let Some(value) = self.workflows.remove(old_name) {

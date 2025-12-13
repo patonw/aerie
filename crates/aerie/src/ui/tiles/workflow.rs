@@ -1,8 +1,13 @@
-use std::sync::{Arc, atomic::Ordering};
+use std::{
+    borrow::Cow,
+    sync::{Arc, atomic::Ordering},
+};
 
 use arc_swap::ArcSwap;
-use egui::{Color32, ComboBox, Hyperlink, RichText, Ui};
-use egui_phosphor::regular::{CHECK_CIRCLE, HAND_PALM, HOURGLASS_MEDIUM, PLAY_CIRCLE, WARNING};
+use egui::{Align2, Color32, ComboBox, Hyperlink, RichText, Ui};
+use egui_phosphor::regular::{
+    CHECK_CIRCLE, HAND_PALM, HOURGLASS_MEDIUM, INFO, PLAY_CIRCLE, WARNING,
+};
 use egui_snarl::{
     NodeId, Snarl,
     ui::{SnarlViewer, SnarlWidget},
@@ -416,60 +421,6 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
 
 impl super::AppState {
     pub fn workflow_ui(&mut self, ui: &mut egui::Ui) {
-        egui::TopBottomPanel::top("Controls").show_inside(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ComboBox::from_id_salt("workflow")
-                    .selected_text(&self.workflows.editing)
-                    .show_ui(ui, |ui| {
-                        let names = self.workflows.store.workflows.keys().cloned().collect_vec();
-                        for name in &names {
-                            let original = self.workflows.editing.clone();
-                            let mut current = &original;
-                            ui.selectable_value(&mut current, name, name);
-                            if current != &original {
-                                self.workflows.switch(current);
-                            }
-                        }
-                    });
-
-                if ui.button("New").clicked() {
-                    self.workflows.switch(&Uuid::new_v4().to_string());
-                }
-
-                if let Some(renaming) = self.workflows.renaming.as_mut() {
-                    if ui.text_edit_singleline(renaming).lost_focus() {
-                        self.workflows.rename();
-                    }
-                } else if ui.button("Rename").clicked() {
-                    self.workflows.renaming = Some(self.workflows.editing.clone());
-                }
-
-                ui.separator();
-                // TODO: autosave based on change detection
-                if ui.button("Save").clicked() {
-                    tracing::info!(
-                        "Saving {} to workflows...changed? {}",
-                        &self.workflows.editing,
-                        !self.workflows.shadow.fast_eq(&self.workflows.baseline)
-                    );
-
-                    self.workflows
-                        .store
-                        .put(&self.workflows.editing, self.workflows.shadow.clone());
-                    self.workflows.store.save().unwrap();
-
-                    let mut snarl = self.workflows.snarl.blocking_write();
-                    *snarl = Snarl::try_from(self.workflows.shadow.clone()).unwrap();
-                    self.workflows.baseline = self.workflows.shadow.clone();
-                }
-
-                ui.add_space(32.0);
-                if ui.button("Run").clicked() {
-                    self.exec_workflow();
-                }
-            });
-        });
-
         egui::CentralPanel::default().show_inside(ui, |ui| {
             let edit_ctx = EditContext {
                 toolbox: self.agent_factory.toolbox.clone(),
@@ -481,7 +432,6 @@ impl super::AppState {
                 shadow,
                 node_state: self.workflows.node_state.clone(),
             };
-            let mut snarl = self.workflows.snarl.blocking_write();
 
             // TODO: Allow pan/zoom while running
             ui.add_enabled_ui(
@@ -490,6 +440,7 @@ impl super::AppState {
                     .running
                     .load(std::sync::atomic::Ordering::Relaxed),
                 |ui| {
+                    let mut snarl = self.workflows.snarl.blocking_write();
                     SnarlWidget::new()
                         .id_salt(&self.workflows.editing)
                         .style(self.workflows.style)
@@ -498,7 +449,121 @@ impl super::AppState {
             );
 
             self.workflows.shadow = viewer.shadow;
+
+            egui::Area::new(egui::Id::new("workflow controls"))
+                .default_pos(egui::pos2(16.0, 32.0))
+                .default_size(egui::vec2(100.0, 100.0))
+                .constrain_to(ui.max_rect())
+                .movable(true)
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::dark_canvas(&Default::default())
+                        .inner_margin(8.0)
+                        .outer_margin(4.0)
+                        .corner_radius(8)
+                        .show(ui, |ui| {
+                            self.workflow_controls(ui);
+                        });
+                });
+
+            egui::Window::new(INFO)
+                .constrain_to(ui.max_rect())
+                .pivot(Align2::LEFT_BOTTOM)
+                .default_pos(egui::pos2(16.0, ui.min_rect().max.y))
+                .default_size(egui::vec2(200.0, 100.0))
+                .movable(true)
+                .show(ui.ctx(), |ui| {
+                    let mut description = Cow::Borrowed(self.workflows.shadow.description.as_str());
+
+                    // ui.take_available_space();
+                    let size = ui.available_size();
+
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.add_sized(
+                            size,
+                            egui::TextEdit::multiline(&mut description)
+                                .hint_text("Add a description for this workflow"),
+                        );
+                    });
+
+                    if let Cow::Owned(desc) = description {
+                        self.workflows.shadow = self.workflows.shadow.with_description(&desc);
+                    }
+                })
         });
+    }
+
+    pub fn workflow_controls(&mut self, ui: &mut egui::Ui) {
+        ui.vertical_centered_justified(|ui| {
+            ui.label("Workflow:");
+            ComboBox::from_id_salt("workflow")
+                .selected_text(&self.workflows.editing)
+                .show_ui(ui, |ui| {
+                    let names = self.workflows.store.workflows.keys().cloned().collect_vec();
+                    for name in &names {
+                        let original = self.workflows.editing.clone();
+                        let mut current = &original;
+                        ui.selectable_value(&mut current, name, name);
+                        if current != &original {
+                            self.workflows.switch(current);
+                        }
+                    }
+                });
+
+            if let Some(renaming) = self.workflows.renaming.as_mut() {
+                if ui.text_edit_singleline(renaming).lost_focus() {
+                    self.workflows.rename();
+                }
+            } else if ui.button("Rename").clicked() {
+                self.workflows.renaming = Some(self.workflows.editing.clone());
+            }
+
+            if ui.button("New").clicked() {
+                self.workflows.switch(&Uuid::new_v4().to_string());
+            }
+
+            ui.menu_button("Delete", |ui| {
+                if ui.button("OK").clicked() {
+                    self.workflows.remove();
+                    self.workflows.store.save().unwrap();
+                    let next_name = self
+                        .workflows
+                        .names()
+                        .next()
+                        .cloned()
+                        .unwrap_or("default".to_string());
+                    self.workflows.switch(&next_name);
+                    ui.close();
+                }
+            });
+
+            ui.separator();
+            // TODO: autosave based on change detection
+            if ui.button("Save").clicked() {
+                self.save_workflows();
+            }
+
+            ui.add_space(32.0);
+            if ui.button("Run").clicked() {
+                self.exec_workflow();
+            }
+        });
+    }
+
+    fn save_workflows(&mut self) {
+        tracing::info!(
+            "Saving {} to workflows...changed? {}",
+            &self.workflows.editing,
+            !self.workflows.shadow.fast_eq(&self.workflows.baseline)
+        );
+
+        self.workflows
+            .store
+            .put(&self.workflows.editing, self.workflows.shadow.clone());
+        self.workflows.store.save().unwrap();
+
+        let mut snarl = self.workflows.snarl.blocking_write();
+        *snarl = Snarl::try_from(self.workflows.shadow.clone()).unwrap();
+        self.workflows.baseline = self.workflows.shadow.clone();
     }
 
     // TODO: decouple editing and execution workflows

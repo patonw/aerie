@@ -9,6 +9,24 @@ impl super::AppState {
         let settings = self.settings.clone();
         let workflows = self.workflows.names().cloned().collect_vec();
 
+        egui::TopBottomPanel::bottom("inspector")
+            .default_height(ui.available_height() / 3.0)
+            .resizable(true)
+            .show_inside(ui, |ui| {
+                ui.take_available_space();
+                ui.heading("Workflow info:");
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    if let Some(shadow) = settings.view(|st| {
+                        st.automation
+                            .as_ref()
+                            .and_then(|a| self.workflows.store.get(a))
+                    }) {
+                        ui.label(shadow.description.as_str());
+                    }
+                });
+                ui.take_available_space();
+            });
+
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 settings.update(|settings| {
