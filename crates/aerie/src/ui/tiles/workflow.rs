@@ -5,8 +5,10 @@ use std::{
 
 use arc_swap::ArcSwap;
 use egui::{Align2, Color32, ComboBox, Hyperlink, RichText, Ui};
+use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular::{
-    CHECK_CIRCLE, HAND_PALM, HOURGLASS_MEDIUM, INFO, PLAY_CIRCLE, WARNING,
+    ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, CHECK_CIRCLE, HAND_PALM, HOURGLASS_MEDIUM, INFO,
+    PLAY_CIRCLE, WARNING,
 };
 use egui_snarl::{
     NodeId, Snarl,
@@ -32,6 +34,20 @@ struct WorkflowViewer {
     shadow: ShadowGraph<WorkNode>,
 
     pub node_state: Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>>,
+
+    running: bool,
+
+    frozen: bool,
+}
+
+impl WorkflowViewer {
+    fn frozen(&self) -> bool {
+        self.running || self.frozen
+    }
+
+    fn can_edit(&self) -> bool {
+        !self.frozen()
+    }
 }
 
 // TODO maintain a shadow graph that uses immutables
@@ -172,25 +188,28 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui: &mut egui::Ui,
         snarl: &mut egui_snarl::Snarl<WorkNode>,
     ) -> impl egui_snarl::ui::SnarlPin + 'static {
-        let value = match &*pin.remotes {
-            [] => None,
-            [remote, ..] => {
-                let other = snarl[remote.node].as_ui();
-                Some(other.preview(remote.output))
-            }
-        };
+        ui.add_enabled_ui(self.can_edit(), |ui| {
+            let value = match &*pin.remotes {
+                [] => None,
+                [remote, ..] => {
+                    let other = snarl[remote.node].as_ui();
+                    Some(other.preview(remote.output))
+                }
+            };
 
-        let node_id = pin.id.node;
-        let node = &mut snarl[node_id];
-        let pin = node
-            .as_ui_mut()
-            .show_input(ui, &self.edit_ctx, pin.id.input, value);
+            let node_id = pin.id.node;
+            let node = &mut snarl[node_id];
+            let pin = node
+                .as_ui_mut()
+                .show_input(ui, &self.edit_ctx, pin.id.input, value);
 
-        self.shadow = self
-            .shadow
-            .with_node(&node_id, snarl.get_node_info(node_id));
+            self.shadow = self
+                .shadow
+                .with_node(&node_id, snarl.get_node_info(node_id));
 
-        pin
+            pin
+        })
+        .inner
     }
 
     fn outputs(&mut self, node: &WorkNode) -> usize {
@@ -203,20 +222,23 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui: &mut egui::Ui,
         snarl: &mut egui_snarl::Snarl<WorkNode>,
     ) -> impl egui_snarl::ui::SnarlPin + 'static {
-        let node_id = pin.id.node;
-        let node = &mut snarl[node_id];
-        let pin = node
-            .as_ui_mut()
-            .show_output(ui, &self.edit_ctx, pin.id.output);
+        ui.add_enabled_ui(self.can_edit(), |ui| {
+            let node_id = pin.id.node;
+            let node = &mut snarl[node_id];
+            let pin = node
+                .as_ui_mut()
+                .show_output(ui, &self.edit_ctx, pin.id.output);
 
-        self.shadow = self
-            .shadow
-            .with_node(&node_id, snarl.get_node_info(node_id));
-        pin
+            self.shadow = self
+                .shadow
+                .with_node(&node_id, snarl.get_node_info(node_id));
+            pin
+        })
+        .inner
     }
 
     fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<WorkNode>) -> bool {
-        true
+        self.can_edit()
     }
 
     fn show_graph_menu(&mut self, pos: egui::Pos2, ui: &mut Ui, snarl: &mut Snarl<WorkNode>) {
@@ -337,8 +359,11 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui: &mut Ui,
         snarl: &mut Snarl<WorkNode>,
     ) {
-        snarl[node].as_ui_mut().show_body(ui, &self.edit_ctx);
-        self.shadow = self.shadow.with_node(&node, snarl.get_node_info(node));
+        ui.add_enabled_ui(self.can_edit(), |ui| {
+            snarl[node].as_ui_mut().show_body(ui, &self.edit_ctx);
+            self.shadow = self.shadow.with_node(&node, snarl.get_node_info(node));
+        })
+        .inner
     }
 
     fn connect(
@@ -348,13 +373,15 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         snarl: &mut Snarl<WorkNode>,
     ) {
         // TODO: cycle check
-        let remote = &snarl[from.id.node];
-        let wire_kind = remote.as_dyn().out_kind(from.id.output);
-        let recipient = &snarl[to.id.node];
-        if recipient.as_dyn().connect(to.id.input, wire_kind).is_ok() {
-            self.drop_inputs(to, snarl);
-            snarl.connect(from.id, to.id);
-            self.shadow = self.shadow.with_wire(from.id, to.id);
+        if self.can_edit() {
+            let remote = &snarl[from.id.node];
+            let wire_kind = remote.as_dyn().out_kind(from.id.output);
+            let recipient = &snarl[to.id.node];
+            if recipient.as_dyn().connect(to.id.input, wire_kind).is_ok() {
+                self.drop_inputs(to, snarl);
+                snarl.connect(from.id, to.id);
+                self.shadow = self.shadow.with_wire(from.id, to.id);
+            }
         }
     }
 
@@ -364,22 +391,28 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         to: &egui_snarl::InPin,
         snarl: &mut Snarl<WorkNode>,
     ) {
-        snarl.disconnect(from.id, to.id);
-        self.shadow = self.shadow.without_wire(from.id, to.id);
+        if self.can_edit() {
+            snarl.disconnect(from.id, to.id);
+            self.shadow = self.shadow.without_wire(from.id, to.id);
+        }
     }
 
     fn drop_inputs(&mut self, pin: &egui_snarl::InPin, snarl: &mut Snarl<WorkNode>) {
-        self.shadow = self.shadow.drop_inputs(pin);
-        snarl.drop_inputs(pin.id);
+        if self.can_edit() {
+            self.shadow = self.shadow.drop_inputs(pin);
+            snarl.drop_inputs(pin.id);
+        }
     }
 
     fn drop_outputs(&mut self, pin: &egui_snarl::OutPin, snarl: &mut Snarl<WorkNode>) {
-        self.shadow = self.shadow.drop_outputs(pin);
-        snarl.drop_outputs(pin.id);
+        if self.can_edit() {
+            self.shadow = self.shadow.drop_outputs(pin);
+            snarl.drop_outputs(pin.id);
+        }
     }
 
     fn has_node_menu(&mut self, node: &WorkNode) -> bool {
-        !matches!(node, WorkNode::Start(_) | WorkNode::Finish(_))
+        self.can_edit() && !matches!(node, WorkNode::Start(_) | WorkNode::Finish(_))
     }
 
     fn show_node_menu(
@@ -426,29 +459,31 @@ impl super::AppState {
                 toolbox: self.agent_factory.toolbox.clone(),
             };
 
+            let running = self
+                .workflows
+                .running
+                .load(std::sync::atomic::Ordering::Relaxed);
+
             let shadow = self.workflows.shadow.clone();
             let mut viewer = WorkflowViewer {
                 edit_ctx,
                 shadow,
+                running,
+                frozen: self.workflows.frozen,
                 node_state: self.workflows.node_state.clone(),
             };
 
-            // TODO: Allow pan/zoom while running
-            ui.add_enabled_ui(
-                !self
-                    .workflows
-                    .running
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                |ui| {
-                    let mut snarl = self.workflows.snarl.blocking_write();
-                    SnarlWidget::new()
-                        .id_salt(&self.workflows.editing)
-                        .style(self.workflows.style)
-                        .show(&mut snarl, &mut viewer, ui);
-                },
-            );
+            // Forces new widget state in children after switching or undos so that
+            // Snarl will draw our persisted positions and sizes.
+            ui.push_id(self.workflows.switch_count, |ui| {
+                let mut snarl = self.workflows.snarl.blocking_write();
+                SnarlWidget::new()
+                    .id_salt(&self.workflows.editing)
+                    .style(self.workflows.style)
+                    .show(&mut snarl, &mut viewer, ui);
+            });
 
-            self.workflows.shadow = viewer.shadow;
+            self.workflows.cast_shadow(viewer.shadow);
 
             egui::Area::new(egui::Id::new("workflow controls"))
                 .default_pos(egui::pos2(16.0, 32.0))
@@ -466,6 +501,7 @@ impl super::AppState {
                 });
 
             egui::Window::new(INFO)
+                .title_bar(false)
                 .constrain_to(ui.max_rect())
                 .pivot(Align2::LEFT_BOTTOM)
                 .default_pos(egui::pos2(16.0, ui.min_rect().max.y))
@@ -486,7 +522,8 @@ impl super::AppState {
                     });
 
                     if let Cow::Owned(desc) = description {
-                        self.workflows.shadow = self.workflows.shadow.with_description(&desc);
+                        self.workflows
+                            .cast_shadow(self.workflows.shadow.with_description(&desc));
                     }
                 })
         });
@@ -537,15 +574,84 @@ impl super::AppState {
             });
 
             ui.separator();
-            // TODO: autosave based on change detection
-            if ui.button("Save").clicked() {
-                self.save_workflows();
-            }
+
+            let running = self
+                .workflows
+                .running
+                .load(std::sync::atomic::Ordering::Relaxed);
+
+            // not loving the boilerplate but this gets the right results
+            // Maybe should put the whole panel into the vertical strip
+            StripBuilder::new(ui)
+                .size(Size::exact(16.0))
+                .vertical(|mut strip| {
+                    strip.cell(|ui| {
+                        StripBuilder::new(ui)
+                            .sizes(Size::remainder(), 2)
+                            .horizontal(|mut strip| {
+                                strip.cell(|ui| {
+                                    let stack = self.workflows.get_undo_stack().len();
+                                    ui.add_enabled_ui(!running && stack > 0, |ui| {
+                                        if ui
+                                            .button(ARROW_COUNTER_CLOCKWISE)
+                                            .on_hover_text(format!("{stack}"))
+                                            .clicked()
+                                        {
+                                            self.workflows.undo();
+                                        }
+                                    });
+                                });
+                                strip.cell(|ui| {
+                                    let stack = self.workflows.get_redo_stack().len();
+                                    ui.add_enabled_ui(!running && stack > 0, |ui| {
+                                        if ui
+                                            .button(ARROW_CLOCKWISE)
+                                            .on_hover_text(format!("{stack}"))
+                                            .clicked()
+                                        {
+                                            self.workflows.redo();
+                                        }
+                                    });
+                                });
+                            });
+                    });
+                });
+
+            ui.separator();
+
+            ui.add_enabled_ui(self.workflows.has_changes(), |ui| {
+                if ui.button("Save").clicked() {
+                    self.save_workflows();
+                }
+            });
 
             ui.add_space(32.0);
-            if ui.button("Run").clicked() {
-                self.exec_workflow();
-            }
+
+            ui.scope(|ui| {
+                ui.style_mut().spacing.button_padding.y = 8.0;
+
+                let (frozen_label, frozen_hint) = if self.workflows.frozen {
+                    ("« frozen »", "Click to re-enable editing.")
+                } else {
+                    ("« editing »", "Click to prevent new changes.")
+                };
+
+                ui.toggle_value(&mut self.workflows.frozen, frozen_label)
+                    .on_hover_text(frozen_hint);
+            });
+
+            ui.separator();
+            ui.scope(|ui| {
+                // Bigger button
+                ui.style_mut().spacing.button_padding.y = 16.0;
+                ui.add_enabled_ui(!running, |ui| {
+                    if ui.button(if running { "Running" } else { "Run" }).clicked() {
+                        self.exec_workflow();
+                    }
+                });
+            });
+
+            // TODO: pause and cancel buttons
         });
     }
 
