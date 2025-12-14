@@ -67,6 +67,12 @@ pub struct Settings {
 
     #[serde(default)]
     pub tools: ToolSettings,
+
+    #[serde(default)]
+    pub last_workflow_dir: PathBuf,
+
+    #[serde(default)]
+    pub last_output_dir: PathBuf,
 }
 
 impl Settings {

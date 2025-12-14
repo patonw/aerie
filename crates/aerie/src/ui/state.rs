@@ -3,9 +3,11 @@ use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
 use egui_snarl::{NodeId, Snarl, ui::SnarlStyle};
+use itertools::Itertools;
 use rmcp::model::Tool;
 use std::{
     collections::VecDeque,
+    fs::OpenOptions,
     path::Path,
     sync::{
         Arc, RwLock,
@@ -334,5 +336,44 @@ impl WorkflowState {
             undo_stack.len(),
             redo_stack.len()
         );
+    }
+
+    pub fn export(&mut self, path: &Path) -> anyhow::Result<()> {
+        let writer = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+
+        serde_yml::to_writer(writer, &self.shadow)?;
+        Ok(())
+    }
+
+    pub fn import(&mut self, path: &Path) -> anyhow::Result<()> {
+        if !path.is_file() {
+            anyhow::bail!("Invalid file: {path:?}");
+        }
+
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_os_string().into_string().ok())
+            .unwrap_or_default();
+
+        let name = if name.is_empty() || self.names().contains(&name) {
+            // TODO: Use current datetime
+            std::iter::chain([name], [uuid::Uuid::new_v4().to_string()]).join("-")
+        } else {
+            name
+        };
+
+        let reader = OpenOptions::new().read(true).open(path)?;
+        let data: ShadowGraph<WorkNode> = serde_yml::from_reader(reader)?;
+
+        self.store.put(&name, data);
+        // self.store.save()?; // maybe don't?
+        self.switch(&name);
+        self.baseline = Default::default();
+
+        Ok(())
     }
 }

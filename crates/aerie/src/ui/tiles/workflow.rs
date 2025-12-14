@@ -7,8 +7,8 @@ use arc_swap::ArcSwap;
 use egui::{Align2, Color32, ComboBox, Hyperlink, RichText, Ui};
 use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular::{
-    ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, CHECK_CIRCLE, HAND_PALM, HOURGLASS_MEDIUM, INFO,
-    PLAY_CIRCLE, WARNING,
+    ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, CHECK_CIRCLE, DOWNLOAD_SIMPLE, HAND_PALM,
+    HOURGLASS_MEDIUM, INFO, PLAY_CIRCLE, UPLOAD_SIMPLE, WARNING,
 };
 use egui_snarl::{
     NodeId, Snarl,
@@ -530,9 +530,19 @@ impl super::AppState {
     }
 
     pub fn workflow_controls(&mut self, ui: &mut egui::Ui) {
+        let settings = self.settings.clone();
+        let errors = self.errors.clone();
+        let running = self
+            .workflows
+            .running
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        ui.set_max_width(150.0);
         ui.vertical_centered_justified(|ui| {
             ui.label("Workflow:");
             ComboBox::from_id_salt("workflow")
+                .wrap()
+                .width(ui.available_width())
                 .selected_text(&self.workflows.editing)
                 .show_ui(ui, |ui| {
                     let names = self.workflows.store.workflows.keys().cloned().collect_vec();
@@ -558,6 +568,60 @@ impl super::AppState {
                 self.workflows.switch(&Uuid::new_v4().to_string());
             }
 
+            StripBuilder::new(ui)
+                .size(Size::exact(16.0))
+                .vertical(|mut strip| {
+                    strip.cell(|ui| {
+                        StripBuilder::new(ui)
+                            .sizes(Size::remainder(), 2)
+                            .horizontal(|mut strip| {
+                                strip.cell(|ui| {
+                                    ui.add_enabled_ui(!running, |ui| {
+                                        if ui
+                                            .button(DOWNLOAD_SIMPLE)
+                                            .on_hover_text("Import")
+                                            .clicked()
+                                            && let Some(path) = rfd::FileDialog::new()
+                                                .set_directory(
+                                                    settings.view(|s| s.last_workflow_dir.clone()),
+                                                )
+                                                .pick_file()
+                                        {
+                                            settings.update(|s| {
+                                                s.last_workflow_dir = path
+                                                    .parent()
+                                                    .map(|p| p.to_path_buf())
+                                                    .unwrap_or_default()
+                                            });
+                                            errors.distil(self.workflows.import(&path));
+                                        }
+                                    });
+                                });
+                                strip.cell(|ui| {
+                                    if ui.button(UPLOAD_SIMPLE).on_hover_text("Export").clicked()
+                                        && let Some(path) = rfd::FileDialog::new()
+                                            .set_directory(
+                                                settings.view(|s| s.last_workflow_dir.clone()),
+                                            )
+                                            .set_file_name(format!(
+                                                "{}.yml",
+                                                self.workflows.editing
+                                            ))
+                                            .save_file()
+                                    {
+                                        settings.update(|s| {
+                                            s.last_workflow_dir = path
+                                                .parent()
+                                                .map(|p| p.to_path_buf())
+                                                .unwrap_or_default()
+                                        });
+                                        errors.distil(self.workflows.export(&path));
+                                    }
+                                });
+                            });
+                    });
+                });
+
             ui.menu_button("Delete", |ui| {
                 if ui.button("OK").clicked() {
                     self.workflows.remove();
@@ -574,11 +638,6 @@ impl super::AppState {
             });
 
             ui.separator();
-
-            let running = self
-                .workflows
-                .running
-                .load(std::sync::atomic::Ordering::Relaxed);
 
             // not loving the boilerplate but this gets the right results
             // Maybe should put the whole panel into the vertical strip
