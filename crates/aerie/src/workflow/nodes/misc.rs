@@ -154,6 +154,21 @@ impl UiNode for TemplateNode {
 
         self.in_kinds(pin_id).first().unwrap().default_pin()
     }
+
+    fn show_output(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("text");
+            }
+            _ => unreachable!(),
+        }
+        self.out_kind(pin_id).default_pin()
+    }
 }
 
 impl TemplateNode {
@@ -172,7 +187,7 @@ impl TemplateNode {
 
         let vars = match &inputs[1] {
             Some(Value::Json(value)) => value.as_ref().to_owned(),
-            None => Err(WorkflowError::Input(vec!["JSON input required".into()]))?,
+            None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
             _ => unreachable!(),
         };
 

@@ -68,13 +68,17 @@ impl GraftHistory {
 
         let chat = match &inputs[0] {
             Some(Value::Chat(history)) => history,
-            None => Err(WorkflowError::Input(vec!["Chat history required".into()]))?,
+            None => Err(WorkflowError::Required(vec![
+                "Chat history required".into(),
+            ]))?,
             _ => unreachable!(),
         };
 
         let aside = match &inputs[1] {
             Some(Value::Chat(history)) => history,
-            None => Err(WorkflowError::Input(vec!["Chat history required".into()]))?,
+            None => Err(WorkflowError::Required(vec![
+                "Chat history required".into(),
+            ]))?,
             _ => unreachable!(),
         };
 
@@ -168,7 +172,9 @@ impl MaskHistory {
 
         let chat = match &inputs[0] {
             Some(Value::Chat(history)) => history,
-            None => Err(WorkflowError::Input(vec!["Chat history required".into()]))?,
+            None => Err(WorkflowError::Required(vec![
+                "Chat history required".into(),
+            ]))?,
             _ => unreachable!(),
         };
 
@@ -320,15 +326,15 @@ impl CreateMessage {
                     match &inputs[0] {
                         Some(Value::Text(text)) => {
                             Arc::new(serde_json::from_str(text).map_err(|e| {
-                                WorkflowError::Input(vec![format!("Invalid JSON: {e:?}")])
+                                WorkflowError::Conversion(format!("Invalid JSON: {e:?}"))
                             })?)
                         }
                         Some(Value::Json(data)) => data.clone(),
                         None if self.content.is_empty() => {
-                            Err(WorkflowError::Input(vec!["content required".into()]))?
+                            Err(WorkflowError::Required(vec!["content required".into()]))?
                         }
                         None => Arc::new(serde_json::from_str(&self.content).map_err(|e| {
-                            WorkflowError::Input(vec![format!("Invalid JSON: {e:?}")])
+                            WorkflowError::Conversion(format!("Invalid JSON: {e:?}"))
                         })?),
                         _ => unreachable!(),
                     };
@@ -359,7 +365,7 @@ impl CreateMessage {
                     Some(Value::Text(text)) => text.clone(),
                     Some(Value::Json(data)) => serde_json::to_string_pretty(&data).unwrap(),
                     None if self.content.is_empty() => {
-                        Err(WorkflowError::Input(vec!["content required".into()]))?
+                        Err(WorkflowError::Required(vec!["content required".into()]))?
                     }
                     None => self.content.clone(),
                     _ => unreachable!(),
@@ -449,7 +455,9 @@ impl ExtendHistory {
 
         let history = match &inputs[0] {
             Some(Value::Chat(history)) => history.clone(),
-            None => Err(WorkflowError::Input(vec!["Chat history required".into()]))?,
+            None => Err(WorkflowError::Required(vec![
+                "Chat history required".into(),
+            ]))?,
             _ => unreachable!(),
         };
 

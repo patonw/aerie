@@ -268,7 +268,7 @@ impl AgentNode {
         };
 
         if agent.is_none() && model.is_none() {
-            return Err(WorkflowError::Input(vec![
+            return Err(WorkflowError::Required(vec![
                 "Either model name or an existing agent is required.".into(),
             ]));
         }
@@ -439,7 +439,7 @@ impl ChatContext {
 
         let mut agent_spec = match &inputs[0] {
             Some(Value::Agent(spec)) => spec.clone(),
-            None => Err(WorkflowError::Input(vec!["Agent is required".into()]))?,
+            None => Err(WorkflowError::Required(vec!["Agent is required".into()]))?,
             _ => unreachable!(),
         };
 
@@ -485,7 +485,7 @@ impl DynNode for InvokeTool {
     }
 
     fn outputs(&self) -> usize {
-        3
+        4
     }
 
     fn out_kind(&self, out_pin: usize) -> ValueKind {
@@ -493,6 +493,7 @@ impl DynNode for InvokeTool {
             0 => ValueKind::Chat,
             1 => ValueKind::Message,
             2 => ValueKind::Text,
+            3 => ValueKind::Failure,
             _ => unreachable!(),
         }
     }
@@ -510,6 +511,7 @@ impl DynNode for InvokeTool {
                 }
             }
             2 => Value::Text(self.tool_output.clone()),
+            3 => Value::Placeholder(ValueKind::Failure),
             _ => unreachable!(),
         }
     }
@@ -535,6 +537,9 @@ impl UiNode for InvokeTool {
             }
             2 => {
                 ui.label("output");
+            }
+            3 => {
+                ui.label("failure");
             }
             _ => unreachable!(),
         }
@@ -582,13 +587,15 @@ impl InvokeTool {
 
         let chat = match &inputs[0] {
             Some(Value::Chat(history)) => history,
-            None => Err(WorkflowError::Input(vec!["Chat history required".into()]))?,
+            None => Err(WorkflowError::Required(vec![
+                "Chat history required".into(),
+            ]))?,
             _ => unreachable!(),
         };
 
         let toolset = match &inputs[1] {
             Some(Value::Tools(spec)) => spec.clone(),
-            None => Err(WorkflowError::Input(vec!["Toolset is required".into()]))?,
+            None => Err(WorkflowError::Required(vec!["Toolset is required".into()]))?,
             _ => unreachable!(),
         };
 
@@ -605,13 +612,13 @@ impl InvokeTool {
             Some(Value::Text(text)) => text.as_str(),
             None if !self.tool_name.is_empty() => self.tool_name.as_str(),
             None if single_tool.is_some() => single_tool.as_ref().unwrap(),
-            None => Err(WorkflowError::Input(vec!["Tool name required".into()]))?,
+            None => Err(WorkflowError::Required(vec!["Tool name required".into()]))?,
             _ => unreachable!(),
         };
 
         let args = match &inputs[3] {
             Some(Value::Json(value)) => value.clone(),
-            None => Err(WorkflowError::Input(vec![
+            None => Err(WorkflowError::Required(vec![
                 "Tool arguments are required".into(),
             ]))?,
             _ => unreachable!(),

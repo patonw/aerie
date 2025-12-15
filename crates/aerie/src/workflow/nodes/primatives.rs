@@ -217,9 +217,9 @@ impl Panic {
             match value {
                 Value::Placeholder(_) => {}
                 Value::Text(txt) if txt.is_empty() => {}
-                _ => Err(WorkflowError::Input(vec![format!(
+                _ => Err(WorkflowError::Unknown(format!(
                     "Panic node received a non-empty input: {value:?}"
-                )]))?,
+                )))?,
             }
         }
 
