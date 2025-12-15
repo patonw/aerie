@@ -30,16 +30,22 @@ impl DynNode for ParseJson {
         }
     }
 
+    fn outputs(&self) -> usize {
+        2
+    }
+
     fn out_kind(&self, out_pin: usize) -> ValueKind {
         match out_pin {
             0 => ValueKind::Json,
+            1 => ValueKind::Failure,
             _ => unreachable!(),
         }
     }
 
     fn value(&self, out_pin: usize) -> Value {
         match out_pin {
-            0 => super::Value::Json(self.value.clone()),
+            0 => Value::Json(self.value.clone()),
+            1 => Value::Placeholder(ValueKind::Failure),
             _ => unreachable!(),
         }
     }
@@ -79,6 +85,24 @@ impl UiNode for ParseJson {
 
         self.in_kinds(pin_id).first().unwrap().default_pin()
     }
+
+    fn show_output(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("json");
+            }
+            1 => {
+                ui.label("failure");
+            }
+            _ => unreachable!(),
+        }
+        self.out_kind(pin_id).default_pin()
+    }
 }
 
 impl ParseJson {
@@ -96,7 +120,7 @@ impl ParseJson {
         };
 
         let value = serde_json::from_str::<serde_json::Value>(text)
-            .map_err(|e| WorkflowError::Input(vec![format!("Invalid JSON: {e:?}")]))?;
+            .map_err(|e| WorkflowError::Conversion(format!("Invalid JSON: {e:?}")))?;
 
         self.value = Arc::new(value);
 
@@ -124,12 +148,24 @@ impl DynNode for ValidateJson {
         }
     }
 
-    fn out_kind(&self, _out_pin: usize) -> ValueKind {
-        ValueKind::Json
+    fn outputs(&self) -> usize {
+        2
     }
 
-    fn value(&self, _out_pin: usize) -> super::Value {
-        super::Value::Json(self.value.clone())
+    fn out_kind(&self, out_pin: usize) -> ValueKind {
+        match out_pin {
+            0 => ValueKind::Json,
+            1 => ValueKind::Failure,
+            _ => unreachable!(),
+        }
+    }
+
+    fn value(&self, out_pin: usize) -> super::Value {
+        match out_pin {
+            0 => Value::Json(self.value.clone()),
+            1 => Value::Placeholder(ValueKind::Failure),
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -166,6 +202,24 @@ impl UiNode for ValidateJson {
 
         self.in_kinds(pin_id).first().unwrap().default_pin()
     }
+
+    fn show_output(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("json");
+            }
+            1 => {
+                ui.label("failure");
+            }
+            _ => unreachable!(),
+        }
+        self.out_kind(pin_id).default_pin()
+    }
 }
 
 impl ValidateJson {
@@ -179,13 +233,13 @@ impl ValidateJson {
 
         let schema = match &inputs[0] {
             Some(Value::Json(schema)) => schema.as_ref().to_owned(),
-            None => Err(WorkflowError::Input(vec!["Schema is required".into()]))?,
+            None => Err(WorkflowError::Required(vec!["Schema is required".into()]))?,
             _ => unreachable!(),
         };
 
         let input = match &inputs[1] {
             Some(Value::Json(input)) => input.as_ref().to_owned(),
-            None => Err(WorkflowError::Input(vec!["JSON input required".into()]))?,
+            None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
             _ => unreachable!(),
         };
 
@@ -297,7 +351,7 @@ impl TransformJson {
 
         let input = match &inputs[1] {
             Some(Value::Json(input)) => input.as_ref().to_owned(),
-            None => Err(WorkflowError::Input(vec!["JSON input required".into()]))?,
+            None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
             _ => unreachable!(),
         };
 

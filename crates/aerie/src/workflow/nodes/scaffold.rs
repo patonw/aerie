@@ -1,6 +1,8 @@
-use std::sync::Arc;
+use std::{convert::identity, sync::Arc};
 
 use decorum::E64;
+use egui_snarl::OutPinId;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::{ChatHistory, workflow::WorkflowError};
@@ -120,7 +122,7 @@ pub struct Finish {}
 
 impl DynNode for Finish {
     fn priority(&self) -> usize {
-        0
+        2000
     }
 
     fn outputs(&self) -> usize {
@@ -174,10 +176,10 @@ impl Finish {
                     ctx.history
                         .store(Arc::new(chat.with_base(None).into_owned()));
                 } else {
-                    Err(WorkflowError::Input(vec![
+                    Err(WorkflowError::Conversion(
                         "Final chat history is not related to the session. Refusing to overwrite."
                             .into(),
-                    ]))?;
+                    ))?;
                 }
             }
             None => {}
@@ -185,5 +187,379 @@ impl Finish {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Fallback {
+    pub kinds: Vec<ValueKind>,
+}
+
+impl Default for Fallback {
+    fn default() -> Self {
+        Self {
+            kinds: vec![ValueKind::Placeholder],
+        }
+    }
+}
+
+impl DynNode for Fallback {
+    fn inputs(&self) -> usize {
+        self.kinds.len() + 1 // Slot for history plus empty to add new msg
+    }
+
+    fn in_kinds(&self, in_pin: usize) -> &[ValueKind] {
+        let is_var_pin = in_pin > 0 && in_pin < self.kinds.len() + 1;
+        match in_pin {
+            0 => &[ValueKind::Failure],
+            _ if is_var_pin && self.kinds[in_pin - 1] != ValueKind::Placeholder => {
+                std::slice::from_ref(&self.kinds[in_pin - 1])
+            }
+            _ => ValueKind::all(),
+        }
+    }
+
+    fn outputs(&self) -> usize {
+        self.kinds.len()
+    }
+
+    fn out_kind(&self, out_pin: usize) -> ValueKind {
+        if out_pin < self.kinds.len() {
+            self.kinds[out_pin]
+        } else {
+            ValueKind::Placeholder
+        }
+    }
+}
+
+impl UiNode for Fallback {
+    fn title(&self) -> &str {
+        "Fallback"
+    }
+
+    fn preview(&self, out_pin: usize) -> Value {
+        Value::Placeholder(self.out_kind(out_pin))
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        let kind = match &remote {
+            Some(Value::Placeholder(kind)) => Some(*kind),
+            Some(value) => Some(value.kind()),
+            _ => None,
+        };
+
+        // // Dynamic sizing makes this needlessly complex
+        // // Extend inputs to allow additional collection
+        // if pin_id == self.kinds.len() + 1 && remote.is_some() {
+        //     self.kinds.push(ValueKind::Placeholder);
+        // }
+        // // // GC unused pins... leads to strange behavior with stale output wires
+        // // // Better to avoid for now.
+        // else if pin_id != 0 && pin_id == self.kinds.len() && remote.is_none() {
+        //     tracing::debug!("Resetting garbage collected pin {:?}", pin_id);
+        //     ctx.drop_out_pin(OutPinId {
+        //         node: ctx.current_node,
+        //         output: pin_id - 1,
+        //     });
+        //     self.kinds.pop();
+        // }
+
+        if pin_id == 0 {
+            ui.label("failure");
+        } else if pin_id < self.kinds.len() + 1 {
+            // when kind changes
+            if kind.is_some() ^ (self.kinds[pin_id - 1] != ValueKind::Placeholder) {
+                if let Some(kind) = kind {
+                    self.kinds[pin_id - 1] = kind;
+                } else {
+                    self.kinds[pin_id - 1] = ValueKind::Placeholder;
+                }
+
+                tracing::debug!("Resetting kind changed pin {:?}", pin_id);
+                ctx.reset_out_pin(OutPinId {
+                    node: ctx.current_node,
+                    output: pin_id - 1,
+                });
+            }
+
+            ui.label(format!("{pin_id}"));
+        }
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+
+    fn show_output(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+    ) -> egui_snarl::ui::PinInfo {
+        ui.label(format!("{}", pin_id + 1));
+
+        self.out_kind(pin_id).default_pin()
+    }
+}
+
+impl Fallback {
+    pub async fn call(
+        &mut self,
+        _ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        Ok(inputs
+            .into_iter()
+            .skip(1)
+            .map(|it| it.unwrap_or_default())
+            .collect_vec())
+    }
+
+    pub async fn forward(
+        &mut self,
+        _: &RunContext,
+        _: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        unreachable!()
+    }
+}
+
+// a la I/O select
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Select {
+    count: usize,
+
+    kind: ValueKind,
+}
+
+impl DynNode for Select {
+    fn inputs(&self) -> usize {
+        self.count + 1 // Extra slot to add another document
+    }
+
+    // Allows anything for the first value, but all other inputs
+    // must be of the same kind.
+    fn in_kinds(&self, _in_pin: usize) -> &[ValueKind] {
+        if self.count == 0 {
+            ValueKind::all()
+        } else {
+            std::slice::from_ref(&self.kind)
+        }
+    }
+
+    fn out_kind(&self, _out_pin: usize) -> ValueKind {
+        self.kind
+    }
+
+    fn value(&self, _out_pin: usize) -> Value {
+        Value::Placeholder(self.kind)
+    }
+
+    fn priority(&self) -> usize {
+        8000
+    }
+}
+
+impl UiNode for Select {
+    fn title(&self) -> &str {
+        "Select"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Emits the first input value that becomes ready.\n\
+            Used for joining fallback branches to main control flow."
+    }
+
+    fn show_input(
+        &mut self,
+        _ui: &mut egui::Ui,
+        ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        let kind = match &remote {
+            Some(Value::Placeholder(kind)) => Some(*kind),
+            Some(value) => Some(value.kind()),
+            _ => None,
+        };
+
+        if self.count == 0 {
+            if self.kind == ValueKind::Placeholder
+                && let Some(kind) = kind
+            {
+                self.kind = kind;
+
+                ctx.reset_out_pin(OutPinId {
+                    node: ctx.current_node,
+                    output: 0,
+                });
+            } else if kind.is_none() {
+                self.kind = ValueKind::Placeholder;
+            }
+        }
+
+        if pin_id == self.count && remote.is_some() {
+            self.count += 1;
+        } else if pin_id + 1 == self.count && remote.is_none() {
+            self.count -= 1;
+        }
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+
+    fn show_output(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+    ) -> egui_snarl::ui::PinInfo {
+        if self.count > 0 {
+            ui.label(format!("{}", self.kind).to_lowercase());
+        }
+
+        self.out_kind(pin_id).default_pin()
+    }
+}
+
+impl Select {
+    pub async fn call(
+        &mut self,
+        _ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        let output = inputs
+            .into_iter()
+            .find_map(identity)
+            .ok_or(WorkflowError::Unknown(
+                "Select called with empty inputs".into(),
+            ))?;
+
+        Ok(vec![output])
+    }
+
+    pub async fn forward(
+        &mut self,
+        _: &RunContext,
+        _: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        unreachable!()
+    }
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Demote {
+    priority: usize,
+
+    kind: ValueKind,
+}
+
+impl Default for Demote {
+    fn default() -> Self {
+        Self {
+            priority: 5000,
+            kind: Default::default(),
+        }
+    }
+}
+
+impl DynNode for Demote {
+    fn priority(&self) -> usize {
+        self.priority
+    }
+
+    fn in_kinds(&self, _in_pin: usize) -> &[ValueKind] {
+        if matches!(self.kind, ValueKind::Placeholder) {
+            ValueKind::all()
+        } else {
+            std::slice::from_ref(&self.kind)
+        }
+    }
+
+    fn out_kind(&self, _out_pin: usize) -> ValueKind {
+        self.kind
+    }
+}
+
+impl UiNode for Demote {
+    fn title(&self) -> &str {
+        "Demote"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Blocks a path in the graph until there are no more\n\
+            nodes with higher priority that are ready to run."
+    }
+
+    fn show_input(
+        &mut self,
+        _ui: &mut egui::Ui,
+        ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        let kind = match remote {
+            Some(Value::Placeholder(kind)) => Some(kind),
+            Some(value) => Some(value.kind()),
+            _ => None,
+        };
+
+        if self.kind == ValueKind::Placeholder
+            && let Some(kind) = kind
+        {
+            self.kind = kind;
+
+            ctx.reset_out_pin(OutPinId {
+                node: ctx.current_node,
+                output: pin_id,
+            });
+        } else if kind.is_none() {
+            self.kind = ValueKind::Placeholder;
+        }
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+
+    fn has_body(&self) -> bool {
+        true
+    }
+
+    fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
+        ui.add(egui::Slider::new(&mut self.priority, 0..=10_000).text("P"))
+            .on_hover_text("priority");
+    }
+}
+
+impl Demote {
+    pub async fn call(
+        &mut self,
+        _ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        let output = inputs
+            .into_iter()
+            .find_map(identity)
+            .ok_or(WorkflowError::Unknown(
+                "Demote called with empty inputs".into(),
+            ))?;
+
+        Ok(vec![output])
+    }
+
+    pub async fn forward(
+        &mut self,
+        _: &RunContext,
+        _: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        unreachable!()
     }
 }

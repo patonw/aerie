@@ -1,4 +1,7 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::Cow,
+    sync::{Arc, atomic::Ordering},
+};
 
 use itertools::Itertools;
 use rig::{
@@ -32,7 +35,7 @@ impl DynNode for ChatNode {
     }
 
     fn outputs(&self) -> usize {
-        2
+        3
     }
 
     fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
@@ -48,6 +51,7 @@ impl DynNode for ChatNode {
         match out_pin {
             0 => ValueKind::Chat,
             1 => ValueKind::Message,
+            2 => ValueKind::Failure,
             _ => unreachable!(),
         }
     }
@@ -64,6 +68,7 @@ impl DynNode for ChatNode {
                     Value::Placeholder(ValueKind::Message)
                 }
             }
+            2 => Value::Placeholder(ValueKind::Failure), // Runner handles the actual error values
             _ => unreachable!(),
         }
     }
@@ -92,6 +97,9 @@ impl UiNode for ChatNode {
             }
             1 => {
                 ui.label("response");
+            }
+            2 => {
+                ui.label("failure");
             }
             _ => unreachable!(),
         }
@@ -150,12 +158,14 @@ impl ChatNode {
 
         let agent_spec = match &inputs[0] {
             Some(Value::Agent(spec)) => spec,
-            None => Err(WorkflowError::Input(vec!["Agent spec required".into()]))?,
+            None => Err(WorkflowError::Required(vec!["Agent spec required".into()]))?,
             _ => unreachable!(),
         };
         let chat = match &inputs[1] {
             Some(Value::Chat(history)) => history,
-            None => Err(WorkflowError::Input(vec!["Chat history required".into()]))?,
+            None => Err(WorkflowError::Required(vec![
+                "Chat history required".into(),
+            ]))?,
             _ => unreachable!(),
         };
 
@@ -231,7 +241,7 @@ impl DynNode for StructuredChat {
     }
 
     fn outputs(&self) -> usize {
-        4
+        5
     }
 
     fn out_kind(&self, out_pin: usize) -> ValueKind {
@@ -240,6 +250,7 @@ impl DynNode for StructuredChat {
             1 => ValueKind::Message,
             2 => ValueKind::Text,
             3 => ValueKind::Json,
+            4 => ValueKind::Failure,
             _ => unreachable!(),
         }
     }
@@ -257,7 +268,8 @@ impl DynNode for StructuredChat {
                 }
             }
             2 => Value::Text(self.tool_name.clone()),
-            3 => super::Value::Json(self.data.clone()),
+            3 => Value::Json(self.data.clone()),
+            4 => Value::Placeholder(ValueKind::Failure),
             _ => unreachable!(),
         }
     }
@@ -293,6 +305,9 @@ impl UiNode for StructuredChat {
             }
             3 => {
                 ui.label("data");
+            }
+            4 => {
+                ui.label("failure");
             }
             _ => unreachable!(),
         }
@@ -364,13 +379,15 @@ impl StructuredChat {
 
         let mut agent_spec = match &inputs[0] {
             Some(Value::Agent(spec)) => spec.clone(),
-            None => Err(WorkflowError::Input(vec!["Agent is required".into()]))?,
+            None => Err(WorkflowError::Required(vec!["Agent is required".into()]))?,
             _ => unreachable!(),
         };
 
         let in_chat = match &inputs[1] {
             Some(Value::Chat(history)) => history,
-            None => Err(WorkflowError::Input(vec!["Chat history required".into()]))?,
+            None => Err(WorkflowError::Required(vec![
+                "Chat history required".into(),
+            ]))?,
             _ => unreachable!(),
         };
 
@@ -406,6 +423,10 @@ impl StructuredChat {
                 .unwrap()
                 .tool_choice(ToolChoice::Required)
                 .send();
+
+            if run_ctx.interrupt.load(Ordering::Relaxed) {
+                Err(WorkflowError::Interrupted)?;
+            }
 
             attempts += 1;
             match request.await {

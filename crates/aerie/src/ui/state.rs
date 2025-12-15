@@ -120,6 +120,7 @@ impl egui_tiles::Behavior<Pane> for AppState {
 pub struct WorkflowState {
     pub frozen: bool,
     pub running: Arc<AtomicBool>,
+    pub interrupt: Arc<AtomicBool>,
     pub editing: String,
     pub renaming: Option<String>,
     pub modtime: SystemTime,
@@ -162,7 +163,9 @@ impl WorkflowState {
         let snarl = Arc::new(tokio::sync::RwLock::new(snarl));
 
         Ok(Self {
+            frozen: false,
             running: Arc::new(AtomicBool::new(false)),
+            interrupt: Arc::new(AtomicBool::new(false)),
             editing: edit_workflow.clone(),
             renaming: None,
             store: store.clone(),
@@ -184,7 +187,6 @@ impl WorkflowState {
             shadow: baseline.clone(),
             modtime: SystemTime::now(),
             switch_count: Default::default(),
-            frozen: Default::default(),
             node_state: Default::default(),
             undo_stack: Default::default(),
             redo_stack: Default::default(),

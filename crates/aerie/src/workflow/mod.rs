@@ -13,7 +13,10 @@ use rig::{
     tool::{ToolSetError, server::ToolServerError},
 };
 use serde::{Deserialize, Serialize};
-use std::{hash::Hash, sync::Arc};
+use std::{
+    hash::Hash,
+    sync::{Arc, atomic::AtomicBool},
+};
 use thiserror::Error;
 use typed_builder::TypedBuilder;
 
@@ -36,8 +39,10 @@ pub use nodes::WorkNode;
 // type DynFuture<T> = Pin<Box<dyn Future<Output = T>>>;
 
 #[derive(Kinded, Debug, Clone)]
+#[kinded(derive(Hash, Serialize, Deserialize))]
 pub enum Value {
     Placeholder(ValueKind),
+    Failure(Arc<WorkflowError>),
     Text(String),
     Number(E64),
     Integer(i64),
@@ -55,14 +60,22 @@ impl Default for Value {
     }
 }
 
+#[allow(clippy::derivable_impls)]
+impl Default for ValueKind {
+    fn default() -> Self {
+        ValueKind::Placeholder
+    }
+}
+
 impl ValueKind {
     pub fn color(&self) -> Color32 {
         match self {
             ValueKind::Placeholder => Color32::LIGHT_GRAY,
+            ValueKind::Failure => Color32::RED,
             ValueKind::Text => Color32::CYAN,
-            ValueKind::Number => Color32::from_rgb(0xff, 0x56, 0x78),
-            ValueKind::Integer => Color32::from_rgb(0xff, 0x65, 0x43),
-            ValueKind::Json => Color32::BROWN,
+            ValueKind::Number => Color32::from_rgb(0xbb, 0x44, 0x88),
+            ValueKind::Integer => Color32::from_rgb(0xbb, 0x77, 0x00),
+            ValueKind::Json => Color32::from_rgb(0x42, 0xbb, 0x00),
             ValueKind::Model => Color32::LIGHT_BLUE,
             ValueKind::Agent => Color32::from_rgb(0x56, 0x78, 0xff),
             ValueKind::Tools => Color32::PURPLE,
@@ -78,8 +91,37 @@ impl ValueKind {
     }
 }
 
+#[derive(TypedBuilder)]
 pub struct EditContext {
     pub toolbox: Arc<Toolbox>,
+
+    #[builder(default)]
+    pub errors: ErrorList<anyhow::Error>,
+
+    #[builder(default)]
+    pub output_reset: Arc<ArcSwap<im::OrdSet<OutPinId>>>,
+
+    #[builder(default)]
+    pub output_drop: Arc<ArcSwap<im::OrdSet<OutPinId>>>,
+
+    #[builder(default=NodeId(0))]
+    pub current_node: NodeId, // whoops
+}
+
+impl EditContext {
+    pub fn reset_out_pin(&self, pin_id: OutPinId) {
+        let old_set = self.output_reset.load();
+        let new_set = old_set.update(pin_id);
+
+        self.output_reset.store(Arc::new(new_set));
+    }
+
+    pub fn drop_out_pin(&self, pin_id: OutPinId) {
+        let old_set = self.output_drop.load();
+        let new_set = old_set.update(pin_id);
+
+        self.output_drop.store(Arc::new(new_set));
+    }
 }
 
 #[derive(TypedBuilder)]
@@ -87,6 +129,9 @@ pub struct RunContext {
     pub agent_factory: AgentFactory,
 
     pub transmuter: Transmuter,
+
+    #[builder(default)]
+    pub interrupt: Arc<AtomicBool>,
 
     /// Snapshot of the chat before the workflow is run
     #[builder(default)]
@@ -387,12 +432,11 @@ pub trait DynNode {
     fn reset(&mut self, in_pin: usize) {}
 
     fn priority(&self) -> usize {
-        100
+        5000
     }
 
-    #[expect(unused_variables)]
     fn value(&self, out_pin: usize) -> Value {
-        Default::default()
+        Value::Placeholder(self.out_kind(out_pin))
     }
 
     fn inputs(&self) -> usize {
@@ -405,7 +449,7 @@ pub trait DynNode {
 
     #[expect(unused_variables)]
     // We're more concerned about type validation here than updating UI visuals
-    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
+    fn in_kinds(&self, in_pin: usize) -> &[ValueKind] {
         ValueKind::all()
     }
 
@@ -414,7 +458,7 @@ pub trait DynNode {
         tracing::trace!("Input values: {inputs:?}");
 
         if inputs.len() != self.inputs() {
-            Err(WorkflowError::Input(vec![
+            Err(WorkflowError::Required(vec![
                 "Incorrect number of inputs".into(),
             ]))?
         }
@@ -435,7 +479,7 @@ pub trait DynNode {
             .collect_vec();
 
         if !errors.is_empty() {
-            Err(WorkflowError::Input(errors))
+            Err(WorkflowError::Required(errors))
         } else {
             Ok(())
         }
@@ -449,6 +493,10 @@ pub trait DynNode {
 
     fn connect(&self, in_pin: usize, kind: ValueKind) -> Result<(), String> {
         if !self.in_kinds(in_pin).contains(&kind) {
+            tracing::warn!(
+                "Refusing to connect {kind:?} to {in_pin:?} accepting {:?}",
+                self.in_kinds(in_pin)
+            );
             Err("Not allowed!".into())
         } else {
             Ok(())
@@ -488,12 +536,6 @@ pub trait UiNode: DynNode {
             .with_wire_style(WireStyle::Bezier5)
     }
 
-    fn default_pin(&self) -> PinInfo {
-        PinInfo::circle()
-            .with_fill(egui::Color32::GRAY)
-            .with_wire_style(WireStyle::Bezier5)
-    }
-
     #[expect(unused_variables)]
     fn show_input(
         &mut self,
@@ -513,8 +555,11 @@ pub trait UiNode: DynNode {
 
 #[derive(Debug, Error)]
 pub enum WorkflowError {
-    #[error("Input error {0:?}")]
-    Input(Vec<String>),
+    #[error("Input required {0:?}")]
+    Required(Vec<String>),
+
+    #[error("Cannot convert data: {0:?}")]
+    Conversion(String),
 
     #[error("Error while invoking provider")]
     Provider(#[source] anyhow::Error),
@@ -530,6 +575,9 @@ pub enum WorkflowError {
 
     #[error("Value does not conform to schema")]
     Validation(#[source] ValidationError<'static>),
+
+    #[error("Interrupted")]
+    Interrupted,
 
     #[error("{0}")]
     Unknown(String),

@@ -285,34 +285,34 @@ pub fn render_message_width(
                 ui.set_width(width.unwrap_or(ui.available_width() * 0.75));
 
                 ui.vertical(|ui| {
-                    for (text, fmt) in Itertools::intersperse(
+                    for (idx, (text, fmt)) in Itertools::intersperse(
                         message.text_fmt_opts().into_iter(),
                         (String::default(), FormatOpts::Separator),
-                    ) {
+                    )
+                    .enumerate()
+                    {
                         match fmt {
                             FormatOpts::Plain => {
                                 ui.label(&text);
                             }
                             FormatOpts::Pre => {
-                                egui::ScrollArea::horizontal()
-                                    .id_salt(text.bytes().take(100).collect_vec())
-                                    .show(ui, |ui| {
-                                        ui.with_layout(
-                                            egui::Layout::left_to_right(egui::Align::TOP),
-                                            |ui| {
-                                                let language = "json";
-                                                let theme =
+                                egui::ScrollArea::horizontal().id_salt(idx).show(ui, |ui| {
+                                    ui.with_layout(
+                                        egui::Layout::left_to_right(egui::Align::TOP),
+                                        |ui| {
+                                            let language = "json";
+                                            let theme =
                                         egui_extras::syntax_highlighting::CodeTheme::from_memory(
                                             ui.ctx(),
                                             ui.style(),
                                         );
 
-                                                egui_extras::syntax_highlighting::code_view_ui(
-                                                    ui, &theme, &text, language,
-                                                );
-                                            },
-                                        );
-                                    });
+                                            egui_extras::syntax_highlighting::code_view_ui(
+                                                ui, &theme, &text, language,
+                                            );
+                                        },
+                                    );
+                                });
                             }
                             FormatOpts::Markdown => {
                                 CommonMarkViewer::new().show(ui, cache, &text);
@@ -339,10 +339,12 @@ pub fn render_message_width(
                 ui.set_width(width.unwrap_or(ui.available_width() * 0.75));
 
                 ui.vertical(|ui| {
-                    for (text, fmt) in Itertools::intersperse(
+                    for (idx, (text, fmt)) in Itertools::intersperse(
                         message.text_fmt_opts().into_iter(),
                         (String::default(), FormatOpts::Separator),
-                    ) {
+                    )
+                    .enumerate()
+                    {
                         match fmt {
                             FormatOpts::Plain => {
                                 ui.label(&text);
@@ -351,20 +353,18 @@ pub fn render_message_width(
                             FormatOpts::Pre => {
                                 all_text.push_str(&text);
 
-                                egui::ScrollArea::horizontal()
-                                    .id_salt(text.bytes().take(100).collect_vec())
-                                    .show(ui, |ui| {
-                                        let language = "json";
-                                        let theme =
+                                egui::ScrollArea::horizontal().id_salt(idx).show(ui, |ui| {
+                                    let language = "json";
+                                    let theme =
                                         egui_extras::syntax_highlighting::CodeTheme::from_memory(
                                             ui.ctx(),
                                             ui.style(),
                                         );
 
-                                        egui_extras::syntax_highlighting::code_view_ui(
-                                            ui, &theme, &text, language,
-                                        );
-                                    });
+                                    egui_extras::syntax_highlighting::code_view_ui(
+                                        ui, &theme, &text, language,
+                                    );
+                                });
                             }
                             FormatOpts::Markdown => {
                                 all_text.push_str(&text);

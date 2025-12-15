@@ -8,7 +8,7 @@ use egui::{Align2, Color32, ComboBox, Hyperlink, RichText, Ui};
 use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular::{
     ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, CHECK_CIRCLE, DOWNLOAD_SIMPLE, HAND_PALM,
-    HOURGLASS_MEDIUM, INFO, PLAY_CIRCLE, UPLOAD_SIMPLE, WARNING,
+    HOURGLASS_MEDIUM, INFO, PLAY, PLAY_CIRCLE, STOP, UPLOAD_SIMPLE, WARNING,
 };
 use egui_snarl::{
     NodeId, Snarl,
@@ -125,16 +125,23 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                     ui.add(egui::Spinner::new().color(Color32::LIGHT_GREEN))
                         .on_hover_text("Running");
                 }
-                Some(ExecState::Done) => {
+                Some(ExecState::Done(_)) => {
                     ui.label(RichText::new(CHECK_CIRCLE).color(Color32::GREEN))
                         .on_hover_text("Done");
                 }
                 Some(ExecState::Disabled) => {
                     ui.label(HAND_PALM).on_hover_text("Disabled");
                 }
-                Some(ExecState::Failed) => {
-                    ui.label(RichText::new(WARNING).color(Color32::RED))
-                        .on_hover_text("Failed");
+                Some(ExecState::Failed(err)) => {
+                    if ui
+                        .label(RichText::new(WARNING).color(Color32::RED))
+                        .on_hover_text(format!("{err:?}"))
+                        .interact(egui::Sense::click())
+                        .clicked()
+                    {
+                        let error = err.clone();
+                        self.edit_ctx.errors.push(error.into());
+                    }
                 }
                 None => {}
             },
@@ -146,7 +153,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         node: NodeId,
         rect: egui::Rect,
         ui: &mut Ui,
-        _snarl: &mut Snarl<WorkNode>,
+        snarl: &mut Snarl<WorkNode>,
     ) {
         if self.shadow.is_disabled(node) {
             let painter = ui.painter();
@@ -155,6 +162,29 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                 16.0,
                 egui::Color32::from_rgb(0x42, 0, 0).gamma_multiply(0.5),
             );
+        }
+
+        // A bit hacky
+        let output_drop = self
+            .edit_ctx
+            .output_reset
+            .swap(Arc::new(Default::default()));
+        for out_pin_id in output_drop.iter() {
+            let out_pin = snarl.out_pin(*out_pin_id);
+            self.drop_outputs(&out_pin, snarl);
+        }
+
+        let output_reset = self
+            .edit_ctx
+            .output_reset
+            .swap(Arc::new(Default::default()));
+        for out_pin_id in output_reset.iter() {
+            let out_pin = snarl.out_pin(*out_pin_id);
+            for in_pin_id in &out_pin.remotes {
+                let in_pin = snarl.in_pin(*in_pin_id);
+                self.disconnect(&out_pin, &in_pin, snarl);
+                self.connect(&out_pin, &in_pin, snarl);
+            }
         }
     }
 
@@ -198,6 +228,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             };
 
             let node_id = pin.id.node;
+            self.edit_ctx.current_node = node_id;
             let node = &mut snarl[node_id];
             let pin = node
                 .as_ui_mut()
@@ -224,6 +255,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
     ) -> impl egui_snarl::ui::SnarlPin + 'static {
         ui.add_enabled_ui(self.can_edit(), |ui| {
             let node_id = pin.id.node;
+            self.edit_ctx.current_node = node_id;
             let node = &mut snarl[node_id];
             let pin = node
                 .as_ui_mut()
@@ -242,6 +274,28 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
     }
 
     fn show_graph_menu(&mut self, pos: egui::Pos2, ui: &mut Ui, snarl: &mut Snarl<WorkNode>) {
+        ui.menu_button("Control", |ui| {
+            if ui.button("Fallback").clicked() {
+                snarl.insert_node(pos, WorkNode::Fallback(Default::default()));
+                ui.close();
+            }
+
+            if ui.button("Select").clicked() {
+                snarl.insert_node(pos, WorkNode::Select(Default::default()));
+                ui.close();
+            }
+
+            if ui.button("Demote").clicked() {
+                snarl.insert_node(pos, WorkNode::Demote(Default::default()));
+                ui.close();
+            }
+
+            if ui.button("Panic").clicked() {
+                snarl.insert_node(pos, WorkNode::Panic(Default::default()));
+                ui.close();
+            }
+        });
+
         ui.menu_button("Text", |ui| {
             if ui.button("Plain Text").clicked() {
                 snarl.insert_node(pos, WorkNode::Text(Default::default()));
@@ -331,11 +385,6 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             }
         });
 
-        if ui.button("Panic").clicked() {
-            snarl.insert_node(pos, WorkNode::Panic(Default::default()));
-            ui.close();
-        }
-
         if ui.button("Preview").clicked() {
             snarl.insert_node(pos, WorkNode::Preview(Default::default()));
             ui.close();
@@ -359,6 +408,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui: &mut Ui,
         snarl: &mut Snarl<WorkNode>,
     ) {
+        self.edit_ctx.current_node = node;
         ui.add_enabled_ui(self.can_edit(), |ui| {
             snarl[node].as_ui_mut().show_body(ui, &self.edit_ctx);
             self.shadow = self.shadow.with_node(&node, snarl.get_node_info(node));
@@ -455,9 +505,10 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
 impl super::AppState {
     pub fn workflow_ui(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            let edit_ctx = EditContext {
-                toolbox: self.agent_factory.toolbox.clone(),
-            };
+            let edit_ctx = EditContext::builder()
+                .toolbox(self.agent_factory.toolbox.clone())
+                .errors(self.errors.clone())
+                .build();
 
             let running = self
                 .workflows
@@ -689,7 +740,9 @@ impl super::AppState {
             ui.scope(|ui| {
                 ui.style_mut().spacing.button_padding.y = 8.0;
 
-                let (frozen_label, frozen_hint) = if self.workflows.frozen {
+                let (frozen_label, frozen_hint) = if running {
+                    ("« running »", "Please wait...")
+                } else if self.workflows.frozen {
                     ("« frozen »", "Click to re-enable editing.")
                 } else {
                     ("« editing »", "Click to prevent new changes.")
@@ -703,11 +756,16 @@ impl super::AppState {
             ui.scope(|ui| {
                 // Bigger button
                 ui.style_mut().spacing.button_padding.y = 16.0;
-                ui.add_enabled_ui(!running, |ui| {
-                    if ui.button(if running { "Running" } else { "Run" }).clicked() {
-                        self.exec_workflow();
-                    }
-                });
+                if running {
+                    let interrupting = self.workflows.interrupt.load(Ordering::Relaxed);
+                    ui.add_enabled_ui(!interrupting, |ui| {
+                        if ui.button(stop_layout(interrupting)).clicked() {
+                            self.workflows.interrupt.store(true, Ordering::Relaxed);
+                        }
+                    });
+                } else if ui.button(play_layout()).clicked() {
+                    self.exec_workflow();
+                }
             });
 
             // TODO: pause and cancel buttons
@@ -742,12 +800,15 @@ impl super::AppState {
             let run_ctx = RunContext::builder()
                 .agent_factory(self.agent_factory.clone())
                 .transmuter(self.transmuter.clone())
+                .interrupt(self.workflows.interrupt.clone())
                 .history(self.session.history.clone())
                 .user_prompt(self.prompt.read().unwrap().clone())
                 .model(self.settings.view(|s| s.llm_model.clone()))
                 .temperature(self.settings.view(|s| s.temperature))
                 .errors(self.errors.clone())
                 .build();
+
+            self.workflows.interrupt.store(false, Ordering::Relaxed);
 
             let mut exec = WorkflowRunner::builder().run_ctx(run_ctx).build();
 
@@ -759,19 +820,27 @@ impl super::AppState {
         let session = self.session.clone();
         let running = self.workflows.running.clone();
         let errors = self.errors.clone();
+        let interrupt = self.workflows.interrupt.clone();
 
         self.rt.spawn(async move {
             task_count_.fetch_add(1, Ordering::Relaxed);
             running.store(true, std::sync::atomic::Ordering::Relaxed);
 
             loop {
+                if interrupt.load(Ordering::Relaxed) {
+                    break;
+                }
+
                 match exec.step(&mut target).await {
                     Ok(false) => break,
                     Ok(true) => {
                         let mut snarl = snarl_.write().await;
                         *snarl = target.clone();
                     }
-                    Err(err) => errors.push(err.into()),
+                    Err(err) => {
+                        errors.push(err.into());
+                        break;
+                    }
                 }
             }
 
@@ -780,4 +849,60 @@ impl super::AppState {
             task_count_.fetch_sub(1, Ordering::Relaxed);
         });
     }
+}
+
+fn play_layout() -> egui::text::LayoutJob {
+    use egui::{Align, FontSelection, Style, text::LayoutJob};
+
+    let style = Style::default();
+    let mut layout_job = LayoutJob::default();
+    RichText::new(PLAY)
+        .color(egui::Color32::GREEN)
+        .strong()
+        .heading()
+        .append_to(
+            &mut layout_job,
+            &style,
+            FontSelection::Default,
+            Align::Center,
+        );
+
+    RichText::new(" Run")
+        .color(style.visuals.text_color())
+        .append_to(
+            &mut layout_job,
+            &style,
+            FontSelection::Default,
+            Align::Center,
+        );
+
+    layout_job
+}
+
+fn stop_layout(stopping: bool) -> egui::text::LayoutJob {
+    use egui::{Align, FontSelection, Style, text::LayoutJob};
+
+    let style = Style::default();
+    let mut layout_job = LayoutJob::default();
+    RichText::new(STOP)
+        .color(egui::Color32::RED)
+        .strong()
+        .heading()
+        .append_to(
+            &mut layout_job,
+            &style,
+            FontSelection::Default,
+            Align::Center,
+        );
+
+    RichText::new(if stopping { " Stopping" } else { " Stop" })
+        .color(style.visuals.text_color())
+        .append_to(
+            &mut layout_job,
+            &style,
+            FontSelection::Default,
+            Align::Center,
+        );
+
+    layout_job
 }

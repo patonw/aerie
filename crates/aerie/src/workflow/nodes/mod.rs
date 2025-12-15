@@ -44,12 +44,15 @@ pub enum WorkNode {
     Text(Text),
     Tools(Tools),
     Start(Start),
+    Fallback(Fallback),
+    Select(Select),
     Finish(Finish),
+    Panic(Panic),
+    Demote(Demote),
     CreateMessage(CreateMessage),
     GraftChat(GraftHistory),
     MaskChat(MaskHistory),
     ExtendHistory(ExtendHistory),
-    Panic(Panic),
     Agent(AgentNode),
     Context(ChatContext),
     Chat(ChatNode),
@@ -70,12 +73,15 @@ impl WorkNode {
             WorkNode::Text(node) => node,
             WorkNode::Tools(node) => node,
             WorkNode::Start(node) => node,
+            WorkNode::Fallback(node) => node,
+            WorkNode::Select(node) => node,
             WorkNode::Finish(node) => node,
+            WorkNode::Panic(node) => node,
+            WorkNode::Demote(node) => node,
             WorkNode::CreateMessage(node) => node,
             WorkNode::GraftChat(node) => node,
             WorkNode::MaskChat(node) => node,
             WorkNode::ExtendHistory(node) => node,
-            WorkNode::Panic(node) => node,
             WorkNode::Agent(node) => node,
             WorkNode::Context(node) => node,
             WorkNode::Chat(node) => node,
@@ -99,7 +105,30 @@ impl WorkNode {
             #[call(noop)]
             pub fn as_ui(&self) -> &dyn UiNode;
 
+            #[deprecated="Switch to call instead"]
             pub async fn forward(&mut self, ctx: &RunContext, inputs: Vec<Option<Value>>) -> Result<(), WorkflowError>;
+        }
+    }
+
+    pub async fn call(
+        &mut self,
+        ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        match self {
+            WorkNode::Fallback(node) => node.call(ctx, inputs).await,
+            WorkNode::Select(node) => node.call(ctx, inputs).await,
+            WorkNode::Demote(node) => node.call(ctx, inputs).await,
+            _ => {
+                #[allow(deprecated)]
+                self.forward(ctx, inputs).await?;
+
+                let outputs = (0..self.as_dyn().outputs())
+                    .map(|i| self.as_dyn().value(i))
+                    .collect::<Vec<_>>();
+
+                Ok(outputs)
+            }
         }
     }
 }
