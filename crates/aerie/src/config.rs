@@ -108,7 +108,7 @@ impl ToolSettings {
         let providers = self
             .provider
             .iter()
-            .filter(|(_, spec)| matches!(spec, ToolSpec::MCP { enabled, .. } if *enabled))
+            .filter(|(_, spec)| spec.enabled())
             .map(|(name, spec)| (name.clone(), spec.clone()))
             .collect_vec();
 
@@ -127,7 +127,7 @@ impl ToolSettings {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(tag = "type")]
 pub enum ToolSpec {
-    MCP {
+    Stdio {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         enabled: bool,
 
@@ -137,21 +137,53 @@ pub enum ToolSpec {
         #[serde(default)]
         dir: Option<PathBuf>,
 
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        env: String,
+
         command: String,
 
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         args: Vec<String>,
+    },
+    HTTP {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        enabled: bool,
+
+        #[serde(default)]
+        preface: Option<String>,
+
+        uri: String,
+
+        /// : environment var for API key
+        auth_var: Option<String>,
     },
 }
 
 impl Default for ToolSpec {
     fn default() -> Self {
-        ToolSpec::MCP {
+        ToolSpec::Stdio {
             enabled: false,
             preface: None,
             dir: None,
+            env: Default::default(),
             command: String::new(),
             args: Vec::new(),
+        }
+    }
+}
+
+impl ToolSpec {
+    pub fn enabled(&self) -> bool {
+        match self {
+            ToolSpec::Stdio { enabled, .. } => *enabled,
+            ToolSpec::HTTP { enabled, .. } => *enabled,
+        }
+    }
+
+    pub fn preface(&self) -> Option<&str> {
+        match self {
+            ToolSpec::Stdio { preface, .. } => preface.as_deref(),
+            ToolSpec::HTTP { preface, .. } => preface.as_deref(),
         }
     }
 }

@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use eframe::egui;
-use egui_phosphor::regular::FILE_PLUS;
 use itertools::Itertools;
 
 use crate::{
@@ -21,42 +20,67 @@ impl super::AppState {
                 .default_height(ui.available_height() / 3.0)
                 .height_range((ui.available_height() / 4.0)..=(3.0 * ui.available_height() / 4.0))
                 .show_inside(ui, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| match &self.tool_editor {
-                        Some(ToolEditorState::ViewTool { tool }) => {
-                            let content =
-                                serde_json::to_string_pretty(tool).unwrap_or("???".to_string());
+                    egui::ScrollArea::vertical()
+                        .auto_shrink(false)
+                        .show(ui, |ui| {
+                            match &self.tool_editor {
+                                Some(ToolEditorState::ViewTool { tool }) => {
+                                    let content = serde_json::to_string_pretty(tool)
+                                        .unwrap_or("???".to_string());
 
-                            egui_extras::syntax_highlighting::code_view_ui(
-                                ui, &theme, &content, language,
-                            );
-                        }
-                        Some(ToolEditorState::EditProvider { .. }) => {
-                            self.tool_provider_form(ui);
-                            self.tool_provider_actions(ui);
-                        }
-                        None => {}
-                    });
+                                    egui_extras::syntax_highlighting::code_view_ui(
+                                        ui, &theme, &content, language,
+                                    );
+                                }
+                                Some(ToolEditorState::EditProvider { .. }) => {
+                                    self.tool_provider_form(ui);
+                                    self.tool_provider_actions(ui);
+                                }
+                                None => {}
+                            }
+                            // ui.allocate_space(ui.available_size());
+                        });
                 });
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Providers");
+
                 if ui
-                    .button(FILE_PLUS)
-                    .on_hover_text("Create provider")
+                    .button("+stdio")
+                    .on_hover_text("Create a MCP/stdio provider")
                     .clicked()
                 {
                     self.tool_editor = Some(ToolEditorState::EditProvider {
                         original: None,
                         modified: (
                             String::new(),
-                            ToolSpec::MCP {
+                            ToolSpec::Stdio {
                                 enabled: false,
                                 preface: None,
                                 dir: None,
+                                env: Default::default(),
                                 command: String::new(),
                                 args: Vec::new(),
+                            },
+                        ),
+                    });
+                }
+                if ui
+                    .button("+http")
+                    .on_hover_text("Create a MCP/HTTP provider")
+                    .clicked()
+                {
+                    self.tool_editor = Some(ToolEditorState::EditProvider {
+                        original: None,
+                        modified: (
+                            String::new(),
+                            ToolSpec::HTTP {
+                                enabled: false,
+                                preface: None,
+                                uri: String::from("http://localhost:8080"),
+                                auth_var: None,
                             },
                         ),
                     });
@@ -67,7 +91,7 @@ impl super::AppState {
     }
 
     fn tool_tree(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             let names_with_status = self.settings.view(|settings|
                 settings.tools.provider.iter()
                     .map(|(a,b)| (a.clone(), b.enabled()))
@@ -126,20 +150,20 @@ impl super::AppState {
                 unreachable!()
             };
 
-            // TODO: MCP SSE
-            match &mut modified.1 {
-                ToolSpec::MCP {
-                    enabled,
-                    preface,
-                    dir,
-                    command,
-                    args,
-                } => {
-                    ui.heading(&modified.0);
-                    egui::Grid::new("ToolProvider Editor")
-                        .num_columns(2)
-                        .striped(true)
-                        .show(ui, |ui| {
+            ui.heading(&modified.0);
+            egui::Grid::new("ToolProvider Editor")
+                .num_columns(2)
+                .striped(true)
+                .show(ui, |ui| {
+                    match &mut modified.1 {
+                        ToolSpec::Stdio {
+                            enabled,
+                            preface,
+                            dir,
+                            env,
+                            command,
+                            args,
+                        } => {
                             ui.label("Enabled");
                             ui.checkbox(enabled, "");
                             ui.end_row();
@@ -162,6 +186,12 @@ impl super::AppState {
                             });
                             ui.end_row();
 
+                            ui.label("Environment");
+                            ui.text_edit_multiline(env)
+                                .on_hover_text("Additional environment variables for this command.\n\
+                                    Do not use this to set API keys and auth tokens.");
+                            ui.end_row();
+
                             ui.label("Command");
                             ui.text_edit_singleline(command);
                             ui.end_row();
@@ -173,9 +203,46 @@ impl super::AppState {
                                 .on_hover_text("Arguments to the command separated by new lines.");
                             *args = lines.lines().map(|s| s.to_string()).collect_vec();
                             ui.end_row();
-                        });
-                }
-            }
+                        }
+                        ToolSpec::HTTP {
+                            enabled,
+                            preface,
+                            uri,
+                            auth_var,
+                        } => {
+                            ui.label("Enabled");
+                            ui.checkbox(enabled, "");
+                            ui.end_row();
+
+                            ui.label("Name");
+                            ui.text_edit_singleline(&mut modified.0);
+                            ui.end_row();
+
+                            ui.label("Preface");
+                            toggled_field(ui, "p", None::<String>, preface, |ui, value| {
+                                ui.text_edit_singleline(value);
+                            });
+                            ui.end_row();
+
+                            ui.label("URI");
+                            ui.text_edit_singleline(uri);
+                            ui.end_row();
+
+                            ui.label("Auth Var");
+                            toggled_field(
+                                ui,
+                                "a",
+                                "Environment variable containing your bearer token (NOT the token itself)".into(),
+                                auth_var,
+                                |ui, value| {
+                                    ui.text_edit_singleline(value);
+                                },
+                            );
+
+                            ui.end_row();
+                        }
+                    }
+                });
         }
     }
 
