@@ -4,34 +4,50 @@ use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
 use tokio::process::Command;
 
 use rmcp::{
-    RoleClient, ServiceExt as _,
-    model::Tool,
+    Peer, RoleClient, ServiceExt as _,
+    model::{ClientCapabilities, ClientInfo, Implementation, Tool},
     service::RunningService,
-    transport::{ConfigureCommandExt, TokioChildProcess},
+    transport::{
+        ConfigureCommandExt, StreamableHttpClientTransport, TokioChildProcess,
+        streamable_http_client::StreamableHttpClientTransportConfig,
+    },
 };
 
 use super::config::{ToolSelector, ToolSpec};
 
 #[derive(Clone)]
 pub enum ToolProvider {
-    MCP {
-        client: Arc<RunningService<RoleClient, ()>>,
-        tools: Vec<Tool>,
-    },
+    MCP { client: McpClient, tools: Vec<Tool> },
+}
+
+#[derive(Clone)]
+pub enum McpClient {
+    Stdio(Arc<RunningService<RoleClient, ()>>),
+    HTTP(Arc<RunningService<RoleClient, rmcp::model::InitializeRequestParam>>),
+}
+
+impl McpClient {
+    pub fn peer(&self) -> &Peer<RoleClient> {
+        match self {
+            McpClient::Stdio(client) => client.peer(),
+            McpClient::HTTP(client) => client.peer(),
+        }
+    }
 }
 
 impl ToolProvider {
-    pub fn get_tools(&self, selector: impl Fn(&Tool) -> bool) -> RigToolSet {
+    pub fn get_tools(&self, _provider: &str, selector: impl Fn(&Tool) -> bool) -> RigToolSet {
         let mut result = RigToolSet::default();
         match self {
             ToolProvider::MCP { client, tools } => {
                 for tool in tools {
                     if selector(tool) {
-                        // TODO: namespace tools with provider name
-                        // let mut tool = tool.clone();
-                        // tool.name = Cow::Owned("Foobar".into());
+                        // namespace tools with provider name
+                        let tool = tool.clone();
+                        // tool.name = Cow::Owned(format!("{provider}::{}", tool.name.as_ref()));
+
                         result.add_tool(rig::tool::rmcp::McpTool::from_mcp_server(
-                            tool.clone(),
+                            tool,
                             client.peer().clone(),
                         ));
                     }
@@ -45,6 +61,7 @@ impl ToolProvider {
     pub fn select_tools<M: CompletionModel>(
         &self,
         agent: AgentBuilderSimple<M>,
+        _provider: &str,
         selector: impl Fn(&Tool) -> bool,
     ) -> AgentBuilderSimple<M> {
         match self {
@@ -53,6 +70,10 @@ impl ToolProvider {
                     .iter()
                     .filter(|it| selector(it))
                     .cloned()
+                    // .map(|mut tool| {
+                    //     tool.name = Cow::Owned(format!("{provider}::{}", tool.name.as_ref()));
+                    //     tool
+                    // })
                     .collect_vec();
                 agent.rmcp_tools(selection, client.peer().clone())
             }
@@ -60,20 +81,25 @@ impl ToolProvider {
     }
 
     pub async fn from_spec(spec: &ToolSpec) -> anyhow::Result<Self> {
-        match spec {
-            ToolSpec::MCP {
-                enabled: _,
-                preface,
+        let client = match spec {
+            ToolSpec::Stdio {
                 dir,
                 command,
                 args,
+                env,
+                ..
             } => {
                 let client = ()
                     .serve(TokioChildProcess::new(Command::new(command).configure(
                         |cmd| {
                             let cmd = args.iter().fold(cmd, |cmd, arg| cmd.arg(arg));
+                            // cmd.stderr(Stdio::null());
                             if let Some(cwd) = dir {
                                 cmd.current_dir(cwd);
+                            }
+
+                            for (k, v) in env.split("\n").filter_map(|s| s.split_once('=')) {
+                                cmd.env(k, v);
                             }
                         },
                     ))?)
@@ -82,26 +108,68 @@ impl ToolProvider {
                         tracing::error!("client error: {:?}", e);
                     })?;
 
-                let client = Arc::new(client);
-
-                let tools: Vec<Tool> = client.list_tools(Default::default()).await?.tools;
-
-                // prepend preface into each description
-                let tools = tools
-                    .into_iter()
-                    .map(|mut tool| {
-                        if let Some(preface) = preface
-                            && let Some(desc) = tool.description.clone()
-                        {
-                            tool.description = Some(Cow::Owned(format!("{preface} {desc}")));
-                        }
-                        tool
-                    })
-                    .collect_vec();
-
-                Ok(ToolProvider::MCP { client, tools })
+                McpClient::Stdio(Arc::new(client))
             }
-        }
+            ToolSpec::HTTP { uri, auth_var, .. } => {
+                const API_KEY: &str = "{{api_key}}";
+                let auth_var = auth_var.as_ref().filter(|s| !s.is_empty());
+                let config = if uri.contains(API_KEY) {
+                    let Some(var_name) = auth_var else {
+                        anyhow::bail!("No enviroment for API KEY deifned")
+                    };
+
+                    let token = std::env::var(var_name)?;
+                    let uri = uri.replace(API_KEY, &token);
+
+                    StreamableHttpClientTransportConfig::with_uri(uri.as_str())
+                } else {
+                    let mut config = StreamableHttpClientTransportConfig::with_uri(uri.as_str());
+
+                    // optional auth
+                    if let Some(var_name) = auth_var {
+                        let token = std::env::var(var_name)?;
+                        config = config.auth_header(token);
+                    }
+
+                    config
+                };
+
+                let transport = StreamableHttpClientTransport::from_config(config);
+
+                let client_info = ClientInfo {
+                    protocol_version: Default::default(),
+                    capabilities: ClientCapabilities::default(),
+                    client_info: Implementation {
+                        name: "aerie".to_string(),
+                        version: "0.1.0".to_string(),
+                        ..Default::default()
+                    },
+                };
+
+                let client = client_info.serve(transport).await.inspect_err(|e| {
+                    tracing::error!("client error: {:?}", e);
+                })?;
+
+                McpClient::HTTP(Arc::new(client))
+            }
+        };
+
+        let tools: Vec<Tool> = client.peer().list_tools(Default::default()).await?.tools;
+
+        // prepend preface into each description
+        let tools = tools
+            .into_iter()
+            .map(|mut tool| {
+                if let Some(preface) = spec.preface()
+                    && let Some(desc) = tool.description.clone()
+                {
+                    tool.description = Some(Cow::Owned(format!("{preface} {desc}")));
+                }
+                tool
+            })
+            .collect_vec();
+
+        Ok(ToolProvider::MCP { client, tools })
     }
 }
 
@@ -117,29 +185,10 @@ impl Toolbox {
         self
     }
 
-    pub fn all_tools<M: CompletionModel>(
-        &self,
-        agent: AgentBuilderSimple<M>,
-    ) -> AgentBuilderSimple<M> {
-        self.select_tools(agent, |_, _| true)
-    }
-
-    pub fn select_chains<M: CompletionModel>(
-        &self,
-        agent: AgentBuilderSimple<M>,
-        selection: &[&str],
-    ) -> AgentBuilderSimple<M> {
-        self.providers
-            .iter()
-            .filter(|(k, _)| selection.contains(&k.as_str()))
-            .map(|(_, v)| v)
-            .fold(agent, |agent, chain| chain.select_tools(agent, |_| true))
-    }
-
     pub fn get_tools(&self, toolset: &ToolSelector) -> RigToolSet {
         let mut result = RigToolSet::default();
         for (name, provider) in &self.providers {
-            result.add_tools(provider.get_tools(|tool| toolset.apply(name, tool)))
+            result.add_tools(provider.get_tools(name, |tool| toolset.apply(name, tool)))
         }
 
         result
@@ -151,7 +200,7 @@ impl Toolbox {
         pred: impl Fn(&str, &Tool) -> bool + Copy,
     ) -> AgentBuilderSimple<M> {
         self.providers.iter().fold(agent, |agent, (name, chain)| {
-            chain.select_tools(agent, |tool| pred(name, tool))
+            chain.select_tools(agent, name, |tool| pred(name, tool))
         })
     }
 

@@ -42,8 +42,11 @@ rig-core = { version = "0.24.0", features = ["derive", "rmcp"] }
 rmcp = { version = "0.8.5", features = [
   "client",
   "server",
+  "reqwest",                                  # required for some strange reason
   "transport-child-process",
   "transport-io",
+  "transport-streamable-http-client",
+  "transport-streamable-http-client-reqwest",
 ] }
 rpds = { version = "1.2.0", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }

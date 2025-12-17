@@ -173,7 +173,7 @@ impl AgentFactory {
                 .tools
                 .provider
                 .iter()
-                .filter(|(_, spec)| matches!(spec, ToolSpec::MCP { enabled, .. } if *enabled))
+                .filter(|(_, spec)| spec.enabled())
                 .map(|(name, spec)| (name.clone(), spec.clone()))
                 .collect_vec()
         });
