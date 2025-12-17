@@ -17,7 +17,7 @@ impl super::AppState {
         if self.tool_editor.is_some() {
             egui::TopBottomPanel::bottom("editor")
                 .resizable(true)
-                .default_height(ui.available_height() / 3.0)
+                .default_height(ui.available_height() / 2.0)
                 .height_range((ui.available_height() / 4.0)..=(3.0 * ui.available_height() / 4.0))
                 .show_inside(ui, |ui| {
                     egui::ScrollArea::vertical()
