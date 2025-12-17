@@ -41,6 +41,7 @@ impl<T> NoopExt for T {
 pub enum WorkNode {
     Comment(CommentNode),
     Preview(Preview),
+    Output(OutputNode),
     Text(Text),
     Tools(Tools),
     Start(Start),
@@ -70,6 +71,7 @@ impl WorkNode {
         to match self {
             WorkNode::Comment(node) => node,
             WorkNode::Preview(node) => node,
+            WorkNode::Output(node) => node,
             WorkNode::Text(node) => node,
             WorkNode::Tools(node) => node,
             WorkNode::Start(node) => node,
@@ -116,6 +118,7 @@ impl WorkNode {
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
         match self {
+            WorkNode::Output(node) => node.call(ctx, inputs).await,
             WorkNode::Fallback(node) => node.call(ctx, inputs).await,
             WorkNode::Select(node) => node.call(ctx, inputs).await,
             WorkNode::Demote(node) => node.call(ctx, inputs).await,

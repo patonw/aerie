@@ -1,3 +1,5 @@
+use std::convert::identity;
+
 use egui::RichText;
 use egui_commonmark::CommonMarkCache;
 use serde::{Deserialize, Serialize};
@@ -185,6 +187,79 @@ impl Preview {
             self.value = value.to_owned();
         }
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputNode {
+    label: String,
+}
+
+impl DynNode for OutputNode {
+    fn priority(&self) -> usize {
+        9999
+    }
+
+    fn outputs(&self) -> usize {
+        0
+    }
+}
+
+impl UiNode for OutputNode {
+    fn title(&self) -> &str {
+        "Output"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Emits an output.\n\
+            It is up to the workflow runner to determine what to do with it."
+    }
+
+    fn has_body(&self) -> bool {
+        true
+    }
+
+    fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
+        ui.vertical(|ui| {
+            ui.label("label:");
+            ui.text_edit_singleline(&mut self.label);
+        });
+    }
+}
+
+impl OutputNode {
+    pub async fn call(
+        &mut self,
+        ctx: &RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        if self.label.is_empty() {
+            Err(WorkflowError::Required(vec!["Label is required".into()]))?;
+        }
+        let output = inputs
+            .into_iter()
+            .find_map(identity)
+            .ok_or(WorkflowError::Required(vec![
+                "Output called with empty inputs".into(),
+            ]))?;
+
+        ctx.outputs
+            .sender()
+            .send_async((self.label.clone(), output))
+            .await
+            .map_err(|err| WorkflowError::Unknown(format!("Couldn't send output: {err:?}")))?;
+
+        Ok(vec![])
+    }
+
+    pub async fn forward(
+        &mut self,
+        _: &RunContext,
+        _: Vec<Option<Value>>,
+    ) -> Result<(), WorkflowError> {
+        unreachable!()
     }
 }
 

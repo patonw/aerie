@@ -2,6 +2,7 @@
 name = "aerie"
 version = "0.1.0"
 edition = "2024"
+default-run = "aerie"
 
 [patch.crates-io]
 # rig-core = { path = "../../../upstream/rust/rig/rig-core" }
