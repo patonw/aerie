@@ -826,6 +826,10 @@ impl super::AppState {
         let running = self.workflows.running.clone();
         let errors = self.errors.clone();
         let interrupt = self.workflows.interrupt.clone();
+        let outputs: Arc<ArcSwap<im::OrdMap<String, crate::workflow::Value>>> = Default::default();
+        let started = chrono::offset::Local::now();
+
+        self.workflows.outputs.push_back((started, outputs.clone()));
 
         self.rt.spawn(async move {
             task_count_.fetch_add(1, Ordering::Relaxed);
@@ -854,6 +858,8 @@ impl super::AppState {
                         break;
                     };
                     tracing::info!("Received output {label}: {value:?}");
+
+                    outputs.rcu(|it| it.update(label.clone(), value.clone()));
                 }
             }
 

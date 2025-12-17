@@ -130,21 +130,29 @@ fn main() -> anyhow::Result<()> {
         tiles.insert_pane(Pane::Chat),
         tiles.insert_pane(Pane::Logs),
         tiles.insert_pane(Pane::Messages),
-        tiles.insert_pane(Pane::Tools),
         tiles.insert_pane(Pane::Workflow),
     ];
     let content_tabs: TileId = tiles.insert_tab_tile(tabs);
 
     let tabs = vec![
-        tiles.insert_pane(Pane::Settings),
         tiles.insert_pane(Pane::Navigator),
+        tiles.insert_pane(Pane::Tools),
+        tiles.insert_pane(Pane::Settings),
     ];
+    let setter_tabs = tiles.insert_tab_tile(tabs);
+
+    let tabs = vec![tiles.insert_pane(Pane::Outputs)];
     let inspector_tabs = tiles.insert_tab_tile(tabs);
 
-    let split =
-        egui_tiles::Linear::new_binary(LinearDir::Horizontal, [content_tabs, inspector_tabs], 0.75);
+    let vsplit =
+        egui_tiles::Linear::new_binary(LinearDir::Vertical, [setter_tabs, inspector_tabs], 0.5);
 
-    let root = tiles.insert_container(split);
+    let sidebar = tiles.insert_container(vsplit);
+
+    let hsplit =
+        egui_tiles::Linear::new_binary(LinearDir::Horizontal, [content_tabs, sidebar], 0.75);
+
+    let root = tiles.insert_container(hsplit);
 
     let mut tree = egui_tiles::Tree::new("my_tree", root, tiles);
 

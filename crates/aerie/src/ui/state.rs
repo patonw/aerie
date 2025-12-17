@@ -1,8 +1,10 @@
 use arc_swap::ArcSwap;
+use chrono::{DateTime, Local};
 use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
 use egui_snarl::{NodeId, Snarl, ui::SnarlStyle};
+use egui_tiles::SimplificationOptions;
 use itertools::Itertools;
 use rmcp::model::Tool;
 use std::{
@@ -72,6 +74,7 @@ impl egui_tiles::Behavior<Pane> for AppState {
             Pane::Tools => "Tools".into(),
             Pane::Workflow => "Workflow".into(),
             Pane::Messages => "Lineage".into(),
+            Pane::Outputs => "Outputs".into(),
         }
     }
 
@@ -103,11 +106,23 @@ impl egui_tiles::Behavior<Pane> for AppState {
             Pane::Messages => {
                 self.message_graph(ui);
             }
+            Pane::Outputs => {
+                self.outputs_ui(ui);
+            }
         };
 
         Default::default()
     }
+
+    fn simplification_options(&self) -> SimplificationOptions {
+        SimplificationOptions {
+            all_panes_must_have_tabs: true,
+            ..Default::default()
+        }
+    }
 }
+
+type RunOutput = Arc<ArcSwap<im::OrdMap<String, crate::workflow::Value>>>;
 
 pub struct WorkflowState {
     pub frozen: bool,
@@ -137,6 +152,8 @@ pub struct WorkflowState {
     /// Undo/redo support
     pub undo_stack: im::OrdMap<String, VecDeque<(SystemTime, ShadowGraph<WorkNode>)>>,
     pub redo_stack: im::OrdMap<String, VecDeque<(SystemTime, ShadowGraph<WorkNode>)>>,
+
+    pub outputs: im::Vector<(DateTime<Local>, RunOutput)>,
 }
 
 impl WorkflowState {
@@ -182,6 +199,7 @@ impl WorkflowState {
             node_state: Default::default(),
             undo_stack: Default::default(),
             redo_stack: Default::default(),
+            outputs: Default::default(),
         })
     }
 

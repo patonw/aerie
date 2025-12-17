@@ -9,24 +9,6 @@ impl super::AppState {
         let settings = self.settings.clone();
         let workflows = self.workflows.names().cloned().collect_vec();
 
-        egui::TopBottomPanel::bottom("inspector")
-            .default_height(ui.available_height() / 3.0)
-            .resizable(true)
-            .show_inside(ui, |ui| {
-                ui.take_available_space();
-                ui.heading("Workflow info:");
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    if let Some(shadow) = settings.view(|st| {
-                        st.automation
-                            .as_ref()
-                            .and_then(|a| self.workflows.store.get(a))
-                    }) {
-                        ui.label(shadow.description.as_str());
-                    }
-                });
-                ui.take_available_space();
-            });
-
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 settings.update(|settings| {
@@ -104,18 +86,38 @@ impl super::AppState {
                         });
                 });
 
-                settings.update(|settings_rw| {
-                    egui::ComboBox::from_label("Workflow")
-                        .selected_text(settings_rw.automation.as_ref().unwrap_or(&String::new()))
-                        .show_ui(ui, |ui| {
-                            for flow in &workflows {
-                                ui.selectable_value(
-                                    &mut settings_rw.automation,
-                                    Some(flow.clone()),
-                                    flow,
-                                );
-                            }
-                        });
+                egui::collapsing_header::CollapsingState::load_with_default_open(
+                    ui.ctx(),
+                    ui.make_persistent_id("workflow_info"),
+                    true,
+                )
+                .show_header(ui, |ui| {
+                    settings.update(|settings_rw| {
+                        egui::ComboBox::from_label("Workflow")
+                            .selected_text(
+                                settings_rw.automation.as_ref().unwrap_or(&String::new()),
+                            )
+                            .show_ui(ui, |ui| {
+                                for flow in &workflows {
+                                    ui.selectable_value(
+                                        &mut settings_rw.automation,
+                                        Some(flow.clone()),
+                                        flow,
+                                    );
+                                }
+                            });
+                    });
+                })
+                .body(|ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if let Some(shadow) = settings.view(|st| {
+                            st.automation
+                                .as_ref()
+                                .and_then(|a| self.workflows.store.get(a))
+                        }) {
+                            ui.label(shadow.description.as_str());
+                        }
+                    });
                 });
             });
         });
