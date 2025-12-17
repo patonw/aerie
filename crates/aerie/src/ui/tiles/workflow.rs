@@ -390,6 +390,11 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             ui.close();
         }
 
+        if ui.button("Output").clicked() {
+            snarl.insert_node(pos, WorkNode::Output(Default::default()));
+            ui.close();
+        }
+
         if ui.button("Comment").clicked() {
             snarl.insert_node(pos, WorkNode::Comment(Default::default()));
             ui.close();
@@ -841,6 +846,14 @@ impl super::AppState {
                         errors.push(err.into());
                         break;
                     }
+                }
+
+                let rx = exec.run_ctx.outputs.receiver();
+                while !rx.is_empty() {
+                    let Ok((label, value)) = rx.recv_async().await else {
+                        break;
+                    };
+                    tracing::info!("Received output {label}: {value:?}");
                 }
             }
 

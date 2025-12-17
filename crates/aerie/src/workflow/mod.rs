@@ -24,7 +24,7 @@ use crate::{
     AgentFactory, ChatHistory, ToolSelector, Toolbox,
     agent::AgentSpec,
     transmute::Transmuter,
-    utils::{ErrorList, ImmutableMapExt as _, ImmutableSetExt as _},
+    utils::{ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
 };
 
 pub mod nodes;
@@ -38,7 +38,7 @@ pub use nodes::WorkNode;
 
 // type DynFuture<T> = Pin<Box<dyn Future<Output = T>>>;
 
-#[derive(Kinded, Debug, Clone)]
+#[derive(Kinded, Debug, Clone, Serialize)]
 #[kinded(derive(Hash, Serialize, Deserialize))]
 pub enum Value {
     Placeholder(ValueKind),
@@ -124,10 +124,36 @@ impl EditContext {
     }
 }
 
+pub struct OutputChannel(
+    pub flume::Sender<(String, Value)>,
+    pub flume::Receiver<(String, Value)>,
+);
+
+impl Default for OutputChannel {
+    fn default() -> Self {
+        let (sender, receiver) = flume::unbounded();
+        Self(sender, receiver)
+    }
+}
+
+impl OutputChannel {
+    pub fn sender(&self) -> flume::Sender<(String, Value)> {
+        self.0.clone()
+    }
+
+    pub fn receiver(&self) -> flume::Receiver<(String, Value)> {
+        self.1.clone()
+    }
+}
+
 #[derive(TypedBuilder)]
 pub struct RunContext {
     pub agent_factory: AgentFactory,
 
+    #[builder(default)]
+    pub outputs: OutputChannel,
+
+    #[builder(default)]
     pub transmuter: Transmuter,
 
     #[builder(default)]
@@ -553,7 +579,8 @@ pub trait UiNode: DynNode {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Kinded)]
+#[kinded(derive(Hash, Serialize, Deserialize))]
 pub enum WorkflowError {
     #[error("Input required {0:?}")]
     Required(Vec<String>),
@@ -581,6 +608,15 @@ pub enum WorkflowError {
 
     #[error("{0}")]
     Unknown(String),
+}
+
+impl Serialize for WorkflowError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.kind().serialize(serializer)
+    }
 }
 
 impl From<ToolSetError> for WorkflowError {
@@ -618,4 +654,35 @@ pub fn fixup_workflow(mut snarl: Snarl<WorkNode>) -> Snarl<WorkNode> {
     }
 
     snarl
+}
+
+pub fn write_value(mut fh: impl std::io::Write, value: &Value) -> Result<(), anyhow::Error> {
+    match value {
+        Value::Text(value) => {
+            writeln!(fh, "{value}")?;
+        }
+        Value::Number(value) => {
+            writeln!(fh, "{value}")?;
+        }
+        Value::Integer(value) => {
+            writeln!(fh, "{value}")?;
+        }
+        Value::Json(value) => {
+            serde_json::to_writer(fh, value.as_ref())?;
+        }
+        Value::Chat(value) => {
+            let value = value.iter_msgs().map(|it| it.into_owned()).collect_vec();
+            serde_yml::to_writer(fh, &value)?;
+        }
+        Value::Message(value) => {
+            let text = message_text(value);
+
+            writeln!(fh, "{text}")?;
+        }
+        _ => {
+            serde_yml::to_writer(fh, &value)?;
+        }
+    }
+
+    Ok(())
 }
