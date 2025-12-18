@@ -7,7 +7,7 @@ use std::{
 
 use arc_swap::ArcSwap;
 use decorum::E32;
-use itertools::Itertools;
+use itertools::{Itertools, iproduct};
 use rig::message::{AssistantContent, Message, ToolResultContent, UserContent};
 use rpds::{List, ListSync};
 use serde::{Deserialize, Serialize};
@@ -266,4 +266,69 @@ pub fn message_text(message: &Message) -> String {
     };
 
     text
+}
+
+/// Attempts to find a JSON document surrounded by unstructured text.
+/// This can require several passes over the document and should be used
+/// as a last resort.
+pub fn extract_json<'a, T>(input: &'a str, as_array: bool) -> Option<T>
+where
+    T: Deserialize<'a>,
+{
+    let left: Vec<_> = input
+        .match_indices(if as_array { '[' } else { '{' })
+        .map(|(i, _)| i)
+        .collect();
+
+    let right: Vec<_> = input
+        .rmatch_indices(if as_array { ']' } else { '}' })
+        .map(|(i, _)| i)
+        .collect();
+    let pairs = iproduct!(left, right).collect_vec();
+
+    pairs
+        .into_iter()
+        .filter(|(a, b)| a < b)
+        .find_map(|(a, b)| serde_json::from_str(&input[a..=b]).ok())
+}
+pub fn extract_json_obj<'a, T>(input: &'a str) -> Option<T>
+where
+    T: Deserialize<'a>,
+{
+    extract_json(input, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn test_no_json() {
+        let input = "nothing to see here, move along";
+
+        assert_eq!(extract_json_obj::<serde_json::Value>(input), None);
+    }
+
+    #[test]
+    fn test_all_json() {
+        let input = r#"{"hello": "world", "number": 1}"#;
+
+        assert_eq!(
+            extract_json_obj::<serde_json::Value>(input),
+            Some(json!({"hello": "world", "number": 1}))
+        );
+    }
+
+    #[test]
+    fn test_some_json() {
+        let input = r#"Sure. Here's{ your document: {"hello": "world", "number": 1}.\n\
+        {Let me know if there's any}thing else, I can hinder you with.}."#;
+
+        assert_eq!(
+            extract_json_obj::<serde_json::Value>(input),
+            Some(json!({"hello": "world", "number": 1}))
+        );
+    }
 }

@@ -7,13 +7,16 @@ use itertools::Itertools;
 use rig::{
     agent::PromptRequest,
     completion::Completion,
-    message::{AssistantContent, Message, ToolChoice},
+    message::{AssistantContent, Message, ToolChoice, ToolFunction},
 };
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
 use crate::{
-    ChatContent, ChatHistory, ui::resizable_frame, utils::CowExt as _, workflow::WorkflowError,
+    ChatContent, ChatHistory,
+    ui::resizable_frame,
+    utils::{CowExt as _, extract_json, message_text},
+    workflow::WorkflowError,
 };
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
@@ -214,6 +217,9 @@ pub struct StructuredChat {
     /// If response does not conform to schema try again
     pub retries: usize,
 
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub extract: bool,
+
     #[serde(skip)]
     pub history: Arc<ChatHistory>,
 
@@ -363,8 +369,15 @@ impl UiNode for StructuredChat {
     }
 
     fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
-        ui.add(egui::Slider::new(&mut self.retries, 0..=10).text("R"))
-            .on_hover_text("retries");
+        ui.vertical(|ui| {
+            ui.add(egui::Slider::new(&mut self.retries, 0..=10).text("R"))
+                .on_hover_text("retries");
+
+            ui.checkbox(&mut self.extract, "extract").on_hover_text(
+                "If the model fails to submit a proper tool call,\n\
+                    Attempt to find tool arguments inside its text response.",
+            );
+        });
     }
 }
 
@@ -431,6 +444,12 @@ impl StructuredChat {
             attempts += 1;
             match request.await {
                 Ok(resp) => {
+                    let user_msg = prompt.clone();
+                    let agent_msg = Message::Assistant {
+                        id: None,
+                        content: resp.choice.clone(),
+                    };
+
                     let (tool_calls, texts): (Vec<_>, Vec<_>) = resp
                         .choice
                         .iter()
@@ -438,38 +457,42 @@ impl StructuredChat {
 
                     tracing::debug!("Got tool calls {tool_calls:?} and texts {texts:?}");
 
-                    let user_msg = prompt.clone();
-                    let agent_msg = Message::Assistant {
-                        id: None,
-                        content: resp.choice.clone(),
-                    };
+                    let mut tool_func = tool_calls
+                        .iter()
+                        .filter_map(|call| match call {
+                            AssistantContent::ToolCall(tool_call) => {
+                                Some(tool_call.function.clone())
+                            }
+                            _ => None,
+                        })
+                        .next();
+
+                    if self.extract && tool_func.is_none() {
+                        tracing::info!(
+                            "Did not receive a tool call. Attempting to find one in message text."
+                        );
+
+                        let text = message_text(&agent_msg);
+                        tool_func = extract_json(&text, false);
+
+                        // Still failed? If we asked for just an object try to find one to validate
+                        if schema.is_some()
+                            && tool_func.is_none()
+                            && let Some(args) = extract_json::<serde_json::Value>(&text, false)
+                        {
+                            tool_func = Some(ToolFunction {
+                                name: "???".into(),
+                                arguments: args,
+                            })
+                        }
+                    }
 
                     chat = chat
                         .try_moo(|c| c.extend(vec![Ok(user_msg).into(), Ok(agent_msg).into()]))?;
 
-                    if tool_calls.is_empty() {
-                        if attempts > max_attempts {
-                            break Err(WorkflowError::MissingToolCall);
-                        } else {
-                            tracing::warn!("No tool calls from LLM response. Retrying...");
-                            chat =
-                                chat.try_moo(|c| c.push_error(WorkflowError::MissingToolCall))?;
-                            continue;
-                        }
-                    }
-
-                    // // Monkey wrench
-                    // if self.retries > 0 && attempts < 2 {
-                    //     chat = chat.try_moo(|c| {
-                    //         c.push_error(WorkflowError::Unknown("Just do it again".to_string()))
-                    //     })?;
-                    //     continue;
-                    // }
-
-                    if let Some(AssistantContent::ToolCall(tool_call)) = tool_calls.first() {
+                    if let Some(tool_func) = tool_func {
                         if let Some(schema) = schema.as_ref()
-                            && let Err(err) =
-                                jsonschema::validate(schema, &tool_call.function.arguments)
+                            && let Err(err) = jsonschema::validate(schema, &tool_func.arguments)
                         {
                             if attempts > max_attempts {
                                 break Err(WorkflowError::Validation(err.to_owned()));
@@ -482,9 +505,14 @@ impl StructuredChat {
                         }
 
                         // TODO: if a agentic tool call, fetch the schema from the toolbox
-                        self.tool_name = tool_call.function.name.clone();
-                        self.data = Arc::new(tool_call.function.arguments.clone());
+                        self.tool_name = tool_func.name.clone();
+                        self.data = Arc::new(tool_func.arguments.clone());
                         break Ok(());
+                    } else if attempts > max_attempts {
+                        break Err(WorkflowError::MissingToolCall);
+                    } else {
+                        tracing::warn!("No tool calls from LLM response. Retrying...");
+                        chat = chat.try_moo(|c| c.push_error(WorkflowError::MissingToolCall))?;
                     }
                 }
                 Err(err) if attempts > max_attempts => {
