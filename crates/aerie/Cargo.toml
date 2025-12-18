@@ -33,7 +33,7 @@ image = { version = "0.25.8", features = ["png"] }
 itertools = "0.14.0"
 kinded = "0.4.0"
 log = "0.4.28"
-minijinja = { version = "2.11.0", features = ["loader"] }
+minijinja = { version = "2.11.0", features = ["loader", "json"] }
 petgraph = { version = "0.8", default-features = false, features = [
   "stable_graph",
 ] }

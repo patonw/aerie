@@ -6,6 +6,7 @@ use serde_with::skip_serializing_none;
 
 use crate::{
     ui::resizable_frame,
+    utils::extract_json,
     workflow::{DynNode, EditContext, RunContext, UiNode, Value, WorkflowError},
 };
 
@@ -15,6 +16,12 @@ use super::ValueKind;
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParseJson {
     text: String,
+
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    extract: bool,
+
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    as_array: bool,
 
     size: Option<crate::utils::EVec2>,
 
@@ -103,6 +110,27 @@ impl UiNode for ParseJson {
         }
         self.out_kind(pin_id).default_pin()
     }
+
+    fn has_body(&self) -> bool {
+        true
+    }
+
+    fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
+        ui.vertical(|ui| {
+            ui.checkbox(&mut self.extract, "extract").on_hover_text(
+                "Attempt to find a JSON object inside unstructured text.\n\
+                    Use this when you expect that the input is mostly JSON.\n\
+                    It can be slow on large documents with many braces,\n\
+                    such as source code, log files or malformed JSON.\n\
+                    Does not attempt to repair broken JSON documents.",
+            );
+
+            if self.extract {
+                ui.checkbox(&mut self.as_array, "as array")
+                    .on_hover_text("Find an array instead of an object.");
+            }
+        });
+    }
 }
 
 impl ParseJson {
@@ -119,8 +147,19 @@ impl ParseJson {
             _ => unreachable!(),
         };
 
-        let value = serde_json::from_str::<serde_json::Value>(text)
-            .map_err(|e| WorkflowError::Conversion(format!("Invalid JSON: {e:?}")))?;
+        let result = serde_json::from_str::<serde_json::Value>(text);
+        let value = match result {
+            Ok(value) => value,
+            Err(_) if self.extract => {
+                extract_json(text, self.as_array).ok_or(WorkflowError::Conversion(format!(
+                    "Could not find a JSON {} inside text",
+                    if self.as_array { "array" } else { "object" }
+                )))?
+            }
+            Err(_) => {
+                result.map_err(|e| WorkflowError::Conversion(format!("Invalid JSON: {e:?}")))?
+            }
+        };
 
         self.value = Arc::new(value);
 
