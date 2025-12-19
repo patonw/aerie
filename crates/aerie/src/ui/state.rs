@@ -157,13 +157,17 @@ pub struct WorkflowState {
 }
 
 impl WorkflowState {
-    pub fn from_path(path: impl AsRef<Path>, flow_name: Option<String>) -> anyhow::Result<Self> {
+    pub fn from_path(
+        path: impl AsRef<Path>,
+        flow_name: Option<String>,
+        tutorial: bool,
+    ) -> anyhow::Result<Self> {
         use egui_snarl::ui::{BackgroundPattern, Grid, NodeLayout, PinPlacement, SnarlStyle};
-        let store = WorkflowStore::load(path)?;
+        let store = WorkflowStore::load(path, tutorial)?;
 
         let edit_workflow = flow_name
             .filter(|n| store.workflows.contains_key(n))
-            .unwrap_or("default".to_string());
+            .unwrap_or("basic".to_string());
 
         let snarl = store.get_snarl(edit_workflow.as_ref()).unwrap_or_default();
         let snarl = fixup_workflow(snarl);

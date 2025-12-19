@@ -17,13 +17,26 @@ pub struct WorkflowStore {
 }
 
 impl WorkflowStore {
-    pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+    pub fn load(path: impl AsRef<Path>, tutorial: bool) -> anyhow::Result<Self> {
         let path = path.as_ref().to_path_buf();
         let workflows: BTreeMap<String, ShadowGraph<WorkNode>> = if path.is_file() {
             let reader = OpenOptions::new().read(true).open(&path)?;
             serde_yml::from_reader(reader)?
         } else {
-            Default::default()
+            let mut result: BTreeMap<String, ShadowGraph<WorkNode>> = Default::default();
+            if tutorial {
+                let bytes = include_bytes!("../../tutorial/workflows/basic.yml");
+                if let Ok(graph) = serde_yml::from_slice::<ShadowGraph<WorkNode>>(bytes) {
+                    result.insert("basic".into(), graph);
+                }
+
+                let bytes = include_bytes!("../../tutorial/workflows/chatty.yml");
+                if let Ok(graph) = serde_yml::from_slice::<ShadowGraph<WorkNode>>(bytes) {
+                    result.insert("chatty".into(), graph);
+                }
+            }
+
+            result
         };
 
         Ok(Self { path, workflows })
