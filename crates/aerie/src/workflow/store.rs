@@ -24,6 +24,11 @@ impl WorkflowStore {
             serde_yml::from_reader(reader)?
         } else {
             let mut result: BTreeMap<String, ShadowGraph<WorkNode>> = Default::default();
+            let bytes = include_bytes!("../../tutorial/workflows/__default__.yml");
+            if let Ok(graph) = serde_yml::from_slice::<ShadowGraph<WorkNode>>(bytes) {
+                result.insert("basic".into(), graph);
+            }
+
             if tutorial {
                 let bytes = include_bytes!("../../tutorial/workflows/basic.yml");
                 if let Ok(graph) = serde_yml::from_slice::<ShadowGraph<WorkNode>>(bytes) {

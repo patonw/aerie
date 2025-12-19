@@ -58,9 +58,12 @@ impl super::AppState {
                 if submitted {
                     let prompt_ = self.prompt.clone();
 
-                    if let Some(automation) = self.settings.view(|s| s.automation.clone())
-                        && self.workflows.names().contains(&automation)
-                    {
+                    let automation = self
+                        .settings
+                        .view(|s| s.automation.clone())
+                        .unwrap_or("__default__".into());
+
+                    if self.workflows.names().contains(&automation) {
                         // TODO: deal with this nuking any edits in progress
                         self.workflows.switch(&automation);
                         self.exec_workflow();

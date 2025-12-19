@@ -603,11 +603,13 @@ impl super::AppState {
                 .show_ui(ui, |ui| {
                     let names = self.workflows.store.workflows.keys().cloned().collect_vec();
                     for name in &names {
-                        let original = self.workflows.editing.clone();
-                        let mut current = &original;
-                        ui.selectable_value(&mut current, name, name);
-                        if current != &original {
-                            self.workflows.switch(current);
+                        if !name.starts_with("__") {
+                            let original = self.workflows.editing.clone();
+                            let mut current = &original;
+                            ui.selectable_value(&mut current, name, name);
+                            if current != &original {
+                                self.workflows.switch(current);
+                            }
                         }
                     }
                 });

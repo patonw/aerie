@@ -98,6 +98,8 @@ impl super::AppState {
                                 settings_rw.automation.as_ref().unwrap_or(&String::new()),
                             )
                             .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut settings_rw.automation, None, "");
+
                                 for flow in &workflows {
                                     ui.selectable_value(
                                         &mut settings_rw.automation,
