@@ -23,8 +23,9 @@ use typed_builder::TypedBuilder;
 use crate::{
     AgentFactory, ChatHistory, ToolSelector, Toolbox,
     agent::AgentSpec,
+    config::SeedConfig,
     transmute::Transmuter,
-    utils::{ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
+    utils::{AtomicBuffer, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
 };
 
 pub mod nodes;
@@ -151,6 +152,9 @@ pub struct RunContext {
     pub agent_factory: AgentFactory,
 
     #[builder(default)]
+    pub streaming: bool,
+
+    #[builder(default)]
     pub outputs: OutputChannel,
 
     #[builder(default)]
@@ -172,6 +176,12 @@ pub struct RunContext {
 
     #[builder(default)]
     pub temperature: f64,
+
+    #[builder(default)]
+    pub seed: Option<SeedConfig>,
+
+    #[builder(default)]
+    pub scratch: Option<AtomicBuffer<Result<Message, String>>>,
 
     /// Final chat snapshot at the end of the workflow run that we want to keep
     #[builder(default)]
@@ -591,7 +601,9 @@ pub enum WorkflowError {
     #[error("Error while invoking provider")]
     Provider(#[source] anyhow::Error),
 
-    #[error("Expected a tool call, but received none")]
+    #[error(
+        "Expected a function call, but received none.\nPlease use one of the provided tools to submit your response."
+    )]
     MissingToolCall,
 
     #[error("Error while invoking tool")]
@@ -600,7 +612,9 @@ pub enum WorkflowError {
     #[error("Error while invoking tool")]
     ToolServerCall(#[source] ToolServerError),
 
-    #[error("Value does not conform to schema")]
+    #[error(
+        "Value does not conform to schema.\nPlease double check that your response has the correct structure and contains the required fields."
+    )]
     Validation(#[source] ValidationError<'static>),
 
     #[error("Interrupted")]

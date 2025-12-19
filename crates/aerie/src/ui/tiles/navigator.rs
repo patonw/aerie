@@ -85,6 +85,8 @@ impl super::AppState {
                                 self.session
                                     .transform(|history| history.prune_branch(cursor)),
                             );
+
+                            self.session.scratch.clear();
                         }
                     });
                 },

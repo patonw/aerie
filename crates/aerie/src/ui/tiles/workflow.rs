@@ -803,6 +803,7 @@ impl super::AppState {
         let mut target = { self.workflows.snarl.blocking_read().clone() };
         let task_count_ = self.task_count.clone();
 
+        self.session.scratch.clear();
         let mut exec = {
             let run_ctx = RunContext::builder()
                 .agent_factory(self.agent_factory.clone())
@@ -812,7 +813,10 @@ impl super::AppState {
                 .user_prompt(self.prompt.read().unwrap().clone())
                 .model(self.settings.view(|s| s.llm_model.clone()))
                 .temperature(self.settings.view(|s| s.temperature))
+                .seed(self.settings.view(|s| s.seed.clone()))
                 .errors(self.errors.clone())
+                .scratch(Some(self.session.scratch.clone()))
+                .streaming(self.settings.view(|s| s.streaming))
                 .build();
 
             self.workflows.interrupt.store(false, Ordering::Relaxed);
@@ -868,6 +872,12 @@ impl super::AppState {
             errors.distil(session.save());
             running.store(false, std::sync::atomic::Ordering::Relaxed);
             task_count_.fetch_sub(1, Ordering::Relaxed);
+
+            if errors.load().is_empty()
+                && let Some(scratch) = exec.run_ctx.scratch
+            {
+                scratch.clear();
+            }
         });
     }
 }

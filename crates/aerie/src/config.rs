@@ -4,7 +4,10 @@ use itertools::Itertools as _;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use rmcp::model::Tool;
@@ -38,6 +41,29 @@ pub enum SessionCommand {
     List,
 }
 
+#[inline]
+fn is_zero(x: &u64) -> bool {
+    *x == 0
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+pub struct SeedConfig {
+    pub value: Arc<AtomicU64>,
+
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub increment: u64,
+}
+
+impl PartialEq for SeedConfig {
+    fn eq(&self, other: &Self) -> bool {
+        let a = self.value.load(Ordering::Relaxed);
+        let b = other.value.load(Ordering::Relaxed);
+        a == b && self.increment == other.increment
+    }
+}
+
+impl Eq for SeedConfig {}
+
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
 pub struct Settings {
@@ -52,6 +78,8 @@ pub struct Settings {
 
     #[serde(default)]
     pub temperature: f64,
+
+    pub seed: Option<SeedConfig>,
 
     #[serde(default)]
     pub show_logs: bool,
@@ -70,6 +98,11 @@ pub struct Settings {
 
     #[serde(default)]
     pub last_output_dir: PathBuf,
+
+    // Making this configurable since not 100% confident in the streaming implementation
+    // The runner will fall back to non-streaming.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub streaming: bool,
 }
 
 pub trait ConfigExt {

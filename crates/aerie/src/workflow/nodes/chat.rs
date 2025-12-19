@@ -5,11 +5,13 @@ use std::{
 
 use itertools::Itertools;
 use rig::{
+    OneOrMany,
     agent::PromptRequest,
-    completion::Completion,
-    message::{AssistantContent, Message, ToolChoice, ToolFunction},
+    completion::{Completion, CompletionError, CompletionResponse},
+    message::{AssistantContent, Message, Reasoning, ToolCall, ToolFunction, UserContent},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
@@ -183,18 +185,25 @@ impl ChatNode {
             _ => Err(WorkflowError::Required(vec!["A prompt is required".into()]))?,
         };
 
-        let agent = agent_spec.agent(&run_ctx.agent_factory)?;
-
         let mut history = chat.iter_msgs().map(|it| it.into_owned()).collect_vec();
         let last_idx = history.len();
-        let request = PromptRequest::new(&agent, prompt)
-            .multi_turn(5)
-            .with_history(&mut history);
 
-        match request.await {
+        let agent = agent_spec.agent(&run_ctx.agent_factory)?;
+
+        let request = multi_turn_completion(run_ctx, &agent, prompt, &mut history);
+        let prompt_request = request.await;
+        match prompt_request {
             Ok(_) => {
                 let mut chat = Cow::Borrowed(chat.as_ref());
                 for msg in history.into_iter().skip(last_idx) {
+                    // When we implement streaming, we can hold onto the pointer
+                    // and update it incrementally.
+                    if !run_ctx.streaming
+                        && let Some(scratch) = &run_ctx.scratch
+                    {
+                        scratch.push_back(Ok(msg.clone()));
+                    }
+
                     chat = chat.try_moo(|c| c.push(Ok(msg).into()))?;
                 }
 
@@ -428,27 +437,40 @@ impl StructuredChat {
         let max_attempts = self.retries + 1;
         let mut attempts = 0;
 
-        let result: Result<_, WorkflowError> = loop {
-            let history = chat.iter_msgs().map(|it| it.into_owned()).collect_vec();
-            let request = agent
-                .completion(prompt.clone(), history)
-                .await
-                .unwrap()
-                .tool_choice(ToolChoice::Required)
-                .send();
+        if !run_ctx.streaming
+            && let Some(scratch) = &run_ctx.scratch
+        {
+            scratch.push_back(Ok(prompt.clone()));
+        }
 
+        chat = chat.try_moo(|c| c.push(Ok(prompt).into()))?;
+
+        let result: Result<_, WorkflowError> = loop {
             if run_ctx.interrupt.load(Ordering::Relaxed) {
                 Err(WorkflowError::Interrupted)?;
             }
 
+            // chat is the source of truth. history is just its shadow.
+            let mut history = chat.iter_msgs().map(|it| it.into_owned()).collect_vec();
+            // Use the last message as the prompt
+            let current_prompt = history.pop().unwrap();
+
+            let response =
+                one_shot_completion(run_ctx, &agent, current_prompt, history.clone()).await;
+
             attempts += 1;
-            match request.await {
+            match response {
                 Ok(resp) => {
-                    let user_msg = prompt.clone();
                     let agent_msg = Message::Assistant {
                         id: None,
                         content: resp.choice.clone(),
                     };
+
+                    if !run_ctx.streaming
+                        && let Some(scratch) = &run_ctx.scratch
+                    {
+                        scratch.push_back(Ok(agent_msg.clone()));
+                    }
 
                     let (tool_calls, texts): (Vec<_>, Vec<_>) = resp
                         .choice
@@ -475,6 +497,16 @@ impl StructuredChat {
                         let text = message_text(&agent_msg);
                         tool_func = extract_json(&text, false);
 
+                        if tool_func.is_none() {
+                            // common mistakes:
+                            let text = text
+                                .replace("\"tool\"", "\"name\"")
+                                .replace("\"function\"", "\"name\"")
+                                .replace("\"parameters\"", "\"arguments\"");
+
+                            tool_func = extract_json(&text, false);
+                        }
+
                         // Still failed? If we asked for just an object try to find one to validate
                         if schema.is_some()
                             && tool_func.is_none()
@@ -487,8 +519,7 @@ impl StructuredChat {
                         }
                     }
 
-                    chat = chat
-                        .try_moo(|c| c.extend(vec![Ok(user_msg).into(), Ok(agent_msg).into()]))?;
+                    chat = chat.try_moo(|c| c.push(Ok(agent_msg).into()))?;
 
                     if let Some(tool_func) = tool_func {
                         if let Some(schema) = schema.as_ref()
@@ -497,8 +528,12 @@ impl StructuredChat {
                             if attempts > max_attempts {
                                 break Err(WorkflowError::Validation(err.to_owned()));
                             } else {
+                                if let Some(scratch) = &run_ctx.scratch {
+                                    scratch.push_back(Err(format!("{err:?}")));
+                                }
                                 chat = chat.try_moo(|c| {
-                                    c.push_error(WorkflowError::Validation(err.to_owned()))
+                                    let validation = WorkflowError::Validation(err.to_owned());
+                                    c.push_error(validation)
                                 })?;
                                 continue;
                             }
@@ -512,6 +547,10 @@ impl StructuredChat {
                         break Err(WorkflowError::MissingToolCall);
                     } else {
                         tracing::warn!("No tool calls from LLM response. Retrying...");
+                        if let Some(scratch) = &run_ctx.scratch {
+                            scratch.push_back(Err(format!("{:?}", WorkflowError::MissingToolCall)));
+                        }
+
                         chat = chat.try_moo(|c| c.push_error(WorkflowError::MissingToolCall))?;
                     }
                 }
@@ -534,4 +573,305 @@ impl StructuredChat {
         tracing::info!("Final result {result:?} after {attempts} attempts");
         result
     }
+}
+
+async fn one_shot_completion(
+    run_ctx: &RunContext,
+    agent: &rig::agent::Agent<rig::client::completion::CompletionModelHandle<'static>>,
+    prompt: Message,
+    history: Vec<Message>,
+) -> Result<CompletionResponse<()>, WorkflowError> {
+    use futures_util::stream::StreamExt as _;
+    use rig::{
+        agent::Text,
+        streaming::{StreamedAssistantContent, StreamingCompletion},
+    };
+
+    if !run_ctx.streaming {
+        let mut request = agent
+            .completion(prompt.clone(), history)
+            .await
+            .map_err(|e| WorkflowError::Provider(e.into()))?;
+
+        if let Some(seed) = &run_ctx.seed {
+            let value = seed.value.fetch_add(seed.increment, Ordering::Relaxed);
+            request = request.additional_params(json!({"seed": value}));
+        }
+
+        return request
+            .send()
+            .await
+            .map_err(|e| WorkflowError::Provider(e.into()));
+    }
+
+    let mut request = agent
+        .stream_completion(prompt.clone(), history)
+        .await
+        .map_err(|e| WorkflowError::Provider(e.into()))?;
+
+    if let Some(seed) = &run_ctx.seed {
+        let value = seed.value.fetch_add(seed.increment, Ordering::Relaxed);
+        request = request.additional_params(json!({"seed": value}));
+    }
+
+    let mut stream = request
+        .stream()
+        .await
+        .map_err(|e| WorkflowError::Provider(e.into()))?;
+
+    let mut texts = String::new();
+    let mut reasonings = Vec::new();
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
+
+    let agent_msg = if let Some(scratch) = &run_ctx.scratch {
+        scratch.push_back(Ok(prompt.clone()));
+        Some(scratch.push_back(Ok(Message::assistant(""))))
+    } else {
+        None
+    };
+
+    while let Some(content) = stream.next().await {
+        if run_ctx.interrupt.load(Ordering::Relaxed) {
+            Err(WorkflowError::Interrupted)?;
+        }
+
+        match content {
+            Ok(item) => match item {
+                StreamedAssistantContent::Text(text) => {
+                    texts.push_str(&text.text);
+                    let msg = Message::assistant(&texts);
+                    if let Some(a) = &agent_msg {
+                        a.store(Arc::new(Ok(msg)));
+                    }
+                }
+
+                StreamedAssistantContent::ToolCall(tool_call) => {
+                    tool_calls.push(tool_call.clone());
+                }
+                // No idea how to handle this case
+                StreamedAssistantContent::ToolCallDelta { .. } => {
+                    // Maybe we can just ignore. Seems like APIs that use this send
+                    // a complete ToolCall at the end.
+                    //
+                    // Also, deltas seem to omit the actual tool name.
+                    // Only sends back arguments.
+                }
+                StreamedAssistantContent::Reasoning(Reasoning { reasoning, .. }) => {
+                    reasonings.extend(reasoning);
+                }
+                StreamedAssistantContent::Final(_) => {}
+            },
+            Err(_) => todo!(),
+        }
+    }
+
+    // run_ctx.scratch.pop_back();
+
+    let mut contents = vec![];
+    if !reasonings.is_empty() {
+        contents.push(AssistantContent::Reasoning(Reasoning::multi(reasonings)))
+    }
+
+    if !texts.is_empty() {
+        contents.push(AssistantContent::Text(Text::from(&texts)));
+    }
+
+    if !tool_calls.is_empty() {
+        contents.extend(tool_calls.into_iter().map(AssistantContent::ToolCall));
+    }
+
+    Ok(CompletionResponse {
+        choice: OneOrMany::many(contents).unwrap(),
+        usage: Default::default(),
+        raw_response: (),
+    })
+}
+
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+enum StreamingError {
+    #[error("WorkflowError: {0}")]
+    Workflow(#[from] WorkflowError),
+    #[error("CompletionError: {0}")]
+    OneShot(#[from] rig::completion::PromptError),
+    #[error("CompletionError: {0}")]
+    Completion(#[from] CompletionError),
+    #[error("PromptError: {0}")]
+    Prompt(#[from] Box<rig::completion::PromptError>),
+    #[error("ToolSetError: {0}")]
+    Tool(#[from] rig::tool::ToolSetError),
+}
+
+// Following the example multi_turn_streaming_gemini, but I'm pretty lost.
+async fn multi_turn_completion(
+    run_ctx: &RunContext,
+    agent: &rig::agent::Agent<rig::client::completion::CompletionModelHandle<'static>>,
+    prompt: Message,
+    chat_history: &mut Vec<Message>,
+) -> Result<(), StreamingError> {
+    use futures_util::stream::StreamExt as _;
+    use rig::{
+        agent::Text,
+        streaming::{StreamedAssistantContent, StreamingCompletion},
+    };
+
+    if !run_ctx.streaming {
+        PromptRequest::new(agent, prompt)
+            .multi_turn(5)
+            .with_history(chat_history)
+            .await?;
+        return Ok(());
+    }
+
+    // Using two buffers since chat_history is specific to this call, while scratch is
+    // more for monitoring global progress across nodes.
+    chat_history.push(prompt.clone());
+    if let Some(scratch) = &run_ctx.scratch {
+        scratch.push_back(Ok(prompt.clone()));
+    }
+
+    for _ in 0..5 {
+        let current_prompt = match chat_history.pop() {
+            Some(prompt) => prompt,
+            None => unreachable!("Chat history should never be empty at this point"),
+        };
+        if let Some(scratch) = &run_ctx.scratch {
+            scratch.pop_back();
+        }
+
+        let mut request = agent
+            .stream_completion(current_prompt.clone(), chat_history.clone())
+            .await?;
+
+        if let Some(seed) = &run_ctx.seed {
+            let value = seed.value.fetch_add(seed.increment, Ordering::Relaxed);
+            request = request.additional_params(json!({"seed": value}));
+        }
+
+        let mut stream = request.stream().await?;
+
+        chat_history.push(current_prompt.clone());
+        if let Some(scratch) = &run_ctx.scratch {
+            scratch.push_back(Ok(current_prompt.clone()));
+        }
+
+        let agent_msg = run_ctx
+            .scratch
+            .as_ref()
+            .map(|s| s.push_back(Ok(Message::assistant(""))));
+
+        let mut reasonings = Vec::new();
+        let mut texts = String::new();
+        let mut tool_calls = vec![];
+
+        while let Some(content) = stream.next().await {
+            if run_ctx.interrupt.load(Ordering::Relaxed) {
+                Err(WorkflowError::Interrupted)?;
+            }
+            match content {
+                Ok(StreamedAssistantContent::Text(text)) => {
+                    texts.push_str(&text.text);
+                    let msg = Message::assistant(&texts);
+                    if let Some(a) = &agent_msg {
+                        a.store(Arc::new(Ok(msg)));
+                    }
+                }
+                Ok(StreamedAssistantContent::ToolCall(tool_call)) => {
+                    tool_calls.push(tool_call);
+                }
+                Ok(StreamedAssistantContent::Reasoning(rig::message::Reasoning {
+                    reasoning,
+                    ..
+                })) => {
+                    reasonings.extend(reasoning);
+                }
+                Ok(_) => {}
+                err => {
+                    err?;
+                }
+            }
+        }
+
+        let mut contents = Vec::new();
+
+        if !reasonings.is_empty() {
+            contents.push(AssistantContent::Reasoning(Reasoning::multi(reasonings)))
+        }
+
+        if !texts.is_empty() {
+            contents.push(AssistantContent::Text(Text::from(&texts)));
+        }
+
+        let tool_call_contents = tool_calls
+            .iter()
+            .cloned()
+            .map(AssistantContent::ToolCall)
+            .collect_vec();
+
+        let done = tool_call_contents.is_empty();
+        contents.extend(tool_call_contents);
+
+        if !contents.is_empty() {
+            let msg = Message::Assistant {
+                id: None,
+                content: OneOrMany::many(contents).unwrap(),
+            };
+            chat_history.push(msg.clone());
+
+            if let Some(a) = agent_msg {
+                a.store(Arc::new(Ok(msg)));
+            }
+        }
+
+        let mut tool_results = vec![];
+        for tool_call in &tool_calls {
+            // TODO: implement tool namespacing by generating a new toolset
+            let tool_result = agent
+                .tool_server_handle
+                .call_tool(
+                    &tool_call.function.name,
+                    &tool_call.function.arguments.to_string(),
+                )
+                .await
+                .map_err(|x| {
+                    StreamingError::Tool(rig::tool::ToolSetError::ToolCallError(
+                        rig::tool::ToolError::ToolCallError(x.into()),
+                    ))
+                })?;
+            tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), tool_result));
+        }
+
+        // Add tool results to chat history
+        for (id, call_id, tool_result) in tool_results {
+            let msg = if let Some(call_id) = call_id {
+                Message::User {
+                    content: OneOrMany::one(UserContent::tool_result_with_call_id(
+                        id,
+                        call_id,
+                        OneOrMany::one(rig::message::ToolResultContent::text(tool_result)),
+                    )),
+                }
+            } else {
+                Message::User {
+                    content: OneOrMany::one(UserContent::tool_result(
+                        id,
+                        OneOrMany::one(rig::message::ToolResultContent::text(tool_result)),
+                    )),
+                }
+            };
+
+            chat_history.push(msg.clone());
+            if let Some(scratch) = &run_ctx.scratch {
+                scratch.push_back(Ok(msg));
+            }
+        }
+
+        if done {
+            return Ok(());
+        }
+    }
+
+    // TODO: out of turns
+    Ok(())
 }
