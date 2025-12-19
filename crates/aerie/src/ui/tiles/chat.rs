@@ -2,7 +2,7 @@ use eframe::egui;
 use egui_commonmark::*;
 use egui_phosphor::regular::GIT_BRANCH;
 use itertools::Itertools;
-use rig::message::{AssistantContent, Message, UserContent};
+use rig::message::{Message, UserContent};
 use std::{f32, sync::atomic::Ordering};
 
 use crate::{
@@ -15,7 +15,9 @@ use crate::{
 // Too many refs to self for a free function. Need to clean this up
 impl super::AppState {
     pub fn chat_ui(&mut self, ui: &mut egui::Ui) {
+        let settings = self.settings.clone();
         let errors = self.errors.clone();
+        let workflows = self.workflows.names().cloned().collect_vec();
 
         // TODO: top panel with helper actions
         egui::TopBottomPanel::bottom("prompt")
@@ -36,12 +38,25 @@ impl super::AppState {
 
                             ui.add_space(16.0);
 
-                            // Can branch from beginning to have an empty history
-                            // TODO: support branch deletion instead
-                            // if ui.button("Clear").clicked() {
-                            //     let mut chat_rw = self.session.as_ref().write().unwrap();
-                            //     chat_rw.clear();
-                            // }
+                            settings.update(|settings_rw| {
+                                egui::ComboBox::from_label("Workflow")
+                                    .selected_text(
+                                        settings_rw.automation.as_ref().unwrap_or(&String::new()),
+                                    )
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut settings_rw.automation, None, "");
+
+                                        for flow in &workflows {
+                                            if !flow.starts_with("__") {
+                                                ui.selectable_value(
+                                                    &mut settings_rw.automation,
+                                                    Some(flow.clone()),
+                                                    flow,
+                                                );
+                                            }
+                                        }
+                                    });
+                            });
                         });
                     });
 
@@ -77,12 +92,13 @@ impl super::AppState {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.set_width(ui.available_width());
 
-                let scroll_bottom = {
+                let scroll_bottom = self.task_count.load(Ordering::Relaxed) > 0 && {
                     let settings_r = self.settings.read().unwrap();
+                    // TODO: Floating button
                     settings_r.autoscroll || ui.button("Scroll to bottom.").clicked()
                 };
 
-                let cache = &mut self.cache;
+                let md_cache = &mut self.cache;
                 self.session.view(|history| {
                     for msg in history.iter() {
                         ui.push_id(msg.id, |ui| {
@@ -93,7 +109,7 @@ impl super::AppState {
                                     |ui| {
                                         for entry in aside {
                                             if let ChatContent::Message(message) = &entry.content {
-                                                render_message(ui, cache, message);
+                                                render_message(ui, md_cache, message);
                                             }
                                         }
                                     },
@@ -108,7 +124,7 @@ impl super::AppState {
                                     {
                                         self.branch_point = Some(msg.id);
                                     }
-                                    render_message(ui, cache, message);
+                                    render_message(ui, md_cache, message);
                                 }
                                 ChatContent::Aside {
                                     automation: workflow,
@@ -123,13 +139,13 @@ impl super::AppState {
                                     .default_open(!collapsed)
                                     .show(ui, |ui| {
                                         for message in content {
-                                            render_message(ui, cache, message);
+                                            render_message(ui, md_cache, message);
                                         }
                                     });
                                     if resp.fully_closed()
                                         && let Some(message) = content.last()
                                     {
-                                        render_message(ui, cache, message);
+                                        render_message(ui, md_cache, message);
                                     }
                                 }
                                 ChatContent::Error { err } => {
@@ -145,28 +161,15 @@ impl super::AppState {
                     }
                 });
 
-                let chat_r = self.session.scratch.read().unwrap();
-                for msg in chat_r.iter() {
-                    match msg {
-                        Ok(Message::User { content }) => {
-                            let UserContent::Text(text) = content.first() else {
-                                todo!();
-                            };
-                            user_bubble(ui, |ui| {
-                                ui.set_width(ui.available_width() * 0.75);
-                                CommonMarkViewer::new().show(ui, &mut self.cache, text.text());
-                            });
-                        }
-                        Ok(Message::Assistant { content, .. }) => {
-                            let AssistantContent::Text(text) = content.first() else {
-                                todo!();
-                            };
+                let chat_r = self.session.scratch.load();
+                if !chat_r.is_empty() {
+                    ui.separator();
+                }
 
-                            agent_bubble(ui, |ui| {
-                                ui.set_width(ui.available_width() * 0.75);
-                                CommonMarkViewer::new().show(ui, &mut self.cache, text.text());
-                            });
-                        }
+                for entry in chat_r.iter() {
+                    let msg = entry.load();
+                    match msg.as_ref() {
+                        Ok(message) => render_message(ui, md_cache, message),
                         Err(err) => {
                             error_bubble(ui, |ui| {
                                 ui.set_width(ui.available_width());

@@ -10,9 +10,11 @@ use std::{
     error::Error,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 use uuid::Uuid;
+
+use crate::utils::AtomicBuffer;
 
 #[derive(Clone, Builder)]
 pub struct ChatSession {
@@ -20,7 +22,7 @@ pub struct ChatSession {
     pub history: Arc<ArcSwap<ChatHistory>>, // Interior mutability without locking
 
     #[builder(default)]
-    pub scratch: Arc<RwLock<Vec<Result<Message, String>>>>,
+    pub scratch: AtomicBuffer<Result<Message, String>>,
 }
 
 impl ChatSession {

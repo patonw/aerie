@@ -37,6 +37,50 @@ impl From<EVec2> for egui::Vec2 {
     }
 }
 
+#[derive(Clone)]
+pub struct AtomicBuffer<T>(pub Arc<ArcSwap<im::Vector<Arc<ArcSwap<T>>>>>);
+
+impl<T> std::default::Default for AtomicBuffer<T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<T> AtomicBuffer<T> {
+    pub fn push_back(&self, content: T) -> Arc<ArcSwap<T>> {
+        let cell = Arc::new(ArcSwap::from_pointee(content));
+        self.0.rcu(|v| {
+            let mut v = v.clone();
+            Arc::make_mut(&mut v).push_back(cell.clone());
+            v
+        });
+
+        cell
+    }
+
+    pub fn pop_back(&self) -> Option<Arc<T>> {
+        let mut rv = None;
+        self.0.rcu(|v| {
+            let mut v = v.clone();
+            rv = Arc::make_mut(&mut v).pop_back();
+            v
+        });
+
+        rv.map(|v| v.load_full())
+    }
+
+    pub fn clear(&self) {
+        self.0.store(Default::default());
+    }
+
+    delegate::delegate! {
+        to self.0 {
+
+            pub fn load(&self) -> arc_swap::Guard<Arc<im::Vector<Arc<ArcSwap<T>>>>>;
+        }
+    }
+}
+
 pub trait CowExt<'a, T: Clone, E> {
     /// Flat map for cows.
     ///

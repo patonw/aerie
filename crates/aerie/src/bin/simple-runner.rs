@@ -132,6 +132,8 @@ fn main() -> anyhow::Result<()> {
         .history(session.history.clone())
         .user_prompt(args.prompt.as_ref().cloned().unwrap_or_default())
         .model(settings.llm_model.clone())
+        .temperature(settings.temperature)
+        .seed(settings.seed)
         .build();
 
     let saver_task = if let Some(out_dir) = &args.out_dir {

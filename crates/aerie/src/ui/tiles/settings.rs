@@ -62,14 +62,6 @@ impl super::AppState {
                 });
 
                 settings.update(|settings_rw| {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut settings_rw.preamble)
-                            .hint_text("Preamble")
-                            .desired_width(f32::INFINITY),
-                    );
-                });
-
-                settings.update(|settings_rw| {
                     ui.add(egui::Slider::new(&mut settings_rw.temperature, 0.0..=1.0).text("T"))
                         .on_hover_text("temperature");
                 });
@@ -81,7 +73,7 @@ impl super::AppState {
                             ui.horizontal_wrapped(|ui| {
                                 // ui.spacing_mut().item_spacing.x = 0.0;
                                 ui.toggle_value(&mut settings_rw.autoscroll, "autoscroll");
-                                // ui.toggle_value(&mut settings_rw.show_logs, "logs");
+                                ui.toggle_value(&mut settings_rw.streaming, "streaming");
                             });
                         });
                 });
