@@ -11,7 +11,7 @@ use tracing_subscriber::{
 };
 
 use aerie::{
-    AgentFactory, LogChannelLayer, LogEntry, Settings, ToolSelector,
+    AgentFactory, LogChannelLayer, LogEntry, Settings,
     chat::ChatSession,
     config::{Args, Command, ConfigExt, SessionCommand},
     transmute::Transmuter,
@@ -79,7 +79,7 @@ fn main() -> anyhow::Result<()> {
     let _guard = rt.enter();
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
+        // viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
         ..Default::default()
     };
 
@@ -91,19 +91,12 @@ fn main() -> anyhow::Result<()> {
         .join("workbench.yml");
 
     // Runtime settings:
-    let mut settings = if settings_path.is_file() {
+    let settings = if settings_path.is_file() {
         let text = std::fs::read_to_string(&settings_path)?;
         serde_yml::from_str(&text)?
     } else {
         Settings::default()
     };
-
-    if settings.tools.toolset.is_empty() {
-        settings
-            .tools
-            .toolset
-            .insert("all".into(), ToolSelector::default());
-    }
 
     let mut stored_settings = Arc::new(settings.clone());
     let settings = Arc::new(RwLock::new(settings));
@@ -137,7 +130,6 @@ fn main() -> anyhow::Result<()> {
         tiles.insert_pane(Pane::Chat),
         tiles.insert_pane(Pane::Logs),
         tiles.insert_pane(Pane::Messages),
-        tiles.insert_pane(Pane::Pipeline),
         tiles.insert_pane(Pane::Tools),
         tiles.insert_pane(Pane::Workflow),
     ];
@@ -173,8 +165,6 @@ fn main() -> anyhow::Result<()> {
         branch_point: None,
         new_branch: String::new(),
         rename_branch: None,
-        create_toolset: None,
-        edit_toolset: String::new(),
         tool_editor: None,
         workflows: flow_state,
         message_graph: Default::default(),
