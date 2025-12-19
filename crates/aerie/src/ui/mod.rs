@@ -6,6 +6,8 @@ pub mod tiles;
 
 pub use state::AppState;
 
+use crate::workflow::nodes::{MIN_HEIGHT, MIN_WIDTH};
+
 pub enum Pane {
     Settings,
     Navigator,
@@ -77,7 +79,7 @@ pub fn toggled_field<'a, T: Default>(
     label: impl egui::IntoAtoms<'a>,
     tooltip: Option<impl Into<WidgetText>>,
     value: &mut Option<T>,
-    cb: impl Fn(&mut egui::Ui, &mut T),
+    mut cb: impl FnMut(&mut egui::Ui, &mut T),
 ) {
     ui.horizontal_centered(|ui| {
         let widget = ui.selectable_label(value.is_some(), label);
@@ -100,4 +102,23 @@ pub fn toggled_field<'a, T: Default>(
             ui.weak("Toggle label to edit");
         }
     });
+}
+
+pub fn resizable_frame(
+    size: &mut Option<crate::utils::EVec2>,
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    egui::Resize::default()
+        .min_width(MIN_WIDTH)
+        .min_height(MIN_HEIGHT)
+        .default_size(
+            size.map(egui::Vec2::from)
+                .unwrap_or(egui::vec2(300.0, 150.0)),
+        )
+        .with_stroke(false)
+        .show(ui, |ui| {
+            *size = Some(ui.available_size().into());
+            add_contents(ui);
+        });
 }
