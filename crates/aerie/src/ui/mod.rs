@@ -13,7 +13,6 @@ pub enum Pane {
     Navigator,
     Chat,
     Logs,
-    Pipeline,
     Tools,
     Workflow,
     Messages,

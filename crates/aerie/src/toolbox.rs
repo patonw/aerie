@@ -27,6 +27,9 @@ impl ToolProvider {
             ToolProvider::MCP { client, tools } => {
                 for tool in tools {
                     if selector(tool) {
+                        // TODO: namespace tools with provider name
+                        // let mut tool = tool.clone();
+                        // tool.name = Cow::Owned("Foobar".into());
                         result.add_tool(rig::tool::rmcp::McpTool::from_mcp_server(
                             tool.clone(),
                             client.peer().clone(),

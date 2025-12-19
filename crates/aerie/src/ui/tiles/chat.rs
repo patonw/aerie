@@ -66,13 +66,6 @@ impl super::AppState {
                         self.exec_workflow();
 
                         let _user_prompt = std::mem::take(&mut *prompt_.write().unwrap());
-                    } else {
-                        let pipeline = self
-                            .settings
-                            .view(|s| s.get_pipeline().cloned().unwrap_or_default());
-
-                        let user_prompt = std::mem::take(&mut *prompt_.write().unwrap());
-                        self.exec_pipeline(pipeline, user_prompt);
                     }
                 }
             });

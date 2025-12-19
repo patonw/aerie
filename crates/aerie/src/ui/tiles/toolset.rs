@@ -5,7 +5,7 @@ use egui_phosphor::regular::FILE_PLUS;
 use itertools::Itertools;
 
 use crate::{
-    Settings, ToolProvider, ToolSelector, ToolSpec,
+    ToolProvider, ToolSpec,
     config::ConfigExt as _,
     ui::{state::ToolEditorState, toggled_field},
 };
@@ -40,34 +40,6 @@ impl super::AppState {
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            let toolsets = self
-                .settings
-                .view(|settings| settings.tools.toolset.keys().cloned().collect_vec());
-
-            ui.horizontal(|ui| {
-                ui.heading("Toolsets");
-
-                if ui
-                    .button(FILE_PLUS)
-                    .on_hover_text("Create toolset")
-                    .clicked()
-                {
-                    self.create_toolset = Some(String::new());
-                }
-            });
-
-            ui.horizontal_wrapped(|ui| {
-                for name in &toolsets {
-                    ui.selectable_value(&mut self.edit_toolset, name.clone(), name);
-                }
-            });
-            // egui::ComboBox::from_label("Toolset")
-            //     .selected_text(&self.edit_toolset)
-            //     .show_ui(ui, |ui| {
-            //     });
-
-            ui.separator();
-
             ui.horizontal(|ui| {
                 ui.heading("Providers");
                 if ui
@@ -92,9 +64,6 @@ impl super::AppState {
             });
             self.tool_tree(ui);
         });
-
-        let settings = self.settings.clone();
-        settings.update(|settings| self.toolset_modal(settings, ui));
     }
 
     fn tool_tree(&mut self, ui: &mut egui::Ui) {
@@ -133,24 +102,6 @@ impl super::AppState {
                             let ToolProvider::MCP { tools, .. } = provider;
                             for item in tools {
                                 ui.horizontal(|ui| {
-                                    self.settings.update(|settings_rw| {
-                                        let mut editee = if self.edit_toolset == "all" {
-                                            None
-                                        } else {
-                                            settings_rw.tools.toolset.get_mut(&self.edit_toolset)
-                                        };
-                                        let mut active = editee
-                                            .as_ref()
-                                            .map(|it| it.apply(name, item))
-                                            .unwrap_or_else(|| self.edit_toolset == "all");
-
-                                        if ui.checkbox(&mut active, "").clicked()
-                                        && let Some(toolset) = editee.as_mut()
-                                        {
-                                            toolset.toggle(name, item);
-                                        }
-                                    });
-
                                     let selected = matches!(
                                         &self.tool_editor,
                                         Some(ToolEditorState::ViewTool { tool }) if tool == item
@@ -169,68 +120,13 @@ impl super::AppState {
         });
     }
 
-    fn toolset_modal(&mut self, settings_rw: &mut Settings, ui: &mut egui::Ui) {
-        if let Some(new_name) = self.create_toolset.as_mut() {
-            let mut submit = false;
-            let unique_name =
-                !new_name.is_empty() && { !settings_rw.tools.toolset.contains_key(new_name) };
-
-            // TODO: refactor to dedup branch dialog
-            let modal =
-                egui::Modal::new(egui::Id::new("New toolset dialog")).show(ui.ctx(), |ui| {
-                    ui.set_width(250.0);
-
-                    ui.heading("Create Toolset");
-
-                    ui.label("Name:");
-                    ui.text_edit_singleline(new_name).request_focus();
-
-                    ui.separator();
-
-                    egui::Sides::new().show(
-                        ui,
-                        |_ui| {},
-                        |ui| {
-                            ui.add_enabled_ui(unique_name, |ui| {
-                                if ui.button("Ok").clicked() {
-                                    submit = true;
-                                }
-                            });
-                            if ui.button("Cancel").clicked() {
-                                // You can call `ui.close()` to close the modal.
-                                // (This causes the current modals `should_close` to return true)
-                                ui.close();
-                            }
-                        },
-                    );
-
-                    submit |= unique_name && ui.input(|i| i.key_pressed(egui::Key::Enter));
-
-                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                        ui.close();
-                    }
-
-                    if submit {
-                        self.edit_toolset = new_name.clone();
-                        settings_rw
-                            .tools
-                            .toolset
-                            .insert(new_name.to_owned(), ToolSelector::empty());
-                        ui.close();
-                    }
-                });
-            if modal.should_close() {
-                self.create_toolset = None;
-            }
-        }
-    }
-
     fn tool_provider_form(&mut self, ui: &mut egui::Ui) {
         {
             let Some(ToolEditorState::EditProvider { modified, .. }) = &mut self.tool_editor else {
                 unreachable!()
             };
 
+            // TODO: MCP SSE
             match &mut modified.1 {
                 ToolSpec::MCP {
                     enabled,
@@ -249,15 +145,17 @@ impl super::AppState {
                             ui.end_row();
 
                             ui.label("Name");
-                            ui.label(&modified.0);
+                            ui.text_edit_singleline(&mut modified.0);
                             ui.end_row();
 
-                            toggled_field(ui, "Preface", None::<String>, preface, |ui, value| {
+                            ui.label("Preface");
+                            toggled_field(ui, "p", None::<String>, preface, |ui, value| {
                                 ui.text_edit_singleline(value);
                             });
                             ui.end_row();
 
-                            toggled_field(ui, "Working Dir", None::<String>, dir, |ui, value| {
+                            ui.label("Working dir");
+                            toggled_field(ui, "d", None::<String>, dir, |ui, value| {
                                 let mut strval = value.to_str().unwrap_or_default().to_string();
                                 ui.text_edit_singleline(&mut strval);
                                 *value = PathBuf::from(strval);
@@ -284,17 +182,29 @@ impl super::AppState {
     fn tool_provider_actions(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if ui.button("Save").clicked() {
-                // TODO: implement renaming
                 let state = std::mem::take(&mut self.tool_editor);
+
                 let Some(ToolEditorState::EditProvider {
-                    modified: (name, value),
-                    ..
+                    original, modified, ..
                 }) = state
                 else {
-                    unreachable!()
+                    unreachable!();
+                };
+
+                let (name, value) = modified;
+
+                // Is there any way we can keep existing tool filters from breaking on renames?
+                let old_name = if let Some((old_name, _)) = original {
+                    Some(old_name)
+                } else {
+                    None
                 };
 
                 self.settings.update(|settings| {
+                    if let Some(old_name) = old_name {
+                        settings.tools.provider.remove(&old_name);
+                    }
+
                     settings.tools.provider.insert(name, value);
                 });
 

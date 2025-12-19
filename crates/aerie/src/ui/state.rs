@@ -17,7 +17,7 @@ use std::{
 };
 use uuid::Uuid;
 
-use super::{Pane, tiles};
+use super::Pane;
 use crate::{
     AgentFactory, LogEntry, Settings, ToolSpec,
     chat::ChatSession,
@@ -53,9 +53,6 @@ pub struct AppState {
     pub new_branch: String,
     pub rename_branch: Option<String>,
 
-    pub create_toolset: Option<String>,
-    pub edit_toolset: String,
-
     pub tool_editor: Option<ToolEditorState>,
 
     pub workflows: WorkflowState,
@@ -72,7 +69,6 @@ impl egui_tiles::Behavior<Pane> for AppState {
             Pane::Navigator => "Branches".into(),
             Pane::Chat => "Chat".into(),
             Pane::Logs => "Logs".into(),
-            Pane::Pipeline => "Pipeline".into(),
             Pane::Tools => "Tools".into(),
             Pane::Workflow => "Workflow".into(),
             Pane::Messages => "Lineage".into(),
@@ -96,11 +92,7 @@ impl egui_tiles::Behavior<Pane> for AppState {
                 self.chat_ui(ui);
             }
             Pane::Logs => {
-                let logs_r = self.log_history.read().unwrap();
-                tiles::logview::log_ui(ui, logs_r.as_ref());
-            }
-            Pane::Pipeline => {
-                self.pipeline_ui(ui);
+                self.logview_ui(ui);
             }
             Pane::Tools => {
                 self.toolset_ui(ui);

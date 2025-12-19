@@ -13,7 +13,7 @@ use serde_with::skip_serializing_none;
 
 use clap::{Parser, Subcommand};
 
-use crate::{Pipeline, ToolProvider, Toolbox};
+use crate::{ToolProvider, Toolbox};
 
 #[derive(Parser, Clone, Debug)]
 #[command(version, about, long_about = None)]
@@ -60,9 +60,6 @@ pub struct Settings {
     pub autoscroll: bool,
 
     #[serde(default)]
-    pub pipelines: Vec<Pipeline>,
-
-    #[serde(default)]
     pub automation: Option<String>,
 
     #[serde(default)]
@@ -73,14 +70,6 @@ pub struct Settings {
 
     #[serde(default)]
     pub last_output_dir: PathBuf,
-}
-
-impl Settings {
-    pub fn get_pipeline(&self) -> Option<&Pipeline> {
-        let name = self.automation.as_ref()?;
-
-        self.pipelines.iter().find(|it| it.name == *name)
-    }
 }
 
 pub trait ConfigExt {
@@ -105,7 +94,10 @@ impl ConfigExt for Arc<RwLock<Settings>> {
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Clone)]
 pub struct ToolSettings {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub provider: BTreeMap<String, ToolSpec>,
+
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub toolset: BTreeMap<String, ToolSelector>,
 }
 

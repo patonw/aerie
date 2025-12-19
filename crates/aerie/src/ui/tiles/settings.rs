@@ -105,20 +105,9 @@ impl super::AppState {
                 });
 
                 settings.update(|settings_rw| {
-                    egui::ComboBox::from_label("Automation")
+                    egui::ComboBox::from_label("Workflow")
                         .selected_text(settings_rw.automation.as_ref().unwrap_or(&String::new()))
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut settings_rw.automation, None, "");
-                            ui.label(RichText::new("Pipelines:").strong());
-                            for flow in &settings_rw.pipelines {
-                                ui.selectable_value(
-                                    &mut settings_rw.automation,
-                                    Some(flow.name.clone()),
-                                    &flow.name,
-                                );
-                            }
-
-                            ui.label(RichText::new("Workflows:").strong());
                             for flow in &workflows {
                                 ui.selectable_value(
                                     &mut settings_rw.automation,
