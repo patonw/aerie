@@ -157,8 +157,11 @@ fn main() -> anyhow::Result<()> {
     let mut tree = egui_tiles::Tree::new("my_tree", root, tiles);
 
     let flow_name = settings.view(|s| s.automation.clone());
-    let flow_state =
-        WorkflowState::from_path(settings_path.with_file_name("workflow.yml"), flow_name)?;
+    let flow_state = WorkflowState::from_path(
+        settings_path.with_file_name("workflow.yml"),
+        flow_name,
+        true,
+    )?;
 
     let mut behavior = AppState {
         errors: new_errlist(),

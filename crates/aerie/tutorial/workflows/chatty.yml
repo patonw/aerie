@@ -1,0 +1,180 @@
+nodes:
+  0:
+    value: !Start {}
+    pos:
+      x: -364.82416
+      'y': -24.028646
+    open: true
+  1:
+    value: !Finish {}
+    pos:
+      x: 1009.8093
+      'y': 8.760579
+    open: true
+  2:
+    value: !Chat
+      prompt: ''
+      size:
+        x: 300.0
+        'y': 150.0
+    pos:
+      x: 406.53482
+      'y': 392.2158
+    open: true
+  3:
+    value: !Agent
+      preamble: You are a notorious pirate captain in the midst of an existential crisis after discovering that your world is not real, but a construct of an advanced human civilization.
+      size:
+        x: 300.0
+        'y': 244.0
+    pos:
+      x: 415.8884
+      'y': -181.34897
+    open: true
+  4:
+    value: !Comment
+      comment: |-
+        You need an agent before sending anything to an LLM.
+        The agent needs a model, which you can specify globally or specific to the agent.
+
+        Global models are set on the settings tab of the UI or from the --model argument of the runner.
+
+        You must specify the provider as well as the model: e.g. openai/gpt-4o
+
+        You cannot (and shouldn't) set your credentials within the workflow (or the UI). They must be set by environment variable according to the provider's requirements. (see https://github.com/0xPlaygrounds/rig/blob/rig-core-v0.24.0/rig-core/src/client/mod.rs#L334)
+      size:
+        x: 699.0
+        'y': 537.9375
+    pos:
+      x: 385.88055
+      'y': -825.4065
+    open: true
+  5:
+    value: !Comment
+      comment: A conversation history is always required. You can manipulate views of the history, but existing messages and branches cannot be modified or deleted within a workflow.
+      size:
+        x: 393.0
+        'y': 234.28125
+    pos:
+      x: -144.82835
+      'y': 505.14832
+    open: true
+  6:
+    value: !MaskChat
+      limit: 2
+    pos:
+      x: -5.4478254
+      'y': 130.47186
+    open: true
+  7:
+    value: !Comment
+      comment: |-
+        Finish the workflow by updating the conversation within the global session...
+
+        or don't, if you only care about outputs. It can't be disabled, but it doesn't need to be connected.
+      size:
+        x: 363.0
+        'y': 276.625
+    pos:
+      x: 1000.25
+      'y': 158.23694
+    open: true
+  8:
+    value: !Output
+      label: response.msg
+    pos:
+      x: 1006.4759
+      'y': 675.89307
+    open: true
+  9:
+    value: !Comment
+      comment: |-
+        It is persisted with the session in the active branch.
+
+        Branches can be created by clicking on the fork button inside the Chat tab.
+
+        You can switch and manipulate branches on from the Branches tab on the top-right of the window.
+      size:
+        x: 381.0
+        'y': 404.125
+    pos:
+      x: 1449.0106
+      'y': 41.36349
+    open: true
+  10:
+    value: !Comment
+      comment: |+
+        You need to supply a prompt to run this workflow. In the current setup, it will take a prompt from the UI's Chat tab.
+
+        However, try editing the workflow by disconnect the prompt wire (right-click) and type something into the Chat node.
+
+      size:
+        x: 505.6875
+        'y': 291.90625
+    pos:
+      x: -403.3573
+      'y': -434.88257
+    open: true
+  11:
+    value: !Comment
+      comment: |-
+        Another way to supply the prompt is by creating a Text node (right-click) on the canvas, then wiring it to the Chat node.
+
+        Try it out!
+      size:
+        x: 351.0
+        'y': 216.3125
+    pos:
+      x: -701.99976
+      'y': 612.7656
+    open: true
+wires:
+- out_pin:
+    node: 0
+    output: 0
+  in_pin:
+    node: 3
+    input: 1
+- out_pin:
+    node: 0
+    output: 1
+  in_pin:
+    node: 3
+    input: 2
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 6
+    input: 0
+- out_pin:
+    node: 0
+    output: 3
+  in_pin:
+    node: 2
+    input: 2
+- out_pin:
+    node: 2
+    output: 0
+  in_pin:
+    node: 1
+    input: 0
+- out_pin:
+    node: 2
+    output: 1
+  in_pin:
+    node: 8
+    input: 0
+- out_pin:
+    node: 3
+    output: 0
+  in_pin:
+    node: 2
+    input: 0
+- out_pin:
+    node: 6
+    output: 0
+  in_pin:
+    node: 2
+    input: 1
+description: Demonstrates how to configure an agent to make a request to an LLM model.
