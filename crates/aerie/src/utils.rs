@@ -6,10 +6,36 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
+use decorum::E32;
 use itertools::Itertools;
 use rig::message::{AssistantContent, Message, ToolResultContent, UserContent};
 use rpds::{List, ListSync};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+#[derive(Debug, Clone, Copy, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EVec2 {
+    pub x: E32,
+    pub y: E32,
+}
+
+impl From<egui::Vec2> for EVec2 {
+    fn from(value: egui::Vec2) -> Self {
+        Self {
+            x: E32::assert(value.x),
+            y: E32::assert(value.y),
+        }
+    }
+}
+
+impl From<EVec2> for egui::Vec2 {
+    fn from(value: EVec2) -> Self {
+        Self {
+            x: value.x.into_inner(),
+            y: value.y.into_inner(),
+        }
+    }
+}
 
 pub trait CowExt<'a, T: Clone, E> {
     /// Flat map for cows.

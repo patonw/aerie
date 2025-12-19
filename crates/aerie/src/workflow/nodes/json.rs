@@ -1,17 +1,21 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
-use crate::workflow::{
-    DynNode, EditContext, RunContext, UiNode, Value, WorkflowError,
-    nodes::{MIN_HEIGHT, MIN_WIDTH},
+use crate::{
+    ui::resizable_frame,
+    workflow::{DynNode, EditContext, RunContext, UiNode, Value, WorkflowError},
 };
 
 use super::ValueKind;
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParseJson {
     text: String,
+
+    size: Option<crate::utils::EVec2>,
 
     #[serde(skip)]
     value: Arc<serde_json::Value>,
@@ -55,21 +59,16 @@ impl UiNode for ParseJson {
         match pin_id {
             0 => {
                 if remote.is_none() {
-                    egui::Resize::default()
-                        .id_salt("prompt_resize")
-                        .min_width(MIN_WIDTH)
-                        .min_height(MIN_HEIGHT)
-                        .with_stroke(false)
-                        .show(ui, |ui| {
-                            egui::ScrollArea::vertical().show(ui, |ui| {
-                                let widget = egui::TextEdit::multiline(&mut self.text)
-                                    .id_salt("json text")
-                                    .desired_width(f32::INFINITY);
+                    resizable_frame(&mut self.size, ui, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            let widget = egui::TextEdit::multiline(&mut self.text)
+                                .id_salt("json text")
+                                .desired_width(f32::INFINITY);
 
-                                ui.add_sized(ui.available_size(), widget)
-                                    .on_hover_text("JSON text");
-                            });
+                            ui.add_sized(ui.available_size(), widget)
+                                .on_hover_text("JSON text");
                         });
+                    });
                 } else {
                     ui.label("JSON text");
                 }
@@ -198,9 +197,12 @@ impl ValidateJson {
     }
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransformJson {
     filter: String,
+
+    size: Option<crate::utils::EVec2>,
 
     #[serde(skip)]
     value: Arc<serde_json::Value>,
@@ -252,18 +254,15 @@ impl UiNode for TransformJson {
             0 => {
                 if remote.is_none() {
                     egui::Frame::new().inner_margin(4).show(ui, |ui| {
-                        egui::Resize::default()
-                            .min_width(MIN_WIDTH)
-                            .min_height(MIN_HEIGHT)
-                            .show(ui, |ui| {
-                                egui::ScrollArea::vertical().show(ui, |ui| {
-                                    let widget = egui::TextEdit::multiline(&mut self.filter)
-                                        .desired_width(f32::INFINITY)
-                                        .hint_text("Fitler\u{1F64B}");
+                        resizable_frame(&mut self.size, ui, |ui| {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                let widget = egui::TextEdit::multiline(&mut self.filter)
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("Fitler\u{1F64B}");
 
-                                    ui.add_sized(ui.available_size(), widget);
-                                });
+                                ui.add_sized(ui.available_size(), widget);
                             });
+                        });
                     });
                 } else {
                     ui.label("filter");

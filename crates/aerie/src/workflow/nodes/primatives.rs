@@ -1,19 +1,23 @@
 use egui::RichText;
 use egui_commonmark::CommonMarkCache;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
 use crate::{
     ChatContent,
-    ui::tiles::chat::render_message_width,
+    ui::{resizable_frame, tiles::chat::render_message_width},
     utils::{message_party, message_text},
     workflow::WorkflowError,
 };
 
-use super::{DynNode, EditContext, MIN_WIDTH, RunContext, UiNode, Value, ValueKind};
+use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Text {
     pub value: String,
+
+    pub size: Option<crate::utils::EVec2>,
 }
 
 impl DynNode for Text {
@@ -42,16 +46,13 @@ impl UiNode for Text {
 
     fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
         egui::Frame::new().inner_margin(4).show(ui, |ui| {
-            egui::Resize::default()
-                .min_width(MIN_WIDTH)
-                .min_height(MIN_WIDTH)
-                .show(ui, |ui| {
-                    let widget = egui::TextEdit::multiline(&mut self.value)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("Enter text \u{1F64B}");
+            resizable_frame(&mut self.size, ui, |ui| {
+                let widget = egui::TextEdit::multiline(&mut self.value)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Enter text \u{1F64B}");
 
-                    ui.add_sized(ui.available_size(), widget);
-                });
+                ui.add_sized(ui.available_size(), widget);
+            });
         });
     }
 
@@ -77,21 +78,24 @@ impl Text {
     }
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Preview {
+    size: Option<crate::utils::EVec2>,
+
     #[serde(skip)]
     pub value: Value,
 }
 
 impl std::hash::Hash for Preview {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        "preview".hash(state);
+        self.size.hash(state);
     }
 }
 
 impl PartialEq for Preview {
-    fn eq(&self, _other: &Self) -> bool {
-        true // Preview is entirely transient, so all copies are equal
+    fn eq(&self, other: &Self) -> bool {
+        self.size.eq(&other.size)
     }
 }
 
@@ -128,51 +132,45 @@ impl UiNode for Preview {
         let mut cache = CommonMarkCache::default();
 
         egui::Frame::new().inner_margin(4).show(ui, |ui| {
-            egui::Resize::default()
-                .min_width(MIN_WIDTH)
-                .min_height(MIN_WIDTH)
-                .default_width(300.0)
-                .with_stroke(false)
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| match &self.value {
-                        Value::Text(text) => {
-                            ui.add(egui::Label::new(text).wrap());
-                        }
-                        Value::Chat(history) => {
-                            ui.vertical(|ui| {
-                                for entry in history.iter() {
-                                    if let ChatContent::Message(msg) = &entry.content {
-                                        ui.label(RichText::new(message_party(msg)).strong());
-                                        ui.add(egui::Label::new(message_text(msg)).wrap());
-                                        ui.separator();
-                                    }
+            resizable_frame(&mut self.size, ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| match &self.value {
+                    Value::Text(text) => {
+                        ui.add(egui::Label::new(text).wrap());
+                    }
+                    Value::Chat(history) => {
+                        ui.vertical(|ui| {
+                            for entry in history.iter() {
+                                if let ChatContent::Message(msg) = &entry.content {
+                                    ui.label(RichText::new(message_party(msg)).strong());
+                                    ui.add(egui::Label::new(message_text(msg)).wrap());
+                                    ui.separator();
                                 }
-                            });
-                        }
-                        Value::Message(msg) => {
-                            render_message_width(ui, &mut cache, msg, Some(600.0));
-                        }
-                        Value::Json(value) => {
-                            if let Ok(text) = serde_json::to_string_pretty(value) {
-                                let language = "json";
-                                let theme =
-                                    egui_extras::syntax_highlighting::CodeTheme::from_memory(
-                                        ui.ctx(),
-                                        ui.style(),
-                                    );
-
-                                egui_extras::syntax_highlighting::code_view_ui(
-                                    ui, &theme, &text, language,
-                                );
-                            } else {
-                                ui.add(egui::Label::new(format!("{:?}", value)).wrap());
                             }
+                        });
+                    }
+                    Value::Message(msg) => {
+                        render_message_width(ui, &mut cache, msg, Some(600.0));
+                    }
+                    Value::Json(value) => {
+                        if let Ok(text) = serde_json::to_string_pretty(value) {
+                            let language = "json";
+                            let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(
+                                ui.ctx(),
+                                ui.style(),
+                            );
+
+                            egui_extras::syntax_highlighting::code_view_ui(
+                                ui, &theme, &text, language,
+                            );
+                        } else {
+                            ui.add(egui::Label::new(format!("{:?}", value)).wrap());
                         }
-                        _ => {
-                            ui.add(egui::Label::new(format!("{:?}", self.value)).wrap());
-                        }
-                    });
+                    }
+                    _ => {
+                        ui.add(egui::Label::new(format!("{:?}", self.value)).wrap());
+                    }
                 });
+            });
         });
     }
 }

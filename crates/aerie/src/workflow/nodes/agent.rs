@@ -7,12 +7,8 @@ use std::sync::Arc;
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 use crate::{
-    ChatContent, ChatHistory, ToolProvider, ToolSelector,
-    agent::AgentSpec,
-    workflow::{
-        WorkflowError,
-        nodes::{MIN_HEIGHT, MIN_WIDTH},
-    },
+    ChatContent, ChatHistory, ToolProvider, ToolSelector, agent::AgentSpec, ui::resizable_frame,
+    workflow::WorkflowError,
 };
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +92,8 @@ pub struct AgentNode {
     pub preamble: Option<String>,
 
     pub temperature: Option<E64>,
+
+    pub size: Option<crate::utils::EVec2>,
 
     #[serde(skip)]
     pub tools: Option<Arc<ToolSelector>>,
@@ -217,26 +215,25 @@ impl UiNode for AgentNode {
             }
             4 => {
                 if remote.is_none() {
+                    let help = "system message\n\
+                        \n\
+                        Instructions to the agent outside the flow of conversation.\n\
+                        Can include hints about its role, personality or formatting requirements.";
                     crate::ui::toggled_field(
                         ui,
-                        "P",
-                        Some("preamble"),
+                        "S",
+                        Some(help),
                         &mut self.preamble,
                         |ui, value| {
-                            egui::Resize::default()
-                                .id_salt("preamble_resize")
-                                .min_width(MIN_WIDTH)
-                                .min_height(MIN_HEIGHT)
-                                .with_stroke(false)
-                                .show(ui, |ui| {
-                                    let widget = egui::TextEdit::multiline(value)
-                                        .id_salt("preamble")
-                                        .desired_width(f32::INFINITY)
-                                        .hint_text("Preamble");
+                            resizable_frame(&mut self.size, ui, |ui| {
+                                let widget = egui::TextEdit::multiline(value)
+                                    .id_salt("sysmesg")
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("system message");
 
-                                    ui.add_sized(ui.available_size(), widget)
-                                        .on_hover_text("Preamble");
-                                });
+                                ui.add_sized(ui.available_size(), widget)
+                                    .on_hover_text(help);
+                            });
                         },
                     );
                 } else {
@@ -326,6 +323,8 @@ impl AgentNode {
 pub struct ChatContext {
     pub context_doc: String,
 
+    pub size: Option<crate::utils::EVec2>,
+
     #[serde(skip)]
     pub agent_spec: Arc<AgentSpec>,
 }
@@ -406,20 +405,15 @@ impl UiNode for ChatContext {
                 return ui
                     .vertical(|ui| {
                         if remote.is_none() {
-                            egui::Resize::default()
-                                .id_salt("preamble_resize")
-                                .min_width(MIN_WIDTH)
-                                .min_height(MIN_HEIGHT)
-                                .with_stroke(false)
-                                .show(ui, |ui| {
-                                    let widget = egui::TextEdit::multiline(&mut self.context_doc)
-                                        .id_salt("context")
-                                        .desired_width(f32::INFINITY)
-                                        .hint_text("context");
+                            resizable_frame(&mut self.size, ui, |ui| {
+                                let widget = egui::TextEdit::multiline(&mut self.context_doc)
+                                    .id_salt("context")
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("context");
 
-                                    ui.add_sized(ui.available_size(), widget)
-                                        .on_hover_text("Background context");
-                                });
+                                ui.add_sized(ui.available_size(), widget)
+                                    .on_hover_text("Background context");
+                            });
                             self.ghost_pin(ValueKind::Text.color())
                         } else {
                             ui.label("context");

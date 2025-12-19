@@ -10,20 +10,18 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
 use crate::{
-    ChatContent, ChatHistory,
-    utils::CowExt as _,
-    workflow::{
-        WorkflowError,
-        nodes::{MIN_HEIGHT, MIN_WIDTH},
-    },
+    ChatContent, ChatHistory, ui::resizable_frame, utils::CowExt as _, workflow::WorkflowError,
 };
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
+
 // TODO: Hash & eq by hand to ignore chat
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ChatNode {
     pub prompt: String,
 
+    pub size: Option<crate::utils::EVec2>,
     #[serde(skip)]
     pub history: Arc<ChatHistory>,
 }
@@ -118,20 +116,15 @@ impl UiNode for ChatNode {
                 return ui
                     .vertical(|ui| {
                         if remote.is_none() {
-                            egui::Resize::default()
-                                .id_salt("prompt_resize")
-                                .min_width(MIN_WIDTH)
-                                .min_height(MIN_HEIGHT)
-                                .with_stroke(false)
-                                .show(ui, |ui| {
-                                    let widget = egui::TextEdit::multiline(&mut self.prompt)
-                                        .id_salt("prompt")
-                                        .desired_width(f32::INFINITY)
-                                        .hint_text("Prompt");
+                            resizable_frame(&mut self.size, ui, |ui| {
+                                let widget = egui::TextEdit::multiline(&mut self.prompt)
+                                    .id_salt("prompt")
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("Prompt");
 
-                                    ui.add_sized(ui.available_size(), widget)
-                                        .on_hover_text("Prompt");
-                                });
+                                ui.add_sized(ui.available_size(), widget)
+                                    .on_hover_text("Prompt");
+                            });
                             self.ghost_pin(ValueKind::Text.color())
                         } else {
                             ui.label("prompt");
@@ -205,6 +198,8 @@ impl ChatNode {
 #[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
 pub struct StructuredChat {
     pub prompt: String,
+
+    pub size: Option<crate::utils::EVec2>,
 
     /// If response does not conform to schema try again
     pub retries: usize,
@@ -325,20 +320,15 @@ impl UiNode for StructuredChat {
                 return ui
                     .vertical(|ui| {
                         if remote.is_none() {
-                            egui::Resize::default()
-                                .id_salt("prompt_resize")
-                                .min_width(MIN_WIDTH)
-                                .min_height(MIN_HEIGHT)
-                                .with_stroke(false)
-                                .show(ui, |ui| {
-                                    let widget = egui::TextEdit::multiline(&mut self.prompt)
-                                        .id_salt("prompt")
-                                        .desired_width(f32::INFINITY)
-                                        .hint_text("Prompt");
+                            resizable_frame(&mut self.size, ui, |ui| {
+                                let widget = egui::TextEdit::multiline(&mut self.prompt)
+                                    .id_salt("prompt")
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("Prompt");
 
-                                    ui.add_sized(ui.available_size(), widget)
-                                        .on_hover_text("Prompt");
-                                });
+                                ui.add_sized(ui.available_size(), widget)
+                                    .on_hover_text("Prompt");
+                            });
                             self.ghost_pin(ValueKind::Text.color())
                         } else {
                             ui.label("prompt");

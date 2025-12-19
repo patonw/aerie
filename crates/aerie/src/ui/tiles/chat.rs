@@ -294,9 +294,9 @@ pub fn render_message_width(
                                 ui.label(&text);
                             }
                             FormatOpts::Pre => {
-                                egui::ScrollArea::horizontal().id_salt(&text[..100]).show(
-                                    ui,
-                                    |ui| {
+                                egui::ScrollArea::horizontal()
+                                    .id_salt(text.bytes().take(100).collect_vec())
+                                    .show(ui, |ui| {
                                         ui.with_layout(
                                             egui::Layout::left_to_right(egui::Align::TOP),
                                             |ui| {
@@ -312,8 +312,7 @@ pub fn render_message_width(
                                                 );
                                             },
                                         );
-                                    },
-                                );
+                                    });
                             }
                             FormatOpts::Markdown => {
                                 CommonMarkViewer::new().show(ui, cache, &text);
@@ -352,9 +351,9 @@ pub fn render_message_width(
                             FormatOpts::Pre => {
                                 all_text.push_str(&text);
 
-                                egui::ScrollArea::horizontal().id_salt(&text[..100]).show(
-                                    ui,
-                                    |ui| {
+                                egui::ScrollArea::horizontal()
+                                    .id_salt(text.bytes().take(100).collect_vec())
+                                    .show(ui, |ui| {
                                         let language = "json";
                                         let theme =
                                         egui_extras::syntax_highlighting::CodeTheme::from_memory(
@@ -365,8 +364,7 @@ pub fn render_message_width(
                                         egui_extras::syntax_highlighting::code_view_ui(
                                             ui, &theme, &text, language,
                                         );
-                                    },
-                                );
+                                    });
                             }
                             FormatOpts::Markdown => {
                                 all_text.push_str(&text);
