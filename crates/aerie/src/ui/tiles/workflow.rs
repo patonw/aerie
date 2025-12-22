@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     sync::{Arc, atomic::Ordering},
+    time::Duration,
 };
 
 use arc_swap::ArcSwap;
@@ -707,7 +708,7 @@ impl super::AppState {
                             .sizes(Size::remainder(), 2)
                             .horizontal(|mut strip| {
                                 strip.cell(|ui| {
-                                    let stack = self.workflows.get_undo_stack().len();
+                                    let stack = self.workflows.get_undo_count();
                                     ui.add_enabled_ui(!running && stack > 0, |ui| {
                                         if ui
                                             .button(ARROW_COUNTER_CLOCKWISE)
@@ -719,7 +720,7 @@ impl super::AppState {
                                     });
                                 });
                                 strip.cell(|ui| {
-                                    let stack = self.workflows.get_redo_stack().len();
+                                    let stack = self.workflows.get_redo_count();
                                     ui.add_enabled_ui(!running && stack > 0, |ui| {
                                         if ui
                                             .button(ARROW_CLOCKWISE)
@@ -734,15 +735,22 @@ impl super::AppState {
                     });
                 });
 
+            if !settings.view(|s| s.autosave) {
+                ui.add_enabled_ui(self.workflows.has_changes(), |ui| {
+                    if ui.button("Save").clicked() {
+                        self.save_workflows();
+                    }
+                });
+            } else if !self.workflows.frozen
+                && self.workflows.has_changes()
+                && self.workflows.modtime.elapsed().unwrap_or(Duration::ZERO)
+                    > Duration::from_secs(2)
+            {
+                // TODO: move preview data to run_state
+                self.save_workflows();
+            }
+
             ui.separator();
-
-            ui.add_enabled_ui(self.workflows.has_changes(), |ui| {
-                if ui.button("Save").clicked() {
-                    self.save_workflows();
-                }
-            });
-
-            ui.add_space(32.0);
 
             ui.scope(|ui| {
                 ui.style_mut().spacing.button_padding.y = 8.0;
@@ -791,8 +799,8 @@ impl super::AppState {
             .put(&self.workflows.editing, self.workflows.shadow.clone());
         self.workflows.store.save().unwrap();
 
-        let mut snarl = self.workflows.snarl.blocking_write();
-        *snarl = Snarl::try_from(self.workflows.shadow.clone()).unwrap();
+        // let mut snarl = self.workflows.snarl.blocking_write();
+        // *snarl = Snarl::try_from(self.workflows.shadow.clone()).unwrap();
         self.workflows.baseline = self.workflows.shadow.clone();
     }
 

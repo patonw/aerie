@@ -29,6 +29,8 @@ use crate::{
     workflow::{ShadowGraph, WorkNode, fixup_workflow, runner::ExecState, store::WorkflowStore},
 };
 
+const SOFT_LIMIT: usize = 128;
+
 pub enum ToolEditorState {
     EditProvider {
         original: Option<(String, ToolSpec)>,
@@ -157,6 +159,7 @@ pub struct WorkflowState {
 }
 
 impl WorkflowState {
+    // TODO: store in individual files or a key-value store
     pub fn from_path(
         path: impl AsRef<Path>,
         flow_name: Option<String>,
@@ -216,15 +219,31 @@ impl WorkflowState {
             return;
         }
 
-        let snarl = self.store.get_snarl(workflow_name).unwrap_or_default();
+        // Stash current editee if changes unsaved
+        if !self.shadow.fast_eq(&self.baseline) {
+            self.undo_stack
+                .entry(self.editing.clone())
+                .or_default()
+                .push_front((self.modtime, self.shadow.clone()));
+        }
+
+        self.baseline = self.store.get(workflow_name).unwrap_or_default();
+        if let Some(undos) = self.undo_stack.get_mut(workflow_name)
+            && let Some((mt, sg)) = undos.pop_front()
+        {
+            self.shadow = sg;
+            self.modtime = mt;
+        } else {
+            self.shadow = self.baseline.clone();
+            self.modtime = SystemTime::now();
+        }
+
+        let snarl = Snarl::try_from(self.shadow.clone()).unwrap_or_default();
         let snarl = fixup_workflow(snarl);
         self.frozen = false;
         self.snarl = Arc::new(tokio::sync::RwLock::new(snarl));
         self.editing = workflow_name.to_string();
         self.renaming = None;
-        self.baseline = self.store.get(workflow_name).unwrap_or_default();
-        self.shadow = self.baseline.clone();
-        self.modtime = SystemTime::now();
         self.switch_count += 1;
     }
 
@@ -258,6 +277,12 @@ impl WorkflowState {
             return;
         }
 
+        if !self.undo_stack.contains_key(&self.editing)
+            && let Err(err) = self.store.create_backup(&self.editing)
+        {
+            tracing::warn!("Error while backing up {}: {err:?}", &self.editing);
+        }
+
         let undo_stack = self.undo_stack.entry(self.editing.clone()).or_default();
 
         // Initialize with baseline
@@ -277,7 +302,26 @@ impl WorkflowState {
 
         undo_stack.push_front((self.modtime, self.shadow.clone()));
 
-        undo_stack.truncate(256);
+        if undo_stack.len() > SOFT_LIMIT {
+            tracing::info!(
+                "Pruning undo stack for {} ({}). {:?}",
+                &self.editing,
+                undo_stack.len(),
+                undo_stack.iter().map(|it| it.0).collect_vec()
+            );
+            for i in 1..=(SOFT_LIMIT / 2) {
+                undo_stack.swap(i, i * 2);
+            }
+
+            undo_stack.truncate(SOFT_LIMIT / 2 + 1);
+            tracing::info!(
+                "Finished pruning undo stack for {} ({}). {:?}",
+                &self.editing,
+                undo_stack.len(),
+                undo_stack.iter().map(|it| it.0).collect_vec()
+            );
+        }
+
         self.redo_stack.remove(&self.editing);
 
         self.shadow = shadow;
@@ -285,12 +329,18 @@ impl WorkflowState {
         tracing::trace!("Updating shadow. stack {}", undo_stack.len());
     }
 
-    pub fn get_undo_stack(&mut self) -> &mut VecDeque<(SystemTime, ShadowGraph<WorkNode>)> {
-        self.undo_stack.entry(self.editing.clone()).or_default()
+    pub fn get_undo_count(&mut self) -> usize {
+        self.undo_stack
+            .get(&self.editing)
+            .map(|s| s.len())
+            .unwrap_or_default()
     }
 
-    pub fn get_redo_stack(&mut self) -> &mut VecDeque<(SystemTime, ShadowGraph<WorkNode>)> {
-        self.redo_stack.entry(self.editing.clone()).or_default()
+    pub fn get_redo_count(&mut self) -> usize {
+        self.redo_stack
+            .get(&self.editing)
+            .map(|s| s.len())
+            .unwrap_or_default()
     }
 
     pub fn undo(&mut self) {
