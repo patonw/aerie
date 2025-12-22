@@ -17,7 +17,11 @@ use super::config::{ToolSelector, ToolSpec};
 
 #[derive(Clone)]
 pub enum ToolProvider {
-    MCP { client: McpClient, tools: Vec<Tool> },
+    MCP {
+        client: McpClient,
+        tools: Vec<Tool>,
+        timeout: Option<u64>,
+    },
 }
 
 #[derive(Clone)]
@@ -36,10 +40,24 @@ impl McpClient {
 }
 
 impl ToolProvider {
+    pub fn contains_tool(&self, selector: impl Fn(&Tool) -> bool) -> bool {
+        match self {
+            ToolProvider::MCP { tools, .. } => {
+                for tool in tools {
+                    if selector(tool) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     pub fn get_tools(&self, _provider: &str, selector: impl Fn(&Tool) -> bool) -> RigToolSet {
         let mut result = RigToolSet::default();
         match self {
-            ToolProvider::MCP { client, tools } => {
+            ToolProvider::MCP { client, tools, .. } => {
                 for tool in tools {
                     if selector(tool) {
                         // namespace tools with provider name
@@ -65,7 +83,7 @@ impl ToolProvider {
         selector: impl Fn(&Tool) -> bool,
     ) -> AgentBuilderSimple<M> {
         match self {
-            ToolProvider::MCP { client, tools } => {
+            ToolProvider::MCP { client, tools, .. } => {
                 let selection = tools
                     .iter()
                     .filter(|it| selector(it))
@@ -169,7 +187,11 @@ impl ToolProvider {
             })
             .collect_vec();
 
-        Ok(ToolProvider::MCP { client, tools })
+        Ok(ToolProvider::MCP {
+            client,
+            tools,
+            timeout: spec.timeout(),
+        })
     }
 }
 
@@ -211,5 +233,20 @@ impl Toolbox {
         toolset: &ToolSelector,
     ) -> AgentBuilderSimple<M> {
         self.select_tools(agent, |name, tool| toolset.apply(name, tool))
+    }
+
+    pub fn provider_for(&self, selector: &ToolSelector, tool_name: &str) -> Option<&ToolProvider> {
+        self.providers
+            .iter()
+            .find(|(name, chain)| {
+                chain.contains_tool(|tool| tool.name == tool_name && selector.apply(name, tool))
+            })
+            .map(|(_, p)| p)
+    }
+
+    pub fn timeout(&self, toolset: &ToolSelector, tool_name: &str) -> Option<u64> {
+        self.provider_for(toolset, tool_name).and_then(|p| match p {
+            ToolProvider::MCP { timeout, .. } => *timeout,
+        })
     }
 }

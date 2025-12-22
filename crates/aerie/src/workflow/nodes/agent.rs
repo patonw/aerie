@@ -3,7 +3,7 @@ use egui::TextEdit;
 use rig::message::Message;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 use crate::{
@@ -624,7 +624,15 @@ impl InvokeTool {
             _ => unreachable!(),
         };
 
-        let output = rig_tools.call(tool_name, args.to_string()).await?;
+        let future = rig_tools.call(tool_name, args.to_string());
+        let output =
+            if let Some(seconds) = run_ctx.agent_factory.toolbox.timeout(&toolset, tool_name) {
+                tokio::time::timeout(Duration::from_secs(seconds), future)
+                    .await
+                    .map_err(|_| WorkflowError::Timeout)??
+            } else {
+                future.await?
+            };
 
         let msg = Message::tool_result(tool_name, &output);
         let chat = chat.extend(vec![Ok(msg).into()])?;

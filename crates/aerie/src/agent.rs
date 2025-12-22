@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{Context as _, anyhow};
 use arc_swap::ArcSwap;
 use decorum::E64;
 use derive_builder::Builder;
@@ -178,12 +178,13 @@ impl AgentFactory {
                 .collect_vec()
         });
 
-        for (tool_name, tool_spec) in providers {
+        for (provider, spec) in providers {
             let toolkit = self
                 .rt
-                .block_on(async move { ToolProvider::from_spec(&tool_spec).await })?;
+                .block_on(ToolProvider::from_spec(&spec))
+                .with_context(|| format!("Could not load tools for {provider}: {spec:?}"))?;
 
-            toolbox.with_provider(&tool_name, toolkit);
+            toolbox.with_provider(&provider, toolkit);
         }
 
         self.toolbox = Arc::new(toolbox);
@@ -212,6 +213,10 @@ pub struct _AgentSpec_ {
 impl AgentSpec {
     pub fn agent(&self, factory: &AgentFactory) -> anyhow::Result<AgentT> {
         factory.spec_to_agent(self)
+    }
+
+    pub fn tool_selection(&self) -> Arc<ToolSelector> {
+        self.tools.clone().unwrap_or_default()
     }
 
     // TODO: method to just get rig tools from selection

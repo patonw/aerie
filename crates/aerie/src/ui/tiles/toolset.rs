@@ -7,6 +7,7 @@ use crate::{
     ToolProvider, ToolSpec,
     config::ConfigExt as _,
     ui::{state::ToolEditorState, toggled_field},
+    utils::ErrorDistiller as _,
 };
 
 impl super::AppState {
@@ -57,12 +58,13 @@ impl super::AppState {
                         modified: (
                             String::new(),
                             ToolSpec::Stdio {
-                                enabled: false,
+                                enabled: true,
                                 preface: None,
                                 dir: None,
                                 env: Default::default(),
                                 command: String::new(),
                                 args: Vec::new(),
+                                timeout: Some(30),
                             },
                         ),
                     });
@@ -81,6 +83,7 @@ impl super::AppState {
                                 preface: None,
                                 uri: String::from("http://localhost:8080"),
                                 auth_var: None,
+                                timeout: None,
                             },
                         ),
                     });
@@ -163,6 +166,7 @@ impl super::AppState {
                             env,
                             command,
                             args,
+                            timeout,
                         } => {
                             ui.label("Enabled");
                             ui.checkbox(enabled, "");
@@ -198,10 +202,24 @@ impl super::AppState {
 
                             // TODO: cleaner way to do this?
                             let mut lines = args.join("\n");
+                            // lines.push_str("\n");
                             ui.label("Arguments");
                             ui.text_edit_multiline(&mut lines)
                                 .on_hover_text("Arguments to the command separated by new lines.");
-                            *args = lines.lines().map(|s| s.to_string()).collect_vec();
+                            *args = lines.split("\n").map(|s| s.to_string()).collect_vec();
+                            ui.end_row();
+
+                            ui.label("timeout");
+                            toggled_field(ui, "t",
+                                "Abort run if the MCP server does not respond within this number of seconds.\n\
+                                    Note: this will only work via the Chat node if streaming is enabled.\n\
+                                    Invoke Tools node will honor this, regardless.".into(),
+                                timeout,
+                                |ui, value| {
+
+                                ui.add(egui::Slider::new(value, 0..=1000).text("T"))
+                                    .on_hover_text("timeout seconds");
+                            });
                             ui.end_row();
                         }
                         ToolSpec::HTTP {
@@ -209,6 +227,7 @@ impl super::AppState {
                             preface,
                             uri,
                             auth_var,
+                            timeout,
                         } => {
                             ui.label("Enabled");
                             ui.checkbox(enabled, "");
@@ -238,7 +257,15 @@ impl super::AppState {
                                     ui.text_edit_singleline(value);
                                 },
                             );
+                            ui.end_row();
 
+                            ui.label("timeout");
+                            toggled_field(ui, "t",
+                                "Abort run if the MCP server does not respond within this number of seconds".into(), timeout, |ui, value| {
+
+                                ui.add(egui::Slider::new(value, 0..=1000).text("T"))
+                                    .on_hover_text("timeout seconds");
+                            });
                             ui.end_row();
                         }
                     }
@@ -272,11 +299,20 @@ impl super::AppState {
                         settings.tools.provider.remove(&old_name);
                     }
 
-                    settings.tools.provider.insert(name, value);
+                    settings.tools.provider.insert(name.clone(), value);
                 });
 
                 // TODO: Spawn thread
-                let _ = self.agent_factory.reload_tools();
+                if let Err(err) = self.agent_factory.reload_tools() {
+                    self.errors.push(err);
+                    self.settings.update(|conf| {
+                        conf.tools
+                            .provider
+                            .get_mut(&name)
+                            .expect("Newly created provider should exist")
+                            .set_enabled(false)
+                    })
+                }
             }
             if ui.button("Cancel").clicked() {
                 self.tool_editor = None;

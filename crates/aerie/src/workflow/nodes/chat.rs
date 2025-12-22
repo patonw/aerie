@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     sync::{Arc, atomic::Ordering},
+    time::Duration,
 };
 
 use itertools::Itertools;
@@ -15,7 +16,7 @@ use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
-    ChatContent, ChatHistory,
+    ChatContent, ChatHistory, ToolSelector,
     ui::resizable_frame,
     utils::{CowExt as _, extract_json, message_text},
     workflow::WorkflowError,
@@ -189,8 +190,9 @@ impl ChatNode {
         let last_idx = history.len();
 
         let agent = agent_spec.agent(&run_ctx.agent_factory)?;
+        let tools = agent_spec.tool_selection();
 
-        let request = multi_turn_completion(run_ctx, &agent, prompt, &mut history);
+        let request = multi_turn_completion(run_ctx, &agent, tools, prompt, &mut history);
         let prompt_request = request.await;
         match prompt_request {
             Ok(_) => {
@@ -707,6 +709,7 @@ enum StreamingError {
 async fn multi_turn_completion(
     run_ctx: &RunContext,
     agent: &rig::agent::Agent<rig::client::completion::CompletionModelHandle<'static>>,
+    toolset: Arc<ToolSelector>,
     prompt: Message,
     chat_history: &mut Vec<Message>,
 ) -> Result<(), StreamingError> {
@@ -827,18 +830,32 @@ async fn multi_turn_completion(
         let mut tool_results = vec![];
         for tool_call in &tool_calls {
             // TODO: implement tool namespacing by generating a new toolset
-            let tool_result = agent
+            let timeout = run_ctx
+                .agent_factory
+                .toolbox
+                .timeout(&toolset, &tool_call.function.name);
+            // TODO: verify that the args are stringified inside the object and not a sub-object
+            let tool_args = tool_call.function.arguments.to_string();
+            tracing::debug!(
+                "Attempting to call tool with {} args {tool_args:?}. Timeout {timeout:?}",
+                &tool_call.function.name
+            );
+
+            let call_tool = agent
                 .tool_server_handle
-                .call_tool(
-                    &tool_call.function.name,
-                    &tool_call.function.arguments.to_string(),
-                )
-                .await
-                .map_err(|x| {
-                    StreamingError::Tool(rig::tool::ToolSetError::ToolCallError(
-                        rig::tool::ToolError::ToolCallError(x.into()),
-                    ))
-                })?;
+                .call_tool(&tool_call.function.name, &tool_args);
+            let tool_result = if let Some(timeout) = timeout {
+                tokio::time::timeout(Duration::from_secs(timeout), call_tool)
+                    .await
+                    .map_err(|_| WorkflowError::Timeout)?
+            } else {
+                call_tool.await
+            };
+            let tool_result = tool_result.map_err(|x| {
+                StreamingError::Tool(rig::tool::ToolSetError::ToolCallError(
+                    rig::tool::ToolError::ToolCallError(x.into()),
+                ))
+            })?;
             tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), tool_result));
         }
 

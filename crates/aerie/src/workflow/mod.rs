@@ -622,6 +622,9 @@ pub enum WorkflowError {
     #[error("Interrupted")]
     Interrupted,
 
+    #[error("timed out")]
+    Timeout,
+
     #[error("{0}")]
     Unknown(String),
 }

@@ -192,6 +192,10 @@ pub enum ToolSpec {
 
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         args: Vec<String>,
+
+        /// Timeout in seconds
+        #[serde(default)]
+        timeout: Option<u64>,
     },
     HTTP {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -204,6 +208,10 @@ pub enum ToolSpec {
 
         /// : environment var for API key
         auth_var: Option<String>,
+
+        /// Timeout in seconds
+        #[serde(default)]
+        timeout: Option<u64>,
     },
 }
 
@@ -216,6 +224,7 @@ impl Default for ToolSpec {
             env: Default::default(),
             command: String::new(),
             args: Vec::new(),
+            timeout: None,
         }
     }
 }
@@ -228,10 +237,23 @@ impl ToolSpec {
         }
     }
 
+    pub fn set_enabled(&mut self, value: bool) {
+        match self {
+            ToolSpec::Stdio { enabled, .. } => *enabled = value,
+            ToolSpec::HTTP { enabled, .. } => *enabled = value,
+        }
+    }
+
     pub fn preface(&self) -> Option<&str> {
         match self {
             ToolSpec::Stdio { preface, .. } => preface.as_deref(),
             ToolSpec::HTTP { preface, .. } => preface.as_deref(),
+        }
+    }
+    pub fn timeout(&self) -> Option<u64> {
+        match self {
+            ToolSpec::Stdio { timeout, .. } => *timeout,
+            ToolSpec::HTTP { timeout, .. } => *timeout,
         }
     }
 }
