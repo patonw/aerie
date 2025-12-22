@@ -246,7 +246,7 @@ impl From<(OutPinId, InPinId)> for Wire {
 /// to make cloning-on-write cheap. This allows shadow graphs to be quickly compared using
 /// top-level pointer comparison. We could also use this to support undo/redo operations,
 /// though the shadow doesn't currently track positions.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, PartialEq, Serialize, Deserialize)]
 pub struct ShadowGraph<T>
 where
     T: Clone + PartialEq,

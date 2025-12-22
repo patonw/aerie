@@ -72,6 +72,7 @@ impl super::AppState {
                         .show(ui, |ui| {
                             ui.horizontal_wrapped(|ui| {
                                 // ui.spacing_mut().item_spacing.x = 0.0;
+                                ui.toggle_value(&mut settings_rw.autosave, "autosave");
                                 ui.toggle_value(&mut settings_rw.autoscroll, "autoscroll");
                                 ui.toggle_value(&mut settings_rw.streaming, "streaming");
                             });

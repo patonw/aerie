@@ -103,6 +103,9 @@ pub struct Settings {
     // The runner will fall back to non-streaming.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub streaming: bool,
+
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub autosave: bool,
 }
 
 pub trait ConfigExt {

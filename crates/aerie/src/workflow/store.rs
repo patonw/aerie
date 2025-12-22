@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs::OpenOptions,
+    hash::DefaultHasher,
     path::{Path, PathBuf},
 };
 
@@ -80,5 +81,36 @@ impl WorkflowStore {
         if let Some(value) = self.workflows.remove(old_name) {
             self.put(new_name, value);
         }
+    }
+
+    pub fn create_backup(&self, name: &str) -> anyhow::Result<()> {
+        use std::hash::{Hash, Hasher};
+
+        tracing::info!("Creating backup for {name}");
+        if let Some(graph) = self.workflows.get(name)
+            && let Some(dir) = self.path.parent()
+        {
+            let dir = dir.join("backups");
+            std::fs::create_dir_all(&dir)?;
+
+            let mut s = DefaultHasher::new();
+            graph.hash(&mut s);
+            let hash = s.finish();
+
+            // let dt = chrono::offset::Local::now();
+            // let ts = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
+            let file = dir.join(format!("{name}-{hash:x}.yml"));
+            tracing::info!("Backup location {file:?}");
+
+            let writer = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&file)?;
+
+            serde_yml::to_writer(writer, graph)?;
+        }
+
+        Ok(())
     }
 }
