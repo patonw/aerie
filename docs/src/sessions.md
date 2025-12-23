@@ -1,0 +1,21 @@
+# Sessions
+
+- Holds multiple branching conversations
+- First startup, no session is active
+  - Conversation will not be saved
+  - Must choose session from Session tab
+- Subsequent launches will use last session
+- Runners will not use a session by default
+  - Must override with option
+- Can create branches from existing chats
+- Can switch between branches
+- Also holds asides
+  - short unnamed branches created during a workflow
+  - allow tracing intermediate steps without polluting main conversation
+- Sessions can be passed to runners to provide context to workflow
+  - Export a session from the UI
+- the session with no name
+  - transient session will not be saved
+  - active on first run
+  - can be named with the "Rename" button to save
+  - changes will be lost when switching

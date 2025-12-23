@@ -1,0 +1,8 @@
+[book]
+authors = ["patonw"]
+language = "en"
+src = "src"
+title = "aerie"
+
+[output.html]
+admonitions = true
