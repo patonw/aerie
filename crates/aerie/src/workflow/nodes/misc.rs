@@ -57,13 +57,6 @@ impl CommentNode {
     pub fn bg_color() -> egui::Color32 {
         egui::Color32::LIGHT_YELLOW.gamma_multiply(0.75)
     }
-    pub async fn forward(
-        &mut self,
-        _ctx: &RunContext,
-        _inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        Ok(())
-    }
 }
 
 #[skip_serializing_none]
@@ -105,6 +98,32 @@ impl DynNode for TemplateNode {
             0 => Value::Text(self.value.clone()),
             _ => unreachable!(),
         }
+    }
+
+    fn execute(
+        &mut self,
+        ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        let template = match &inputs[0] {
+            Some(Value::Text(text)) => text.clone(),
+            None => self.template.clone(),
+            _ => unreachable!(),
+        };
+
+        let vars = match &inputs[1] {
+            Some(Value::Json(value)) => value.as_ref().to_owned(),
+            None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        self.vars = Arc::new(vars);
+        self.value = ctx.transmuter.render_template(&template, &self.vars)?;
+
+        Ok(self.collect_outputs())
     }
 }
 
@@ -168,32 +187,5 @@ impl UiNode for TemplateNode {
             _ => unreachable!(),
         }
         self.out_kind(pin_id).default_pin()
-    }
-}
-
-impl TemplateNode {
-    pub async fn forward(
-        &mut self,
-        run_ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        self.validate(&inputs)?;
-
-        let template = match &inputs[0] {
-            Some(Value::Text(text)) => text.clone(),
-            None => self.template.clone(),
-            _ => unreachable!(),
-        };
-
-        let vars = match &inputs[1] {
-            Some(Value::Json(value)) => value.as_ref().to_owned(),
-            None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
-            _ => unreachable!(),
-        };
-
-        self.vars = Arc::new(vars);
-        self.value = run_ctx.transmuter.render_template(&template, &self.vars)?;
-
-        Ok(())
     }
 }

@@ -1,4 +1,5 @@
 use delegate::delegate;
+use egui_snarl::NodeId;
 use kinded::Kinded;
 use serde::{Deserialize, Serialize};
 
@@ -107,31 +108,7 @@ impl WorkNode {
             #[call(noop)]
             pub fn as_ui(&self) -> &dyn UiNode;
 
-            #[deprecated="Switch to call instead"]
-            pub async fn forward(&mut self, ctx: &RunContext, inputs: Vec<Option<Value>>) -> Result<(), WorkflowError>;
-        }
-    }
-
-    pub async fn call(
-        &mut self,
-        ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        match self {
-            WorkNode::Output(node) => node.call(ctx, inputs).await,
-            WorkNode::Fallback(node) => node.call(ctx, inputs).await,
-            WorkNode::Select(node) => node.call(ctx, inputs).await,
-            WorkNode::Demote(node) => node.call(ctx, inputs).await,
-            _ => {
-                #[allow(deprecated)]
-                self.forward(ctx, inputs).await?;
-
-                let outputs = (0..self.as_dyn().outputs())
-                    .map(|i| self.as_dyn().value(i))
-                    .collect::<Vec<_>>();
-
-                Ok(outputs)
-            }
+            pub fn execute( &mut self, ctx: &RunContext, node_id: NodeId, inputs: Vec<Option<Value>>,) -> Result<Vec<Value>, WorkflowError>;
         }
     }
 }

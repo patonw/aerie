@@ -132,6 +132,76 @@ impl DynNode for AgentNode {
     fn value(&self, _out_pin: usize) -> Value {
         Value::Agent(self.agent_spec.clone())
     }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        let agent = match &inputs[0] {
+            Some(Value::Agent(spec)) => Some(spec.clone()),
+            None => None,
+            _ => unreachable!(),
+        };
+
+        let model = match &inputs[1] {
+            Some(Value::Model(name)) => Some(name.clone()),
+            None => self.model.clone(),
+            _ => unreachable!(),
+        };
+
+        if agent.is_none() && model.is_none() {
+            return Err(WorkflowError::Required(vec![
+                "Either model name or an existing agent is required.".into(),
+            ]));
+        }
+
+        let temperature = match &inputs[2] {
+            Some(Value::Number(temp)) => Some(*temp),
+            None => self.temperature,
+            _ => unreachable!(),
+        };
+
+        let toolset = match &inputs[3] {
+            Some(Value::Tools(tools)) => Some(tools.clone()),
+            None => None,
+            _ => unreachable!(),
+        };
+
+        let preamble = match &inputs[4] {
+            Some(Value::Text(text)) => Some(text.clone()),
+            None => self.preamble.clone(),
+            _ => unreachable!(),
+        };
+
+        let mut agent = agent.unwrap_or_default();
+        let builder = Arc::make_mut(&mut agent);
+
+        if let Some(model) = model {
+            builder.model(model);
+        }
+
+        if let Some(temp) = temperature {
+            tracing::debug!("Setting agent temperature {temp}");
+            builder.temperature(temp);
+        }
+
+        if let Some(preamble) = &preamble {
+            tracing::debug!("Setting agent preamble {preamble}");
+            builder.preamble(preamble.clone());
+        }
+
+        if let Some(tools) = toolset {
+            builder.tools(tools);
+        }
+
+        self.agent_spec = agent;
+
+        Ok(self.collect_outputs())
+    }
 }
 
 impl UiNode for AgentNode {
@@ -247,77 +317,6 @@ impl UiNode for AgentNode {
     }
 }
 
-impl AgentNode {
-    pub async fn forward(
-        &mut self,
-        _run_ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        self.validate(&inputs)?;
-
-        let agent = match &inputs[0] {
-            Some(Value::Agent(spec)) => Some(spec.clone()),
-            None => None,
-            _ => unreachable!(),
-        };
-
-        let model = match &inputs[1] {
-            Some(Value::Model(name)) => Some(name.clone()),
-            None => self.model.clone(),
-            _ => unreachable!(),
-        };
-
-        if agent.is_none() && model.is_none() {
-            return Err(WorkflowError::Required(vec![
-                "Either model name or an existing agent is required.".into(),
-            ]));
-        }
-
-        let temperature = match &inputs[2] {
-            Some(Value::Number(temp)) => Some(*temp),
-            None => self.temperature,
-            _ => unreachable!(),
-        };
-
-        let toolset = match &inputs[3] {
-            Some(Value::Tools(tools)) => Some(tools.clone()),
-            None => None,
-            _ => unreachable!(),
-        };
-
-        let preamble = match &inputs[4] {
-            Some(Value::Text(text)) => Some(text.clone()),
-            None => self.preamble.clone(),
-            _ => unreachable!(),
-        };
-
-        let mut agent = agent.unwrap_or_default();
-        let builder = Arc::make_mut(&mut agent);
-
-        if let Some(model) = model {
-            builder.model(model);
-        }
-
-        if let Some(temp) = temperature {
-            tracing::debug!("Setting agent temperature {temp}");
-            builder.temperature(temp);
-        }
-
-        if let Some(preamble) = &preamble {
-            tracing::debug!("Setting agent preamble {preamble}");
-            builder.preamble(preamble.clone());
-        }
-
-        if let Some(tools) = toolset {
-            builder.tools(tools);
-        }
-
-        self.agent_spec = agent;
-
-        Ok(())
-    }
-}
-
 #[skip_serializing_none]
 #[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
 pub struct ChatContext {
@@ -355,6 +354,33 @@ impl DynNode for ChatContext {
 
     fn value(&self, _out_pin: usize) -> Value {
         Value::Agent(self.agent_spec.clone())
+    }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        let mut agent_spec = match &inputs[0] {
+            Some(Value::Agent(spec)) => spec.clone(),
+            None => Err(WorkflowError::Required(vec!["Agent is required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        let context_doc = match &inputs[1] {
+            Some(Value::Text(text)) => text.clone(),
+            None => self.context_doc.clone(),
+            _ => unreachable!(),
+        };
+
+        Arc::make_mut(&mut agent_spec).context_doc(context_doc);
+
+        self.agent_spec = agent_spec;
+
+        Ok(self.collect_outputs())
     }
 }
 
@@ -429,34 +455,6 @@ impl UiNode for ChatContext {
     }
 }
 
-impl ChatContext {
-    pub async fn forward(
-        &mut self,
-        _run_ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        self.validate(&inputs)?;
-
-        let mut agent_spec = match &inputs[0] {
-            Some(Value::Agent(spec)) => spec.clone(),
-            None => Err(WorkflowError::Required(vec!["Agent is required".into()]))?,
-            _ => unreachable!(),
-        };
-
-        let context_doc = match &inputs[1] {
-            Some(Value::Text(text)) => text.clone(),
-            None => self.context_doc.clone(),
-            _ => unreachable!(),
-        };
-
-        Arc::make_mut(&mut agent_spec).context_doc(context_doc);
-
-        self.agent_spec = agent_spec;
-
-        Ok(())
-    }
-}
-
 #[skip_serializing_none]
 #[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
 pub struct InvokeTool {
@@ -514,6 +512,24 @@ impl DynNode for InvokeTool {
             3 => Value::Placeholder(ValueKind::Failure),
             _ => unreachable!(),
         }
+    }
+
+    fn execute(
+        &mut self,
+        ctx: &RunContext,
+        node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        let _ = (node_id,);
+        let rt = ctx.runtime.clone();
+        rt.block_on(async move {
+            self.forward(ctx, inputs).await?;
+            let outputs = (0..self.outputs())
+                .map(|i| self.value(i))
+                .collect::<Vec<_>>();
+
+            Ok(outputs)
+        })
     }
 }
 

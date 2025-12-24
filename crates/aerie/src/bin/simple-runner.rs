@@ -128,6 +128,7 @@ fn main() -> anyhow::Result<()> {
     agent_factory.reload_tools()?;
 
     let run_ctx = RunContext::builder()
+        .runtime(rt.handle().clone())
         .agent_factory(agent_factory)
         .history(session.history.clone())
         .user_prompt(args.prompt.as_ref().cloned().unwrap_or_default())
@@ -149,13 +150,14 @@ fn main() -> anyhow::Result<()> {
     exec.init(&shadow);
     let mut snarl = Snarl::try_from(shadow)?;
 
-    let result: anyhow::Result<()> = rt.block_on(async move {
-        loop {
-            if !exec.step(&mut snarl).await? {
-                break Ok(());
-            }
+    let result = loop {
+        match exec.step(&mut snarl) {
+            Ok(false) => break Ok(false),
+            err @ Err(_) => break err,
+            _ => {}
         }
-    });
+    };
+    drop(exec);
 
     rt.block_on(async move {
         match saver_task.await {

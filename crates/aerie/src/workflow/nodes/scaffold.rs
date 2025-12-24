@@ -69,6 +69,20 @@ impl DynNode for Start {
             _ => unreachable!(),
         }
     }
+
+    fn execute(
+        &mut self,
+        ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        _inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.history = ctx.history.load().clone();
+        self.user_prompt = ctx.user_prompt.clone();
+        self.model = ctx.model.clone();
+        self.temperature = E64::assert(ctx.temperature);
+
+        Ok(self.collect_outputs())
+    }
 }
 
 impl UiNode for Start {
@@ -102,21 +116,6 @@ impl UiNode for Start {
     }
 }
 
-impl Start {
-    pub async fn forward(
-        &mut self,
-        ctx: &RunContext,
-        _inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        self.history = ctx.history.load().clone();
-        self.user_prompt = ctx.user_prompt.clone();
-        self.model = ctx.model.clone();
-        self.temperature = E64::assert(ctx.temperature);
-
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finish {}
 
@@ -134,6 +133,33 @@ impl DynNode for Finish {
             0 => &[ValueKind::Chat],
             _ => unreachable!(),
         }
+    }
+
+    fn execute(
+        &mut self,
+        ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        match &inputs[0] {
+            Some(Value::Chat(chat)) => {
+                if ctx.history.load().is_subset(chat) {
+                    ctx.history
+                        .store(Arc::new(chat.with_base(None).into_owned()));
+                } else {
+                    Err(WorkflowError::Conversion(
+                        "Final chat history is not related to the session. Refusing to overwrite."
+                            .into(),
+                    ))?;
+                }
+            }
+            None => {}
+            _ => unreachable!(),
+        }
+
+        Ok(vec![])
     }
 }
 
@@ -159,34 +185,6 @@ impl UiNode for Finish {
         };
 
         self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-}
-
-impl Finish {
-    pub async fn forward(
-        &mut self,
-        ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        self.validate(&inputs)?;
-
-        match &inputs[0] {
-            Some(Value::Chat(chat)) => {
-                if ctx.history.load().is_subset(chat) {
-                    ctx.history
-                        .store(Arc::new(chat.with_base(None).into_owned()));
-                } else {
-                    Err(WorkflowError::Conversion(
-                        "Final chat history is not related to the session. Refusing to overwrite."
-                            .into(),
-                    ))?;
-                }
-            }
-            None => {}
-            _ => unreachable!(),
-        }
-
-        Ok(())
     }
 }
 
@@ -229,6 +227,21 @@ impl DynNode for Fallback {
         } else {
             ValueKind::Placeholder
         }
+    }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        Ok(inputs
+            .into_iter()
+            .skip(1)
+            .map(|it| it.unwrap_or_default())
+            .collect_vec())
     }
 }
 
@@ -306,30 +319,6 @@ impl UiNode for Fallback {
     }
 }
 
-impl Fallback {
-    pub async fn call(
-        &mut self,
-        _ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        self.validate(&inputs)?;
-
-        Ok(inputs
-            .into_iter()
-            .skip(1)
-            .map(|it| it.unwrap_or_default())
-            .collect_vec())
-    }
-
-    pub async fn forward(
-        &mut self,
-        _: &RunContext,
-        _: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        unreachable!()
-    }
-}
-
 // a la I/O select
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Select {
@@ -363,6 +352,24 @@ impl DynNode for Select {
 
     fn priority(&self) -> usize {
         8000
+    }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        let output = inputs
+            .into_iter()
+            .find_map(identity)
+            .ok_or(WorkflowError::Unknown(
+                "Select called with empty inputs".into(),
+            ))?;
+
+        Ok(vec![output])
     }
 }
 
@@ -427,33 +434,6 @@ impl UiNode for Select {
     }
 }
 
-impl Select {
-    pub async fn call(
-        &mut self,
-        _ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        self.validate(&inputs)?;
-
-        let output = inputs
-            .into_iter()
-            .find_map(identity)
-            .ok_or(WorkflowError::Unknown(
-                "Select called with empty inputs".into(),
-            ))?;
-
-        Ok(vec![output])
-    }
-
-    pub async fn forward(
-        &mut self,
-        _: &RunContext,
-        _: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        unreachable!()
-    }
-}
-
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Demote {
     priority: usize,
@@ -485,6 +465,24 @@ impl DynNode for Demote {
 
     fn out_kind(&self, _out_pin: usize) -> ValueKind {
         self.kind
+    }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        let output = inputs
+            .into_iter()
+            .find_map(identity)
+            .ok_or(WorkflowError::Unknown(
+                "Demote called with empty inputs".into(),
+            ))?;
+
+        Ok(vec![output])
     }
 }
 
@@ -534,32 +532,5 @@ impl UiNode for Demote {
     fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
         ui.add(egui::Slider::new(&mut self.priority, 0..=10_000).text("P"))
             .on_hover_text("priority");
-    }
-}
-
-impl Demote {
-    pub async fn call(
-        &mut self,
-        _ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        self.validate(&inputs)?;
-
-        let output = inputs
-            .into_iter()
-            .find_map(identity)
-            .ok_or(WorkflowError::Unknown(
-                "Demote called with empty inputs".into(),
-            ))?;
-
-        Ok(vec![output])
-    }
-
-    pub async fn forward(
-        &mut self,
-        _: &RunContext,
-        _: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        unreachable!()
     }
 }
