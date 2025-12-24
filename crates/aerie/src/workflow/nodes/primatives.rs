@@ -70,16 +70,6 @@ impl UiNode for Text {
     }
 }
 
-impl Text {
-    pub async fn forward(
-        &mut self,
-        _ctx: &RunContext,
-        _inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        Ok(())
-    }
-}
-
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Preview {
@@ -118,6 +108,18 @@ impl DynNode for Preview {
 
     fn value(&self, _out_pin: usize) -> Value {
         self.value.clone()
+    }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        if let Some(value) = inputs.first().and_then(|it| it.as_ref()) {
+            self.value = value.to_owned();
+        }
+        Ok(self.collect_outputs())
     }
 }
 
@@ -177,19 +179,6 @@ impl UiNode for Preview {
     }
 }
 
-impl Preview {
-    pub async fn forward(
-        &mut self,
-        _ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        if let Some(value) = inputs.first().and_then(|it| it.as_ref()) {
-            self.value = value.to_owned();
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputNode {
     label: String,
@@ -202,6 +191,32 @@ impl DynNode for OutputNode {
 
     fn outputs(&self) -> usize {
         0
+    }
+
+    fn execute(
+        &mut self,
+        ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        if self.label.is_empty() {
+            Err(WorkflowError::Required(vec!["Label is required".into()]))?;
+        }
+        let output = inputs
+            .into_iter()
+            .find_map(identity)
+            .ok_or(WorkflowError::Required(vec![
+                "Output called with empty inputs".into(),
+            ]))?;
+
+        ctx.outputs
+            .sender()
+            .send((self.label.clone(), output))
+            .map_err(|err| WorkflowError::Unknown(format!("Couldn't send output: {err:?}")))?;
+
+        Ok(vec![])
     }
 }
 
@@ -227,42 +242,6 @@ impl UiNode for OutputNode {
     }
 }
 
-impl OutputNode {
-    pub async fn call(
-        &mut self,
-        ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        self.validate(&inputs)?;
-
-        if self.label.is_empty() {
-            Err(WorkflowError::Required(vec!["Label is required".into()]))?;
-        }
-        let output = inputs
-            .into_iter()
-            .find_map(identity)
-            .ok_or(WorkflowError::Required(vec![
-                "Output called with empty inputs".into(),
-            ]))?;
-
-        ctx.outputs
-            .sender()
-            .send_async((self.label.clone(), output))
-            .await
-            .map_err(|err| WorkflowError::Unknown(format!("Couldn't send output: {err:?}")))?;
-
-        Ok(vec![])
-    }
-
-    pub async fn forward(
-        &mut self,
-        _: &RunContext,
-        _: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        unreachable!()
-    }
-}
-
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Panic {}
 
@@ -270,24 +249,13 @@ impl DynNode for Panic {
     fn priority(&self) -> usize {
         9000
     }
-}
 
-impl UiNode for Panic {
-    fn title(&self) -> &str {
-        "Panic"
-    }
-
-    fn tooltip(&self) -> &str {
-        "Aborts run if the input is non-empty"
-    }
-}
-
-impl Panic {
-    pub async fn forward(
+    fn execute(
         &mut self,
         _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
+    ) -> Result<Vec<Value>, WorkflowError> {
         if let Some(value) = inputs.first().and_then(|it| it.as_ref()) {
             match value {
                 Value::Placeholder(_) => {}
@@ -298,6 +266,16 @@ impl Panic {
             }
         }
 
-        Ok(())
+        Ok(self.collect_outputs())
+    }
+}
+
+impl UiNode for Panic {
+    fn title(&self) -> &str {
+        "Panic"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Aborts run if the input is non-empty"
     }
 }

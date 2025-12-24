@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     sync::{Arc, atomic::Ordering},
+    thread,
     time::Duration,
 };
 
@@ -874,6 +875,7 @@ impl super::AppState {
         self.session.scratch.clear();
         let mut exec = {
             let run_ctx = RunContext::builder()
+                .runtime(self.rt.clone())
                 .agent_factory(self.agent_factory.clone())
                 .transmuter(self.transmuter.clone())
                 .interrupt(self.workflows.interrupt.clone())
@@ -905,7 +907,7 @@ impl super::AppState {
 
         self.workflows.outputs.push_back((started, outputs.clone()));
 
-        self.rt.spawn(async move {
+        thread::spawn(move || {
             task_count_.fetch_add(1, Ordering::Relaxed);
             running.store(true, std::sync::atomic::Ordering::Relaxed);
 
@@ -914,10 +916,10 @@ impl super::AppState {
                     break;
                 }
 
-                match exec.step(&mut target).await {
+                match exec.step(&mut target) {
                     Ok(false) => break,
                     Ok(true) => {
-                        let mut snarl = snarl_.write().await;
+                        let mut snarl = snarl_.blocking_write();
                         *snarl = target.clone();
                     }
                     Err(err) => {
@@ -928,7 +930,7 @@ impl super::AppState {
 
                 let rx = exec.run_ctx.outputs.receiver();
                 while !rx.is_empty() {
-                    let Ok((label, value)) = rx.recv_async().await else {
+                    let Ok((label, value)) = rx.recv() else {
                         break;
                     };
                     tracing::info!("Received output {label}: {value:?}");
@@ -947,6 +949,7 @@ impl super::AppState {
                 scratch.clear();
             }
         });
+        self.rt.spawn(async move {});
     }
 }
 

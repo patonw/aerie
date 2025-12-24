@@ -34,36 +34,13 @@ impl DynNode for GraftHistory {
     fn out_kind(&self, _out_pin: usize) -> ValueKind {
         ValueKind::Chat
     }
-}
 
-impl UiNode for GraftHistory {
-    fn title(&self) -> &str {
-        "Side Conversation"
-    }
-
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        _remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => ui.label("main"),
-            1 => ui.label("aside"),
-            _ => unreachable!(),
-        };
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-}
-
-impl GraftHistory {
-    pub async fn forward(
+    fn execute(
         &mut self,
         _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
+    ) -> Result<Vec<Value>, WorkflowError> {
         self.validate(&inputs)?;
 
         let chat = match &inputs[0] {
@@ -89,7 +66,29 @@ impl GraftHistory {
         let result = chat.aside(aside.with_base(common).iter().map(|it| it.content.clone()))?;
         self.chat = Arc::new(result.into_owned());
 
-        Ok(())
+        Ok(self.collect_outputs())
+    }
+}
+
+impl UiNode for GraftHistory {
+    fn title(&self) -> &str {
+        "Side Conversation"
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+        _remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => ui.label("main"),
+            1 => ui.label("aside"),
+            _ => unreachable!(),
+        };
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
     }
 }
 
@@ -120,6 +119,46 @@ impl DynNode for MaskHistory {
 
     fn value(&self, _out_pin: usize) -> Value {
         Value::Chat(self.chat.clone())
+    }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        let chat = match &inputs[0] {
+            Some(Value::Chat(history)) => history,
+            None => Err(WorkflowError::Required(vec![
+                "Chat history required".into(),
+            ]))?,
+            _ => unreachable!(),
+        };
+
+        let limit = match &inputs[1] {
+            Some(Value::Integer(limit)) => *limit as usize,
+            None => self.limit,
+            _ => unreachable!(),
+        };
+
+        let masked = if (0..100).contains(&limit)
+            && let Some((_i, entry)) = chat
+                .with_base(None)
+                .rev_iter()
+                .enumerate()
+                .find(|(i, _)| *i == limit)
+        {
+            tracing::debug!("Setting base to {entry:?}");
+            chat.with_base(Some(entry.id))
+        } else {
+            chat.with_base(None)
+        };
+
+        self.chat = Arc::new(masked.into_owned());
+
+        Ok(self.collect_outputs())
     }
 }
 
@@ -159,47 +198,6 @@ impl UiNode for MaskHistory {
             _ => unreachable!(),
         }
         self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-}
-
-impl MaskHistory {
-    pub async fn forward(
-        &mut self,
-        _ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        self.validate(&inputs)?;
-
-        let chat = match &inputs[0] {
-            Some(Value::Chat(history)) => history,
-            None => Err(WorkflowError::Required(vec![
-                "Chat history required".into(),
-            ]))?,
-            _ => unreachable!(),
-        };
-
-        let limit = match &inputs[1] {
-            Some(Value::Integer(limit)) => *limit as usize,
-            None => self.limit,
-            _ => unreachable!(),
-        };
-
-        let masked = if (0..100).contains(&limit)
-            && let Some((_i, entry)) = chat
-                .with_base(None)
-                .rev_iter()
-                .enumerate()
-                .find(|(i, _)| *i == limit)
-        {
-            tracing::debug!("Setting base to {entry:?}");
-            chat.with_base(Some(entry.id))
-        } else {
-            chat.with_base(None)
-        };
-
-        self.chat = Arc::new(masked.into_owned());
-
-        Ok(())
     }
 }
 
@@ -259,65 +257,12 @@ impl DynNode for CreateMessage {
 
         Value::Message(msg)
     }
-}
-
-impl UiNode for CreateMessage {
-    fn title(&self) -> &str {
-        "Create Message"
-    }
-
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                if remote.is_none() {
-                    resizable_frame(&mut self.size, ui, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            let widget = egui::TextEdit::multiline(&mut self.content)
-                                .id_salt("message content")
-                                .desired_width(f32::INFINITY);
-
-                            ui.add_sized(ui.available_size(), widget)
-                                .on_hover_text("message content");
-                        });
-                    });
-                } else {
-                    ui.label("content");
-                }
-            }
-            _ => unreachable!(),
-        };
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-
-    fn has_body(&self) -> bool {
-        true
-    }
-
-    fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
-        egui::ComboBox::from_label("kind")
-            .selected_text(format!("{:?}", self.kind))
-            .show_ui(ui, |ui| {
-                for kind in MessageKind::iter() {
-                    let name = format!("{:?}", &kind);
-                    ui.selectable_value(&mut self.kind, kind, name);
-                }
-            });
-    }
-}
-
-impl CreateMessage {
-    pub async fn forward(
+    fn execute(
         &mut self,
         _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
+    ) -> Result<Vec<Value>, WorkflowError> {
         self.validate(&inputs)?;
 
         match self.kind {
@@ -384,7 +329,58 @@ impl CreateMessage {
             }
         }
 
-        Ok(())
+        Ok(self.collect_outputs())
+    }
+}
+
+impl UiNode for CreateMessage {
+    fn title(&self) -> &str {
+        "Create Message"
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                if remote.is_none() {
+                    resizable_frame(&mut self.size, ui, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            let widget = egui::TextEdit::multiline(&mut self.content)
+                                .id_salt("message content")
+                                .desired_width(f32::INFINITY);
+
+                            ui.add_sized(ui.available_size(), widget)
+                                .on_hover_text("message content");
+                        });
+                    });
+                } else {
+                    ui.label("content");
+                }
+            }
+            _ => unreachable!(),
+        };
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+
+    fn has_body(&self) -> bool {
+        true
+    }
+
+    fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
+        egui::ComboBox::from_label("kind")
+            .selected_text(format!("{:?}", self.kind))
+            .show_ui(ui, |ui| {
+                for kind in MessageKind::iter() {
+                    let name = format!("{:?}", &kind);
+                    ui.selectable_value(&mut self.kind, kind, name);
+                }
+            });
     }
 }
 
@@ -415,6 +411,39 @@ impl DynNode for ExtendHistory {
     fn value(&self, _out_pin: usize) -> Value {
         Value::Chat(self.history.clone())
     }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        let history = match &inputs[0] {
+            Some(Value::Chat(history)) => history.clone(),
+            None => Err(WorkflowError::Required(vec![
+                "Chat history required".into(),
+            ]))?,
+            _ => unreachable!(),
+        };
+
+        let messages = inputs
+            .into_iter()
+            .skip(1)
+            .take(self.count)
+            .filter_map(|it| match it {
+                Some(Value::Message(value)) => Some(value),
+                None => None,
+                _ => unreachable!(),
+            })
+            .collect_vec();
+
+        let extended = history.extend(messages.into_iter().map(|msg| Ok(msg).into()))?;
+        self.history = Arc::new(extended.into_owned());
+
+        Ok(self.collect_outputs())
+    }
 }
 
 impl UiNode for ExtendHistory {
@@ -442,39 +471,5 @@ impl UiNode for ExtendHistory {
         }
 
         self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-}
-
-impl ExtendHistory {
-    pub async fn forward(
-        &mut self,
-        _run_ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        self.validate(&inputs)?;
-
-        let history = match &inputs[0] {
-            Some(Value::Chat(history)) => history.clone(),
-            None => Err(WorkflowError::Required(vec![
-                "Chat history required".into(),
-            ]))?,
-            _ => unreachable!(),
-        };
-
-        let messages = inputs
-            .into_iter()
-            .skip(1)
-            .take(self.count)
-            .filter_map(|it| match it {
-                Some(Value::Message(value)) => Some(value),
-                None => None,
-                _ => unreachable!(),
-            })
-            .collect_vec();
-
-        let extended = history.extend(messages.into_iter().map(|msg| Ok(msg).into()))?;
-        self.history = Arc::new(extended.into_owned());
-
-        Ok(())
     }
 }

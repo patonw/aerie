@@ -149,6 +149,8 @@ impl OutputChannel {
 
 #[derive(TypedBuilder)]
 pub struct RunContext {
+    pub runtime: tokio::runtime::Handle,
+
     pub agent_factory: AgentFactory,
 
     #[builder(default)]
@@ -457,14 +459,7 @@ where
     }
 }
 
-// TODO: help link property
 pub trait DynNode {
-    // Moved to impl of each struct to avoid dealing with boxing
-    // /// Update computed values with inputs from remotes.
-    // fn forward(&mut self, inputs: Vec<Option<Value>>) -> DynFuture<Result<(), Vec<String>>> {
-    //     Box::pin(async { Ok(()) })
-    // }
-
     /// Clear values set by the connected pin so we can leave widget connected values alone.
     #[expect(unused_variables)]
     fn reset(&mut self, in_pin: usize) {}
@@ -483,6 +478,11 @@ pub trait DynNode {
 
     fn outputs(&self) -> usize {
         1
+    }
+
+    // TODO: stop using this in execute. Nodes shouldn't store results internally
+    fn collect_outputs(&self) -> Vec<Value> {
+        (0..self.outputs()).map(|i| self.value(i)).collect()
     }
 
     #[expect(unused_variables)]
@@ -539,6 +539,17 @@ pub trait DynNode {
         } else {
             Ok(())
         }
+    }
+
+    fn execute(
+        &mut self,
+        ctx: &RunContext,
+        node_id: NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        let _ = (ctx, node_id, inputs);
+
+        Ok(self.collect_outputs())
     }
 }
 

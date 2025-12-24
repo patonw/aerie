@@ -173,7 +173,8 @@ impl WorkflowRunner {
         self.node_state.clone()
     }
 
-    pub async fn step(&mut self, snarl: &mut Snarl<WorkNode>) -> Result<bool, Arc<WorkflowError>> {
+    // TODO: fully convert this to shadow graph
+    pub fn step(&mut self, snarl: &mut Snarl<WorkNode>) -> Result<bool, Arc<WorkflowError>> {
         let node_state = self.node_state.load_full();
         tracing::trace!("Priority queue: {:?}", &self.ready_nodes);
 
@@ -301,7 +302,7 @@ impl WorkflowRunner {
             .collect::<BTreeSet<_>>();
 
         // Update run state of current node
-        let succeeded = match snarl[node_id].call(&self.run_ctx, inputs).await {
+        let succeeded = match snarl[node_id].execute(&self.run_ctx, node_id, inputs) {
             Ok(values) => {
                 node_state.insert(node_id, ExecState::Done(values));
                 self.node_state.store(Arc::new(node_state.clone()));

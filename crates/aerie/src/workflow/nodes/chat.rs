@@ -78,6 +78,24 @@ impl DynNode for ChatNode {
             _ => unreachable!(),
         }
     }
+
+    fn execute(
+        &mut self,
+        ctx: &RunContext,
+        node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        let _ = (node_id,);
+        let rt = ctx.runtime.clone();
+        rt.block_on(async move {
+            self.forward(ctx, inputs).await?;
+            let outputs = (0..self.outputs())
+                .map(|i| self.value(i))
+                .collect::<Vec<_>>();
+
+            Ok(outputs)
+        })
+    }
 }
 
 impl UiNode for ChatNode {
@@ -289,6 +307,20 @@ impl DynNode for StructuredChat {
             4 => Value::Placeholder(ValueKind::Failure),
             _ => unreachable!(),
         }
+    }
+
+    fn execute(
+        &mut self,
+        ctx: &RunContext,
+        node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        let _ = (node_id,);
+        let rt = ctx.runtime.clone();
+        rt.block_on(async move {
+            self.forward(ctx, inputs).await?;
+            Ok(self.collect_outputs())
+        })
     }
 }
 
