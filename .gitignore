@@ -1,7 +1,4 @@
-# moon
-.moon/cache
-.moon/docker
-
+.lazy.lua
 build/
 dist/
 out/
@@ -19,3 +16,5 @@ data/
 scratch*
 perf.data*
 flamegraph*
+.fastembed_cache/
+*/docs/book
