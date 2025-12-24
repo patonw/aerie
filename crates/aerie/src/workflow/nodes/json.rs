@@ -226,7 +226,7 @@ impl DynNode for ValidateJson {
 
         Ok(vec![
             Value::Json(value),
-            // Value::Placeholder(ValueKind::Failure),
+            Value::Placeholder(ValueKind::Failure),
         ])
     }
 }

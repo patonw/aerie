@@ -1,5 +1,4 @@
 use arc_swap::ArcSwap;
-use chrono::{DateTime, Local};
 use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
@@ -29,7 +28,7 @@ use crate::{
     utils::ErrorList,
     workflow::{
         ShadowGraph, WorkNode, fixup_workflow,
-        runner::ExecState,
+        runner::{ExecState, WorkflowRun},
         store::{WorkflowStore, WorkflowStoreDir},
     },
 };
@@ -129,8 +128,6 @@ impl egui_tiles::Behavior<Pane> for AppState {
     }
 }
 
-type RunOutput = Arc<ArcSwap<im::OrdMap<String, crate::workflow::Value>>>;
-
 /// Portion of the UI state dealing with workflows.
 pub struct WorkflowState<W: WorkflowStore> {
     pub frozen: bool,
@@ -161,7 +158,7 @@ pub struct WorkflowState<W: WorkflowStore> {
     pub undo_stack: im::OrdMap<String, VecDeque<(SystemTime, ShadowGraph<WorkNode>)>>,
     pub redo_stack: im::OrdMap<String, VecDeque<(SystemTime, ShadowGraph<WorkNode>)>>,
 
-    pub outputs: im::Vector<(DateTime<Local>, RunOutput)>,
+    pub outputs: im::Vector<WorkflowRun>,
 }
 
 impl<W: WorkflowStore> WorkflowState<W> {

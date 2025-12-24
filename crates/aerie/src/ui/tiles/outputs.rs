@@ -1,4 +1,4 @@
-use std::{fs::OpenOptions, io::Cursor};
+use std::{fs::OpenOptions, io::Cursor, sync::atomic::Ordering, time::Duration};
 
 use egui_phosphor::regular::FLOPPY_DISK;
 
@@ -9,9 +9,17 @@ impl super::AppState {
         let settings = self.settings.clone();
         let errors = self.errors.clone();
         let mut trash_idx = None;
+
+        let scroll_bottom = self.task_count.load(Ordering::Relaxed) > 0 && {
+            let settings_r = self.settings.read().unwrap();
+            settings_r.autoscroll
+        };
+
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for (run_i, (dt, outputs)) in self.workflows.outputs.iter().enumerate() {
+                for (run_i, entry) in self.workflows.outputs.iter().enumerate() {
+                    let dt = &entry.started;
+                    let outputs = &entry.outputs;
                     ui.push_id(run_i, |ui| {
                         if run_i > 0 {
                             ui.separator();
@@ -20,7 +28,18 @@ impl super::AppState {
                         egui::Sides::new().show(
                             ui,
                             |ui| {
-                                ui.label(dt.to_string());
+                                // Really don't care about micro and nano-seconds
+                                let seconds = entry.duration.load().as_ref().as_secs();
+
+                                if seconds > 0 {
+                                    ui.label(format!(
+                                        "{} ({})",
+                                        &entry.workflow,
+                                        humantime::Duration::from(Duration::from_secs(seconds))
+                                    ));
+                                } else {
+                                    ui.label(&entry.workflow);
+                                }
                             },
                             |ui| {
                                 ui.menu_button("Delete", |ui| {
@@ -32,6 +51,8 @@ impl super::AppState {
                                 .on_hover_text("Delete outputs from this run");
                             },
                         );
+
+                        ui.small(dt.to_string());
 
                         let outputs = outputs.load();
 
@@ -86,6 +107,10 @@ impl super::AppState {
                             });
                         }
                     });
+                }
+
+                if scroll_bottom {
+                    ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
                 }
             });
         });

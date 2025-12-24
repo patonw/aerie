@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     sync::{Arc, atomic::Ordering},
     thread,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use arc_swap::ArcSwap;
@@ -25,7 +25,7 @@ use crate::{
     workflow::{
         EditContext, RunContext, ShadowGraph, WorkNode,
         nodes::CommentNode,
-        runner::{ExecState, WorkflowRunner},
+        runner::{ExecState, WorkflowRun, WorkflowRunner},
         store::WorkflowStore as _,
     },
 };
@@ -903,11 +903,24 @@ impl super::AppState {
         let errors = self.errors.clone();
         let interrupt = self.workflows.interrupt.clone();
         let outputs: Arc<ArcSwap<im::OrdMap<String, crate::workflow::Value>>> = Default::default();
+        let duration: Arc<ArcSwap<Duration>> = Default::default();
         let started = chrono::offset::Local::now();
 
-        self.workflows.outputs.push_back((started, outputs.clone()));
+        let entry = WorkflowRun::builder()
+            .started(started)
+            .duration(duration.clone())
+            .workflow(self.workflows.editing.clone())
+            .outputs(outputs.clone())
+            .build();
+
+        let runs = &mut self.workflows.outputs;
+        runs.push_back(entry);
+        if runs.len() > 128 {
+            *runs = runs.skip(runs.len() - 128);
+        }
 
         thread::spawn(move || {
+            let started = SystemTime::now();
             task_count_.fetch_add(1, Ordering::Relaxed);
             running.store(true, std::sync::atomic::Ordering::Relaxed);
 
@@ -916,6 +929,7 @@ impl super::AppState {
                     break;
                 }
 
+                duration.store(Arc::new(started.elapsed().unwrap_or_default()));
                 match exec.step(&mut target) {
                     Ok(false) => break,
                     Ok(true) => {
@@ -939,6 +953,7 @@ impl super::AppState {
                 }
             }
 
+            duration.store(Arc::new(started.elapsed().unwrap_or_default()));
             errors.distil(session.save());
             running.store(false, std::sync::atomic::Ordering::Relaxed);
             task_count_.fetch_sub(1, Ordering::Relaxed);
