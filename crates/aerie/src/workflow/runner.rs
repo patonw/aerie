@@ -1,4 +1,5 @@
 use arc_swap::ArcSwap;
+use chrono::{DateTime, Local};
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use im::OrdSet;
 use itertools::Itertools;
@@ -6,12 +7,23 @@ use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap},
     ops::Deref,
     sync::Arc,
+    time::Duration,
 };
 use typed_builder::TypedBuilder;
 
 use crate::workflow::{ShadowGraph, ValueKind, Wire, WorkflowError, nodes::WorkNodeKind};
 
 use super::{RunContext, Value, WorkNode};
+
+pub type RunOutput = Arc<ArcSwap<im::OrdMap<String, crate::workflow::Value>>>;
+
+#[derive(Debug, Clone, Default, TypedBuilder)]
+pub struct WorkflowRun {
+    pub workflow: String,
+    pub started: DateTime<Local>,
+    pub duration: Arc<ArcSwap<Duration>>,
+    pub outputs: RunOutput,
+}
 
 #[derive(Clone)]
 pub enum ExecState {

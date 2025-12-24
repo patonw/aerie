@@ -78,3 +78,4 @@ chrono = "0.4.42"
 futures-util = "0.3.31"
 either = { version = "1.15.0", features = ["serde"] }
 dotenvy = { version = "0.15.7", features = ["clap"] }
+humantime = "2.3.0"
