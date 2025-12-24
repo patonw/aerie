@@ -7,8 +7,7 @@ use std::{sync::Arc, time::Duration};
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 use crate::{
-    ChatContent, ChatHistory, ToolProvider, ToolSelector, agent::AgentSpec, ui::resizable_frame,
-    workflow::WorkflowError,
+    ChatContent, ToolProvider, ToolSelector, ui::resizable_frame, workflow::WorkflowError,
 };
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,12 +93,6 @@ pub struct AgentNode {
     pub temperature: Option<E64>,
 
     pub size: Option<crate::utils::EVec2>,
-
-    #[serde(skip)]
-    pub tools: Option<Arc<ToolSelector>>,
-
-    #[serde(skip)]
-    pub agent_spec: Arc<AgentSpec>,
 }
 
 impl DynNode for AgentNode {
@@ -127,10 +120,6 @@ impl DynNode for AgentNode {
             0 => ValueKind::Agent,
             _ => unreachable!(),
         }
-    }
-
-    fn value(&self, _out_pin: usize) -> Value {
-        Value::Agent(self.agent_spec.clone())
     }
 
     fn execute(
@@ -198,9 +187,7 @@ impl DynNode for AgentNode {
             builder.tools(tools);
         }
 
-        self.agent_spec = agent;
-
-        Ok(self.collect_outputs())
+        Ok(vec![Value::Agent(agent)])
     }
 }
 
@@ -323,9 +310,6 @@ pub struct ChatContext {
     pub context_doc: String,
 
     pub size: Option<crate::utils::EVec2>,
-
-    #[serde(skip)]
-    pub agent_spec: Arc<AgentSpec>,
 }
 
 impl DynNode for ChatContext {
@@ -352,10 +336,6 @@ impl DynNode for ChatContext {
         }
     }
 
-    fn value(&self, _out_pin: usize) -> Value {
-        Value::Agent(self.agent_spec.clone())
-    }
-
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -378,9 +358,7 @@ impl DynNode for ChatContext {
 
         Arc::make_mut(&mut agent_spec).context_doc(context_doc);
 
-        self.agent_spec = agent_spec;
-
-        Ok(self.collect_outputs())
+        Ok(vec![Value::Agent(agent_spec)])
     }
 }
 
@@ -459,12 +437,6 @@ impl UiNode for ChatContext {
 #[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
 pub struct InvokeTool {
     pub tool_name: String,
-
-    #[serde(skip)]
-    pub history: Arc<ChatHistory>,
-
-    #[serde(skip)]
-    pub tool_output: String,
 }
 
 impl DynNode for InvokeTool {
@@ -496,24 +468,6 @@ impl DynNode for InvokeTool {
         }
     }
 
-    fn value(&self, out_pin: usize) -> Value {
-        match out_pin {
-            0 => Value::Chat(self.history.clone()),
-            1 => {
-                if let Some(entry) = self.history.last()
-                    && let ChatContent::Message(message) = &entry.content
-                {
-                    Value::Message(message.clone())
-                } else {
-                    Value::Placeholder(ValueKind::Message)
-                }
-            }
-            2 => Value::Text(self.tool_output.clone()),
-            3 => Value::Placeholder(ValueKind::Failure),
-            _ => unreachable!(),
-        }
-    }
-
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -522,14 +476,7 @@ impl DynNode for InvokeTool {
     ) -> Result<Vec<Value>, WorkflowError> {
         let _ = (node_id,);
         let rt = ctx.runtime.clone();
-        rt.block_on(async move {
-            self.forward(ctx, inputs).await?;
-            let outputs = (0..self.outputs())
-                .map(|i| self.value(i))
-                .collect::<Vec<_>>();
-
-            Ok(outputs)
-        })
+        rt.block_on(self.forward(ctx, inputs))
     }
 }
 
@@ -598,7 +545,7 @@ impl InvokeTool {
         &mut self,
         run_ctx: &RunContext,
         inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
+    ) -> Result<Vec<Value>, WorkflowError> {
         self.validate(&inputs)?;
 
         let chat = match &inputs[0] {
@@ -641,7 +588,7 @@ impl InvokeTool {
         };
 
         let future = rig_tools.call(tool_name, args.to_string());
-        let output =
+        let tool_output =
             if let Some(seconds) = run_ctx.agent_factory.toolbox.timeout(&toolset, tool_name) {
                 tokio::time::timeout(Duration::from_secs(seconds), future)
                     .await
@@ -650,13 +597,23 @@ impl InvokeTool {
                 future.await?
             };
 
-        let msg = Message::tool_result(tool_name, &output);
+        let msg = Message::tool_result(tool_name, &tool_output);
         let chat = chat.extend(vec![Ok(msg).into()])?;
-        self.history = Arc::new(chat.into_owned());
+        let history = Arc::new(chat.into_owned());
 
-        // Should we even attempt to deseruakuze here? Can we get an output schema?
-        self.tool_output = output;
+        let msg = if let Some(entry) = history.last()
+            && let ChatContent::Message(message) = &entry.content
+        {
+            Value::Message(message.clone())
+        } else {
+            Value::Placeholder(ValueKind::Message)
+        };
 
-        Ok(())
+        Ok(vec![
+            Value::Chat(history.clone()),
+            msg,
+            Value::Text(tool_output.clone()),
+            Value::Placeholder(ValueKind::Failure),
+        ])
     }
 }

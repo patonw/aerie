@@ -8,21 +8,14 @@ use rig::{
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-use crate::{ChatContent, ChatHistory, ui::resizable_frame, utils::EVec2, workflow::WorkflowError};
+use crate::{ChatContent, ui::resizable_frame, utils::EVec2, workflow::WorkflowError};
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
-pub struct GraftHistory {
-    #[serde(skip)]
-    pub chat: Arc<ChatHistory>,
-}
+pub struct GraftHistory {}
 
 impl DynNode for GraftHistory {
-    fn value(&self, _out_pin: usize) -> Value {
-        Value::Chat(self.chat.clone())
-    }
-
     fn inputs(&self) -> usize {
         2
     }
@@ -64,9 +57,9 @@ impl DynNode for GraftHistory {
             .find_common(aside.with_base(None).as_ref());
 
         let result = chat.aside(aside.with_base(common).iter().map(|it| it.content.clone()))?;
-        self.chat = Arc::new(result.into_owned());
+        let chat = Arc::new(result.into_owned());
 
-        Ok(self.collect_outputs())
+        Ok(vec![Value::Chat(chat)])
     }
 }
 
@@ -95,9 +88,6 @@ impl UiNode for GraftHistory {
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
 pub struct MaskHistory {
     pub limit: usize,
-
-    #[serde(skip)]
-    pub chat: Arc<ChatHistory>,
 }
 
 impl DynNode for MaskHistory {
@@ -115,10 +105,6 @@ impl DynNode for MaskHistory {
 
     fn out_kind(&self, _out_pin: usize) -> ValueKind {
         ValueKind::Chat
-    }
-
-    fn value(&self, _out_pin: usize) -> Value {
-        Value::Chat(self.chat.clone())
     }
 
     fn execute(
@@ -156,9 +142,9 @@ impl DynNode for MaskHistory {
             chat.with_base(None)
         };
 
-        self.chat = Arc::new(masked.into_owned());
+        let chat = Arc::new(masked.into_owned());
 
-        Ok(self.collect_outputs())
+        Ok(vec![Value::Chat(chat)])
     }
 }
 
@@ -230,9 +216,6 @@ pub struct CreateMessage {
     kind: MessageKind,
     content: String,
     size: Option<EVec2>,
-
-    #[serde(skip)]
-    value: Option<ChatContent>,
 }
 
 impl DynNode for CreateMessage {
@@ -244,19 +227,6 @@ impl DynNode for CreateMessage {
         ValueKind::Message
     }
 
-    fn value(&self, _out_pin: usize) -> Value {
-        let Some(value) = &self.value else {
-            return Value::Placeholder(ValueKind::Message);
-        };
-
-        let msg = match value {
-            ChatContent::Message(message) => message.clone(),
-            ChatContent::Error { err } => Message::user(format!("Error:\n{err:?}")),
-            _ => unreachable!(),
-        };
-
-        Value::Message(msg)
-    }
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -265,7 +235,7 @@ impl DynNode for CreateMessage {
     ) -> Result<Vec<Value>, WorkflowError> {
         self.validate(&inputs)?;
 
-        match self.kind {
+        let value = match self.kind {
             MessageKind::ToolCall => {
                 let data =
                     match &inputs[0] {
@@ -300,10 +270,10 @@ impl DynNode for CreateMessage {
                     AssistantContent::tool_call("", "", data.as_ref().clone())
                 };
 
-                self.value = Some(ChatContent::Message(Message::Assistant {
+                Some(ChatContent::Message(Message::Assistant {
                     id: None,
                     content: OneOrMany::one(content),
-                }));
+                }))
             }
             _ => {
                 let text = match &inputs[0] {
@@ -316,7 +286,7 @@ impl DynNode for CreateMessage {
                     _ => unreachable!(),
                 };
 
-                self.value = Some(match self.kind {
+                Some(match self.kind {
                     MessageKind::Error => ChatContent::Error { err: text },
                     MessageKind::User => ChatContent::Message(Message::user(text)),
                     MessageKind::Assistant => ChatContent::Message(Message::assistant(text)),
@@ -325,11 +295,21 @@ impl DynNode for CreateMessage {
                         ChatContent::Message(message)
                     }
                     _ => unreachable!(),
-                });
+                })
             }
-        }
+        };
 
-        Ok(self.collect_outputs())
+        let Some(value) = &value else {
+            return Ok(vec![Value::Placeholder(ValueKind::Message)]);
+        };
+
+        let msg = match value {
+            ChatContent::Message(message) => message.clone(),
+            ChatContent::Error { err } => Message::user(format!("Error:\n{err:?}")),
+            _ => unreachable!(),
+        };
+
+        Ok(vec![Value::Message(msg)])
     }
 }
 
@@ -387,9 +367,6 @@ impl UiNode for CreateMessage {
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ExtendHistory {
     pub count: usize,
-
-    #[serde(skip)]
-    pub history: Arc<ChatHistory>,
 }
 
 impl DynNode for ExtendHistory {
@@ -406,10 +383,6 @@ impl DynNode for ExtendHistory {
 
     fn out_kind(&self, _out_pin: usize) -> ValueKind {
         ValueKind::Chat
-    }
-
-    fn value(&self, _out_pin: usize) -> Value {
-        Value::Chat(self.history.clone())
     }
 
     fn execute(
@@ -440,9 +413,9 @@ impl DynNode for ExtendHistory {
             .collect_vec();
 
         let extended = history.extend(messages.into_iter().map(|msg| Ok(msg).into()))?;
-        self.history = Arc::new(extended.into_owned());
+        let value = Arc::new(extended.into_owned());
 
-        Ok(self.collect_outputs())
+        Ok(vec![Value::Chat(value)])
     }
 }
 

@@ -35,6 +35,15 @@ impl DynNode for Text {
         assert_eq!(out_pin, 0);
         ValueKind::Text
     }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        _inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        Ok(vec![Value::Text(self.value.clone())])
+    }
 }
 
 impl UiNode for Text {
@@ -119,7 +128,7 @@ impl DynNode for Preview {
         if let Some(value) = inputs.first().and_then(|it| it.as_ref()) {
             self.value = value.to_owned();
         }
-        Ok(self.collect_outputs())
+        Ok(vec![])
     }
 }
 
@@ -250,6 +259,10 @@ impl DynNode for Panic {
         9000
     }
 
+    fn outputs(&self) -> usize {
+        0
+    }
+
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -266,7 +279,7 @@ impl DynNode for Panic {
             }
         }
 
-        Ok(self.collect_outputs())
+        Ok(vec![])
     }
 }
 

@@ -1,10 +1,10 @@
-use std::sync::Arc;
-
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
     ui::resizable_frame,
+    utils::message_text,
     workflow::{DynNode, EditContext, RunContext, UiNode, Value, WorkflowError},
 };
 
@@ -65,12 +65,6 @@ pub struct TemplateNode {
     template: String,
 
     size: Option<crate::utils::EVec2>,
-
-    #[serde(skip)]
-    vars: Arc<serde_json::Value>,
-
-    #[serde(skip)]
-    value: String,
 }
 
 impl DynNode for TemplateNode {
@@ -81,7 +75,13 @@ impl DynNode for TemplateNode {
     fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
         match in_pin {
             0 => &[ValueKind::Text],
-            1 => &[ValueKind::Json],
+            1 => &[
+                ValueKind::Json,
+                ValueKind::Number,
+                ValueKind::Integer,
+                ValueKind::Text,
+                ValueKind::Message,
+            ],
             _ => unreachable!(),
         }
     }
@@ -89,13 +89,6 @@ impl DynNode for TemplateNode {
     fn out_kind(&self, out_pin: usize) -> ValueKind {
         match out_pin {
             0 => ValueKind::Text,
-            _ => unreachable!(),
-        }
-    }
-
-    fn value(&self, out_pin: usize) -> Value {
-        match out_pin {
-            0 => Value::Text(self.value.clone()),
             _ => unreachable!(),
         }
     }
@@ -115,15 +108,21 @@ impl DynNode for TemplateNode {
         };
 
         let vars = match &inputs[1] {
-            Some(Value::Json(value)) => value.as_ref().to_owned(),
+            Some(Value::Json(value)) => match value.as_ref() {
+                serde_json::Value::Object(_) => value.as_ref().clone(),
+                _ => json!({"value": value}),
+            },
+            Some(Value::Number(value)) => json!({"value": value}),
+            Some(Value::Integer(value)) => json!({"value": value}),
+            Some(Value::Text(value)) => json!({"value": value}),
+            Some(Value::Message(value)) => json!({"value": message_text(value)}),
             None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
             _ => unreachable!(),
         };
 
-        self.vars = Arc::new(vars);
-        self.value = ctx.transmuter.render_template(&template, &self.vars)?;
+        let value = ctx.transmuter.render_template(&template, &vars)?;
 
-        Ok(self.collect_outputs())
+        Ok(vec![Value::Text(value)])
     }
 }
 

@@ -5,27 +5,14 @@ use egui_snarl::OutPinId;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
-use crate::{ChatHistory, workflow::WorkflowError};
+use crate::workflow::WorkflowError;
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
 // These fields will always be set from the run context each execution.
 // Saving them to disk is just a waste.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Start {
-    /// A snapshot of the history at the start of run
-    #[serde(skip)]
-    pub history: Arc<ChatHistory>,
-
-    #[serde(skip)]
-    pub user_prompt: String,
-
-    #[serde(skip)]
-    pub model: String,
-
-    #[serde(skip)]
-    pub temperature: E64,
-}
+pub struct Start {}
 
 impl std::hash::Hash for Start {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -60,28 +47,18 @@ impl DynNode for Start {
         }
     }
 
-    fn value(&self, out_pin: usize) -> Value {
-        match out_pin {
-            0 => Value::Model(self.model.clone()),
-            1 => Value::Number(self.temperature),
-            2 => Value::Chat(self.history.clone()),
-            3 => Value::Text(self.user_prompt.clone()),
-            _ => unreachable!(),
-        }
-    }
-
     fn execute(
         &mut self,
         ctx: &RunContext,
         _node_id: egui_snarl::NodeId,
         _inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        self.history = ctx.history.load().clone();
-        self.user_prompt = ctx.user_prompt.clone();
-        self.model = ctx.model.clone();
-        self.temperature = E64::assert(ctx.temperature);
-
-        Ok(self.collect_outputs())
+        Ok(vec![
+            Value::Model(ctx.model.clone()),
+            Value::Number(E64::assert(ctx.temperature)),
+            Value::Chat(ctx.history.load().clone()),
+            Value::Text(ctx.user_prompt.clone()),
+        ])
     }
 }
 

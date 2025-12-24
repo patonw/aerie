@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
     ui::resizable_frame,
-    utils::extract_json,
+    utils::{extract_json, message_text},
     workflow::{DynNode, EditContext, RunContext, UiNode, Value, WorkflowError},
 };
 
@@ -24,9 +25,6 @@ pub struct ParseJson {
     as_array: bool,
 
     size: Option<crate::utils::EVec2>,
-
-    #[serde(skip)]
-    value: Arc<serde_json::Value>,
 }
 
 impl DynNode for ParseJson {
@@ -45,14 +43,6 @@ impl DynNode for ParseJson {
         match out_pin {
             0 => ValueKind::Json,
             1 => ValueKind::Failure,
-            _ => unreachable!(),
-        }
-    }
-
-    fn value(&self, out_pin: usize) -> Value {
-        match out_pin {
-            0 => Value::Json(self.value.clone()),
-            1 => Value::Placeholder(ValueKind::Failure),
             _ => unreachable!(),
         }
     }
@@ -85,9 +75,12 @@ impl DynNode for ParseJson {
             }
         };
 
-        self.value = Arc::new(value);
+        let value = Arc::new(value);
 
-        Ok(self.collect_outputs())
+        Ok(vec![
+            Value::Json(value),
+            Value::Placeholder(ValueKind::Failure),
+        ])
     }
 }
 
@@ -166,11 +159,13 @@ impl UiNode for ParseJson {
     }
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidateJson {
-    // schema_text: String,
-    #[serde(skip)]
-    value: Arc<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    schema: String,
+
+    size: Option<crate::utils::EVec2>,
 }
 
 impl DynNode for ValidateJson {
@@ -181,7 +176,7 @@ impl DynNode for ValidateJson {
     fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
         match in_pin {
             0 => &[ValueKind::Json],
-            1 => &[ValueKind::Json],
+            1 => &[ValueKind::Json, ValueKind::Text, ValueKind::Message],
             _ => unreachable!(),
         }
     }
@@ -198,14 +193,6 @@ impl DynNode for ValidateJson {
         }
     }
 
-    fn value(&self, out_pin: usize) -> super::Value {
-        match out_pin {
-            0 => Value::Json(self.value.clone()),
-            1 => Value::Placeholder(ValueKind::Failure),
-            _ => unreachable!(),
-        }
-    }
-
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -213,16 +200,21 @@ impl DynNode for ValidateJson {
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
         self.validate(&inputs)?;
-        self.value = Arc::new(serde_json::Value::Null);
 
         let schema = match &inputs[0] {
             Some(Value::Json(schema)) => schema.as_ref().to_owned(),
+            None if !self.schema.is_empty() => serde_json::from_str(&self.schema)
+                .map_err(|err| WorkflowError::Conversion(err.to_string()))?,
             None => Err(WorkflowError::Required(vec!["Schema is required".into()]))?,
             _ => unreachable!(),
         };
 
         let input = match &inputs[1] {
             Some(Value::Json(input)) => input.as_ref().to_owned(),
+            Some(Value::Text(text)) => serde_json::from_str(text)
+                .map_err(|err| WorkflowError::Conversion(err.to_string()))?,
+            Some(Value::Message(msg)) => serde_json::from_str(&message_text(msg))
+                .map_err(|err| WorkflowError::Conversion(err.to_string()))?,
             None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
             _ => unreachable!(),
         };
@@ -230,9 +222,12 @@ impl DynNode for ValidateJson {
         jsonschema::validate(&schema, &input)
             .map_err(|err| anyhow::anyhow!("Validation error: {err:?}"))?;
 
-        self.value = Arc::new(input);
+        let value = Arc::new(input);
 
-        Ok(self.collect_outputs())
+        Ok(vec![
+            Value::Json(value),
+            // Value::Placeholder(ValueKind::Failure),
+        ])
     }
 }
 
@@ -255,11 +250,26 @@ impl UiNode for ValidateJson {
         ui: &mut egui::Ui,
         _ctx: &EditContext,
         pin_id: usize,
-        _remote: Option<Value>,
+        remote: Option<Value>,
     ) -> egui_snarl::ui::PinInfo {
         match pin_id {
             0 => {
-                ui.label("schema");
+                if remote.is_none() {
+                    resizable_frame(&mut self.size, ui, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            let hint_text = "JSON Schema";
+                            let widget = egui::TextEdit::multiline(&mut self.schema)
+                                .hint_text(hint_text)
+                                .id_salt(hint_text)
+                                .desired_width(f32::INFINITY);
+
+                            ui.add_sized(ui.available_size(), widget)
+                                .on_hover_text(hint_text);
+                        });
+                    });
+                } else {
+                    ui.label("schema");
+                }
             }
             1 => {
                 ui.label("json");
@@ -295,9 +305,6 @@ pub struct TransformJson {
     filter: String,
 
     size: Option<crate::utils::EVec2>,
-
-    #[serde(skip)]
-    value: Arc<serde_json::Value>,
 }
 
 impl DynNode for TransformJson {
@@ -308,17 +315,19 @@ impl DynNode for TransformJson {
     fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
         match in_pin {
             0 => &[ValueKind::Text],
-            1 => &[ValueKind::Json],
+            1 => &[
+                ValueKind::Json,
+                ValueKind::Number,
+                ValueKind::Integer,
+                ValueKind::Text,
+                ValueKind::Message,
+            ],
             _ => unreachable!(),
         }
     }
 
     fn out_kind(&self, _out_pin: usize) -> ValueKind {
         ValueKind::Json
-    }
-
-    fn value(&self, _out_pin: usize) -> super::Value {
-        super::Value::Json(self.value.clone())
     }
 
     fn execute(
@@ -339,15 +348,17 @@ impl DynNode for TransformJson {
 
         let input = match &inputs[1] {
             Some(Value::Json(input)) => input.as_ref().to_owned(),
+            Some(Value::Number(value)) => json!(value),
+            Some(Value::Integer(value)) => json!(value),
+            Some(Value::Text(value)) => json!(value),
+            Some(Value::Message(value)) => json!(message_text(value)),
             None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
             _ => unreachable!(),
         };
 
         let value = ctx.transmuter.run_filter(&filter, input)?;
 
-        self.value = Arc::new(value);
-
-        Ok(self.collect_outputs())
+        Ok(vec![Value::Json(Arc::new(value))])
     }
 }
 
@@ -402,9 +413,6 @@ impl UiNode for TransformJson {
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GatherJson {
     count: usize,
-
-    #[serde(skip)]
-    value: Arc<serde_json::Value>,
 }
 
 impl DynNode for GatherJson {
@@ -424,10 +432,6 @@ impl DynNode for GatherJson {
 
     fn out_kind(&self, _out_pin: usize) -> ValueKind {
         ValueKind::Json
-    }
-
-    fn value(&self, _out_pin: usize) -> Value {
-        Value::Json(self.value.clone())
     }
 
     fn execute(
@@ -459,9 +463,9 @@ impl DynNode for GatherJson {
             })
             .collect_vec();
 
-        self.value = Arc::new(serde_json::Value::Array(values));
+        let value = Arc::new(serde_json::Value::Array(values));
 
-        Ok(self.collect_outputs())
+        Ok(vec![Value::Json(value)])
     }
 }
 
