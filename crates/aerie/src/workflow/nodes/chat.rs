@@ -16,7 +16,7 @@ use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
-    ChatContent, ChatHistory, ToolSelector,
+    ChatContent, ToolSelector,
     ui::resizable_frame,
     utils::{CowExt as _, extract_json, message_text},
     workflow::WorkflowError,
@@ -31,8 +31,6 @@ pub struct ChatNode {
     pub prompt: String,
 
     pub size: Option<crate::utils::EVec2>,
-    #[serde(skip)]
-    pub history: Arc<ChatHistory>,
 }
 
 impl DynNode for ChatNode {
@@ -62,23 +60,6 @@ impl DynNode for ChatNode {
         }
     }
 
-    fn value(&self, out_pin: usize) -> Value {
-        match out_pin {
-            0 => Value::Chat(self.history.clone()),
-            1 => {
-                if let Some(entry) = self.history.last()
-                    && let ChatContent::Message(message) = &entry.content
-                {
-                    Value::Message(message.clone())
-                } else {
-                    Value::Placeholder(ValueKind::Message)
-                }
-            }
-            2 => Value::Placeholder(ValueKind::Failure), // Runner handles the actual error values
-            _ => unreachable!(),
-        }
-    }
-
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -87,14 +68,7 @@ impl DynNode for ChatNode {
     ) -> Result<Vec<Value>, WorkflowError> {
         let _ = (node_id,);
         let rt = ctx.runtime.clone();
-        rt.block_on(async move {
-            self.forward(ctx, inputs).await?;
-            let outputs = (0..self.outputs())
-                .map(|i| self.value(i))
-                .collect::<Vec<_>>();
-
-            Ok(outputs)
-        })
+        rt.block_on(self.forward(ctx, inputs))
     }
 }
 
@@ -177,7 +151,7 @@ impl ChatNode {
         &mut self,
         run_ctx: &RunContext,
         inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
+    ) -> Result<Vec<Value>, WorkflowError> {
         self.validate(&inputs)?;
 
         let agent_spec = match &inputs[0] {
@@ -192,6 +166,7 @@ impl ChatNode {
             ]))?,
             _ => unreachable!(),
         };
+        let mut chat = Cow::Borrowed(chat.as_ref());
 
         let prompt = match &inputs[2] {
             Some(Value::Text(text)) if !text.is_empty() => Message::user(text.clone()),
@@ -204,18 +179,17 @@ impl ChatNode {
             _ => Err(WorkflowError::Required(vec!["A prompt is required".into()]))?,
         };
 
-        let mut history = chat.iter_msgs().map(|it| it.into_owned()).collect_vec();
-        let last_idx = history.len();
+        let mut messages = chat.iter_msgs().map(|it| it.into_owned()).collect_vec();
+        let last_idx = messages.len();
 
         let agent = agent_spec.agent(&run_ctx.agent_factory)?;
         let tools = agent_spec.tool_selection();
 
-        let request = multi_turn_completion(run_ctx, &agent, tools, prompt, &mut history);
+        let request = multi_turn_completion(run_ctx, &agent, tools, prompt, &mut messages);
         let prompt_request = request.await;
         match prompt_request {
             Ok(_) => {
-                let mut chat = Cow::Borrowed(chat.as_ref());
-                for msg in history.into_iter().skip(last_idx) {
+                for msg in messages.into_iter().skip(last_idx) {
                     // When we implement streaming, we can hold onto the pointer
                     // and update it incrementally.
                     if !run_ctx.streaming
@@ -226,13 +200,25 @@ impl ChatNode {
 
                     chat = chat.try_moo(|c| c.push(Ok(msg).into()))?;
                 }
-
-                self.history = Arc::new(chat.into_owned());
             }
             Err(err) => Err(WorkflowError::Provider(err.into()))?,
         }
 
-        Ok(())
+        let message = {
+            if let Some(entry) = chat.last()
+                && let ChatContent::Message(message) = &entry.content
+            {
+                Value::Message(message.clone())
+            } else {
+                Value::Placeholder(ValueKind::Message)
+            }
+        };
+
+        Ok(vec![
+            Value::Chat(Arc::new(chat.into_owned())),
+            message,
+            Value::Placeholder(ValueKind::Failure), // Runner handles the actual error values
+        ])
     }
 }
 
@@ -248,15 +234,6 @@ pub struct StructuredChat {
 
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub extract: bool,
-
-    #[serde(skip)]
-    pub history: Arc<ChatHistory>,
-
-    #[serde(skip)]
-    pub tool_name: String,
-
-    #[serde(skip)]
-    pub data: Arc<serde_json::Value>,
 }
 
 // outputs: chat, message, structured data
@@ -290,25 +267,6 @@ impl DynNode for StructuredChat {
         }
     }
 
-    fn value(&self, out_pin: usize) -> Value {
-        match out_pin {
-            0 => Value::Chat(self.history.clone()),
-            1 => {
-                if let Some(entry) = self.history.last()
-                    && let ChatContent::Message(message) = &entry.content
-                {
-                    Value::Message(message.clone())
-                } else {
-                    Value::Placeholder(ValueKind::Message)
-                }
-            }
-            2 => Value::Text(self.tool_name.clone()),
-            3 => Value::Json(self.data.clone()),
-            4 => Value::Placeholder(ValueKind::Failure),
-            _ => unreachable!(),
-        }
-    }
-
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -317,10 +275,7 @@ impl DynNode for StructuredChat {
     ) -> Result<Vec<Value>, WorkflowError> {
         let _ = (node_id,);
         let rt = ctx.runtime.clone();
-        rt.block_on(async move {
-            self.forward(ctx, inputs).await?;
-            Ok(self.collect_outputs())
-        })
+        rt.block_on(self.forward(ctx, inputs))
     }
 }
 
@@ -430,7 +385,7 @@ impl StructuredChat {
         &mut self,
         run_ctx: &RunContext,
         inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
+    ) -> Result<Vec<Value>, WorkflowError> {
         self.validate(&inputs)?;
 
         let mut agent_spec = match &inputs[0] {
@@ -574,9 +529,9 @@ impl StructuredChat {
                         }
 
                         // TODO: if a agentic tool call, fetch the schema from the toolbox
-                        self.tool_name = tool_func.name.clone();
-                        self.data = Arc::new(tool_func.arguments.clone());
-                        break Ok(());
+                        let tool_name = tool_func.name.clone();
+                        let data = Arc::new(tool_func.arguments.clone());
+                        break Ok((tool_name, data));
                     } else if attempts > max_attempts {
                         break Err(WorkflowError::MissingToolCall);
                     } else {
@@ -598,14 +553,30 @@ impl StructuredChat {
             }
         };
 
-        if let Cow::Owned(history) = chat {
-            self.history = Arc::new(history);
+        let history = if let Cow::Owned(history) = chat {
+            Arc::new(history)
         } else {
-            self.history = in_chat.clone();
-        }
+            in_chat.clone()
+        };
 
         tracing::info!("Final result {result:?} after {attempts} attempts");
-        result
+        let (tool_name, args) = result?;
+
+        let message = if let Some(entry) = history.last()
+            && let ChatContent::Message(message) = &entry.content
+        {
+            Value::Message(message.clone())
+        } else {
+            Value::Placeholder(ValueKind::Message)
+        };
+
+        Ok(vec![
+            Value::Chat(history),
+            message,
+            Value::Text(tool_name),
+            Value::Json(args),
+            Value::Placeholder(ValueKind::Failure),
+        ])
     }
 }
 
