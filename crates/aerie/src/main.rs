@@ -1,5 +1,6 @@
 use clap::Parser as _;
 use eframe::egui;
+use egui::KeyboardShortcut;
 use egui_commonmark::*;
 use egui_tiles::{LinearDir, TileId};
 use std::{
@@ -17,22 +18,44 @@ use aerie::{
     transmute::Transmuter,
     ui::{AppState, Pane, state::WorkflowState},
     utils::{ErrorDistiller as _, new_errlist},
+    workflow::store::WorkflowStoreDir,
+};
+
+const SHORTCUT_QUIT: KeyboardShortcut = KeyboardShortcut {
+    modifiers: egui::Modifiers::CTRL,
+    logical_key: egui::Key::Q,
 };
 
 fn main() -> anyhow::Result<()> {
     let (log_tx, log_rx) = flume::unbounded::<LogEntry>();
     let args = Args::parse();
 
-    let sessions_dir = dirs::data_dir()
+    let settings_path = args.config.unwrap_or(
+        dirs::config_dir()
+            .map(|p| p.join("aerie"))
+            .unwrap_or_default()
+            .join("workbench.yml"),
+    );
+
+    // Shhh...
+    let _ = dotenvy::from_path(settings_path.with_file_name(".env"));
+
+    let data_dir = dirs::data_dir()
         .unwrap_or(".data/share".into())
-        .join("aerie/sessions");
-    let _ = std::fs::create_dir_all(&sessions_dir);
+        .join("aerie");
+
+    let session_dir = args.session_dir.unwrap_or(data_dir.join("sessions"));
+    let workflow_dir = args.workflow_dir.unwrap_or(data_dir.join("workflows"));
+
+    std::fs::create_dir_all(settings_path.parent().unwrap())?;
+    std::fs::create_dir_all(&session_dir)?;
+    std::fs::create_dir_all(&workflow_dir)?;
 
     if let Some(Command::Session {
         subcmd: SessionCommand::List,
     }) = args.command
     {
-        if let Ok(read_dir) = std::fs::read_dir(&sessions_dir) {
+        if let Ok(read_dir) = std::fs::read_dir(&session_dir) {
             for path in read_dir {
                 let Ok(dirent) = path else { continue };
                 let pathbuf = dirent.path();
@@ -50,7 +73,7 @@ fn main() -> anyhow::Result<()> {
     // TODO: ensure writable
     let session_path = args
         .session
-        .map(|s| sessions_dir.join(s).with_extension("yml"));
+        .map(|s| session_dir.join(s).with_extension("yml"));
 
     let session = ChatSession::load(session_path.as_ref()).build()?;
 
@@ -82,13 +105,6 @@ fn main() -> anyhow::Result<()> {
         // viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
         ..Default::default()
     };
-
-    // TODO: CLI arg
-    // TODO: ensure dir
-    let settings_path = dirs::config_dir()
-        .map(|p| p.join("emberlain"))
-        .unwrap_or_default()
-        .join("workbench.yml");
 
     // Runtime settings:
     let settings = if settings_path.is_file() {
@@ -157,11 +173,8 @@ fn main() -> anyhow::Result<()> {
     let mut tree = egui_tiles::Tree::new("my_tree", root, tiles);
 
     let flow_name = settings.view(|s| s.automation.clone());
-    let flow_state = WorkflowState::from_path(
-        settings_path.with_file_name("workflow.yml"),
-        flow_name,
-        true,
-    )?;
+    let flow_store = WorkflowStoreDir::load_all(workflow_dir, true)?;
+    let flow_state = WorkflowState::new(flow_store, flow_name);
 
     let mut behavior = AppState {
         errors: new_errlist(),
@@ -191,6 +204,11 @@ fn main() -> anyhow::Result<()> {
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         ctx.set_fonts(fonts);
+
+        if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_QUIT)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             tree.ui(&mut behavior, ui);
         });

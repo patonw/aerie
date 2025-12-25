@@ -2,12 +2,11 @@ use egui::{RichText, TextEdit};
 use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE;
 use itertools::Itertools;
 
-use crate::config::ConfigExt as _;
+use crate::{config::ConfigExt as _, workflow::store::WorkflowStore as _};
 
 impl super::AppState {
     pub fn settings_ui(&mut self, ui: &mut egui::Ui) {
         let settings = self.settings.clone();
-        let workflows = self.workflows.names().cloned().collect_vec();
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -79,6 +78,7 @@ impl super::AppState {
                         });
                 });
 
+                let workflows = self.workflows.names().map(|s| s.to_string()).collect_vec();
                 egui::collapsing_header::CollapsingState::load_with_default_open(
                     ui.ctx(),
                     ui.make_persistent_id("workflow_info"),
@@ -105,12 +105,12 @@ impl super::AppState {
                 })
                 .body(|ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        if let Some(shadow) = settings.view(|st| {
+                        if let Some(desc) = settings.view(|st| {
                             st.automation
                                 .as_ref()
-                                .and_then(|a| self.workflows.store.get(a))
+                                .map(|a| self.workflows.store.description(a))
                         }) {
-                            ui.label(shadow.description.as_str());
+                            ui.label(desc);
                         }
                     });
                 });

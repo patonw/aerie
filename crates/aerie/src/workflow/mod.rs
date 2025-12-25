@@ -263,7 +263,7 @@ where
 
 impl<T: Clone + PartialEq> ShadowGraph<T> {
     pub fn from_snarl(snarl: &Snarl<T>) -> Self {
-        let mut baseline = Self::default();
+        let mut baseline = Self::empty();
 
         // Initialize with bulk mutators since we're not tracking generations yet
         baseline.nodes.extend(
@@ -279,17 +279,10 @@ impl<T: Clone + PartialEq> ShadowGraph<T> {
 }
 
 // Strange the derive macro doesn't work for this
-impl<T> Default for ShadowGraph<T>
-where
-    T: Clone + PartialEq,
-{
+impl Default for ShadowGraph<WorkNode> {
     fn default() -> Self {
-        Self {
-            nodes: Default::default(),
-            wires: Default::default(),
-            disabled: Default::default(),
-            description: Default::default(),
-        }
+        let bytes = include_bytes!("../../tutorial/workflows/__default__.yml");
+        serde_yml::from_slice::<Self>(bytes).expect("Cannot load the default graph")
     }
 }
 
@@ -320,6 +313,15 @@ impl<T> ShadowGraph<T>
 where
     T: PartialEq + Clone,
 {
+    pub fn empty() -> Self {
+        Self {
+            nodes: Default::default(),
+            wires: Default::default(),
+            disabled: Default::default(),
+            description: Default::default(),
+        }
+    }
+
     /// Quickly see if the collections have the same memory address.
     /// Does not account for identical copies in different addresses.
     /// Use the standard comparator to do a deep check instead.

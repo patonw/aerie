@@ -24,6 +24,18 @@ pub struct Args {
     #[arg(long, short)]
     pub session: Option<String>,
 
+    #[arg(long, short)]
+    pub config: Option<PathBuf>,
+
+    #[arg(long)]
+    pub session_dir: Option<PathBuf>,
+
+    #[arg(long)]
+    pub workflow_dir: Option<PathBuf>,
+
+    #[arg(long)]
+    pub backup_dir: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }
