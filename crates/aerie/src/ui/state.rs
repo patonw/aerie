@@ -17,6 +17,7 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
+use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use super::Pane;
@@ -45,28 +46,52 @@ pub enum ToolEditorState {
     },
 }
 
+#[derive(TypedBuilder)]
 pub struct AppState {
     pub rt: tokio::runtime::Handle,
+
+    #[builder(default)]
     pub errors: ErrorList<anyhow::Error>,
+
     pub settings: Arc<RwLock<Settings>>,
+
+    #[builder(default)]
     pub task_count: Arc<AtomicU16>,
+
+    #[builder(default)]
     pub log_history: Arc<RwLock<Vec<LogEntry>>>,
+
     pub session: ChatSession,
+
     pub cache: CommonMarkCache,
+
+    #[builder(default)]
     pub prompt: Arc<RwLock<String>>,
+
     pub agent_factory: AgentFactory,
 
+    #[builder(default)]
+    pub rename_session: Option<String>,
+
     // TODO: decompose
+    #[builder(default)]
     pub branch_point: Option<Uuid>,
+
+    #[builder(default)]
     pub new_branch: String,
+
+    #[builder(default)]
     pub rename_branch: Option<String>,
 
+    #[builder(default)]
     pub tool_editor: Option<ToolEditorState>,
 
     pub workflows: WorkflowState<WorkflowStoreDir>,
 
+    #[builder(default)]
     pub message_graph: MessageGraph,
 
+    #[builder(default)]
     pub transmuter: Transmuter,
 }
 
@@ -74,7 +99,7 @@ impl egui_tiles::Behavior<Pane> for AppState {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> WidgetText {
         match pane {
             Pane::Settings => "Settings".into(),
-            Pane::Navigator => "Branches".into(),
+            Pane::Navigator => "Session".into(),
             Pane::Chat => "Chat".into(),
             Pane::Logs => "Logs".into(),
             Pane::Tools => "Tools".into(),

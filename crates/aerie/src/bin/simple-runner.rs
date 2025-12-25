@@ -80,7 +80,19 @@ fn main() -> anyhow::Result<()> {
     let reader = OpenOptions::new().read(true).open(workflow_path)?;
     let shadow: ShadowGraph<WorkNode> = serde_yml::from_reader(reader)?;
 
-    let session = ChatSession::load(args.session.as_ref()).build()?;
+    let session_dir = args
+        .session
+        .as_ref()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_default();
+    let session = ChatSession::from_dir_name(
+        session_dir,
+        args.session
+            .as_ref()
+            .and_then(|s| s.file_stem().map(|s| s.display().to_string()))
+            .as_deref(),
+    )
+    .build()?;
     if let Some(branch) = &args.branch {
         session.transform(|history| Ok(history.switch(branch)))?;
     }

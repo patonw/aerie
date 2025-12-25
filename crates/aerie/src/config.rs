@@ -103,10 +103,13 @@ pub struct Settings {
     pub automation: Option<String>,
 
     #[serde(default)]
+    pub session: Option<String>,
+
+    #[serde(default)]
     pub tools: ToolSettings,
 
     #[serde(default)]
-    pub last_workflow_dir: PathBuf,
+    pub last_export_dir: PathBuf,
 
     #[serde(default)]
     pub last_output_dir: PathBuf,

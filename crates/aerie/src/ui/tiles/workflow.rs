@@ -740,12 +740,12 @@ impl super::AppState {
                                             .clicked()
                                             && let Some(path) = rfd::FileDialog::new()
                                                 .set_directory(
-                                                    settings.view(|s| s.last_workflow_dir.clone()),
+                                                    settings.view(|s| s.last_export_dir.clone()),
                                                 )
                                                 .pick_file()
                                         {
                                             settings.update(|s| {
-                                                s.last_workflow_dir = path
+                                                s.last_export_dir = path
                                                     .parent()
                                                     .map(|p| p.to_path_buf())
                                                     .unwrap_or_default()
@@ -758,7 +758,7 @@ impl super::AppState {
                                     if ui.button(UPLOAD_SIMPLE).on_hover_text("Export").clicked()
                                         && let Some(path) = rfd::FileDialog::new()
                                             .set_directory(
-                                                settings.view(|s| s.last_workflow_dir.clone()),
+                                                settings.view(|s| s.last_export_dir.clone()),
                                             )
                                             .set_file_name(format!(
                                                 "{}.yml",
@@ -767,7 +767,7 @@ impl super::AppState {
                                             .save_file()
                                     {
                                         settings.update(|s| {
-                                            s.last_workflow_dir = path
+                                            s.last_export_dir = path
                                                 .parent()
                                                 .map(|p| p.to_path_buf())
                                                 .unwrap_or_default()

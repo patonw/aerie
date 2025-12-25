@@ -1,6 +1,8 @@
 use anyhow::anyhow;
 use arc_swap::ArcSwap;
+use cached::proc_macro::cached;
 use derive_builder::Builder;
+use itertools::Itertools;
 use rig::message::Message;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -8,6 +10,7 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     error::Error,
+    fs::OpenOptions,
     ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
@@ -18,6 +21,7 @@ use crate::utils::AtomicBuffer;
 
 #[derive(Clone, Builder)]
 pub struct ChatSession {
+    pub directory: PathBuf,
     pub path: Arc<Option<PathBuf>>,
     pub history: Arc<ArcSwap<ChatHistory>>, // Interior mutability without locking
 
@@ -26,6 +30,13 @@ pub struct ChatSession {
 }
 
 impl ChatSession {
+    pub fn from_dir_name(dir: impl AsRef<Path>, name: Option<&str>) -> ChatSessionBuilder {
+        let dir = dir.as_ref().to_path_buf();
+        let session_path = name.map(|s| dir.join(s).with_extension("yml"));
+
+        Self::load(session_path).directory(dir).to_owned()
+    }
+
     pub fn load(path: Option<impl AsRef<Path>>) -> ChatSessionBuilder {
         let history = path
             .as_ref()
@@ -38,6 +49,65 @@ impl ChatSession {
             .path(Arc::new(path.map(|p| p.as_ref().to_path_buf())))
             .history(Arc::new(ArcSwap::from_pointee(history)));
         builder
+    }
+
+    pub fn name(&self) -> String {
+        self.name_opt().unwrap_or_default()
+    }
+
+    pub fn name_opt(&self) -> Option<String> {
+        self.path
+            .as_ref()
+            .as_ref()
+            .and_then(|p| p.file_stem().map(|s| s.display().to_string()))
+    }
+
+    /// List all sessions in the session directory
+    pub fn list(&self) -> Vec<String> {
+        // self.path
+        //     .as_ref()
+        //     .clone()
+        //     .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        //     .map(list_sessions)
+        //     .unwrap_or_default()
+        list_sessions(self.directory.clone())
+    }
+
+    /// Switch to another session in the same directory
+    pub fn switch(&mut self, name: &str) -> anyhow::Result<()> {
+        if name.is_empty() {
+            self.path = Arc::new(None);
+            self.history = Default::default();
+        } else {
+            let other = Self::from_dir_name(self.directory.clone(), Some(name)).build()?;
+            self.path = other.path.clone();
+            self.history = other.history.clone();
+            self.scratch = Default::default();
+        }
+
+        Ok(())
+    }
+
+    pub fn rename(&mut self, new_name: &str) -> anyhow::Result<()> {
+        // Prevent traversal shenanigans
+        let new_name = Path::new(new_name)
+            .file_name()
+            .ok_or(anyhow::anyhow!("Invalid name"))?
+            .display()
+            .to_string()
+            .trim_matches('.')
+            .trim_matches('_')
+            .to_string();
+        let new_path = self.directory.join(new_name).with_extension("yml");
+        let old_path = Arc::make_mut(&mut self.path).replace(new_path.clone());
+
+        if let Some(old_path) = old_path {
+            std::fs::rename(old_path, &new_path)?;
+        } else {
+            self.save()?;
+        }
+
+        Ok(())
     }
 
     fn save_ref(&self, history: &ChatHistory) -> anyhow::Result<()> {
@@ -57,6 +127,49 @@ impl ChatSession {
         Ok(())
     }
 
+    pub fn import(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+        let path = path.as_ref();
+        if !path.is_file() {
+            anyhow::bail!("Invalid file: {path:?}");
+        }
+
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_os_string().into_string().ok())
+            .unwrap_or_default();
+
+        let datetime = chrono::offset::Local::now();
+        let timestamp = datetime.format("%Y-%m-%dT%H:%M:%S").to_string();
+
+        let name = if name.is_empty() || self.list().contains(&name) {
+            std::iter::chain([name], [timestamp]).join("-")
+        } else {
+            name
+        };
+
+        let reader = OpenOptions::new().read(true).open(path)?;
+        let data: ChatHistory = serde_yml::from_reader(reader)?;
+
+        self.path = Arc::new(Some(self.directory.join(&name).with_extension("yml")));
+        self.history = Arc::new(ArcSwap::from_pointee(data));
+
+        self.save()?;
+        Ok(())
+    }
+
+    pub fn export(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+        let writer = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+
+        let history = self.history.load();
+        serde_yml::to_writer(writer, history.as_ref())?;
+
+        Ok(())
+    }
+
     pub fn save(&self) -> anyhow::Result<()> {
         if self.path.is_some() {
             let history = self.history.load();
@@ -64,6 +177,13 @@ impl ChatSession {
         } else {
             Ok(())
         }
+    }
+
+    pub fn delete(&self, name: &str) -> anyhow::Result<()> {
+        assert_ne!(&self.name(), name);
+        let old_path = self.directory.join(name).with_extension("yml");
+
+        Ok(std::fs::remove_file(old_path)?)
     }
 
     pub fn view<T>(&self, mut cb: impl FnMut(&ChatHistory) -> T) -> T {
@@ -95,6 +215,17 @@ impl ChatSession {
 
         Ok(())
     }
+}
+
+use std::time::Duration;
+#[cached(time = 5)]
+pub fn list_sessions(dir: PathBuf) -> Vec<String> {
+    tracing::info!("listing sessions for {dir:?}");
+    glob::glob(&dir.join("*.yml").display().to_string())
+        .unwrap()
+        .filter_map(|p| p.ok())
+        .filter_map(|p| p.file_stem().map(|stem| stem.display().to_string()))
+        .collect_vec()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
