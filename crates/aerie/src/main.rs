@@ -15,9 +15,8 @@ use aerie::{
     AgentFactory, LogChannelLayer, LogEntry, Settings,
     chat::ChatSession,
     config::{Args, Command, ConfigExt, SessionCommand},
-    transmute::Transmuter,
     ui::{AppState, Pane, state::WorkflowState},
-    utils::{ErrorDistiller as _, new_errlist},
+    utils::ErrorDistiller as _,
     workflow::store::WorkflowStoreDir,
 };
 
@@ -70,13 +69,6 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // TODO: ensure writable
-    let session_path = args
-        .session
-        .map(|s| session_dir.join(s).with_extension("yml"));
-
-    let session = ChatSession::load(session_path.as_ref()).build()?;
-
     tracing_subscriber::registry()
         .with(
             LogChannelLayer(log_tx)
@@ -113,6 +105,9 @@ fn main() -> anyhow::Result<()> {
     } else {
         Settings::default()
     };
+
+    let session_name = args.session.as_deref().or(settings.session.as_deref());
+    let session = ChatSession::from_dir_name(session_dir, session_name).build()?;
 
     let mut stored_settings = Arc::new(settings.clone());
     let settings = Arc::new(RwLock::new(settings));
@@ -176,24 +171,17 @@ fn main() -> anyhow::Result<()> {
     let flow_store = WorkflowStoreDir::load_all(workflow_dir, true)?;
     let flow_state = WorkflowState::new(flow_store, flow_name);
 
-    let mut behavior = AppState {
-        errors: new_errlist(),
-        settings: settings.clone(),
-        log_history: log_history.clone(),
-        task_count: task_count.clone(),
-        session,
-        cache,
-        prompt: prompt.clone(),
-        rt: rt.handle().clone(),
-        agent_factory,
-        branch_point: None,
-        new_branch: String::new(),
-        rename_branch: None,
-        tool_editor: None,
-        workflows: flow_state,
-        message_graph: Default::default(),
-        transmuter: Transmuter::builder().build(),
-    };
+    let mut behavior = AppState::builder()
+        .settings(settings.clone())
+        .log_history(log_history.clone())
+        .task_count(task_count.clone())
+        .session(session)
+        .cache(cache)
+        .prompt(prompt.clone())
+        .rt(rt.handle().clone())
+        .agent_factory(agent_factory)
+        .workflows(flow_state)
+        .build();
 
     let rt_ = rt.handle().clone();
     let settings_ = settings.clone();

@@ -1,11 +1,151 @@
-use egui_phosphor::regular::{PENCIL, ROCKET, TRASH};
-use std::collections::BTreeSet;
+use egui_extras::{Size, StripBuilder};
+use egui_phosphor::regular::{DOWNLOAD_SIMPLE, MAGIC_WAND, PENCIL, ROCKET, TRASH, UPLOAD_SIMPLE};
+use std::{collections::BTreeSet, sync::atomic::Ordering};
 
-use crate::utils::ErrorDistiller as _;
+use crate::{config::ConfigExt as _, utils::ErrorDistiller as _};
 
 impl super::AppState {
     pub fn nav_ui(&mut self, ui: &mut egui::Ui) {
+        let session = self.session.clone();
+        let settings = self.settings.clone();
+        let errors = self.errors.clone();
+
+        let running = self.task_count.load(Ordering::Relaxed) > 0;
         egui::CentralPanel::default().show_inside(ui, |ui| {
+            ui.vertical_centered_justified(|ui| {
+                ui.add_enabled_ui(!running, |ui| {
+                    egui::ComboBox::from_id_salt("session_list")
+                        .wrap()
+                        .width(ui.available_width())
+                        .selected_text(session.name())
+                        .show_ui(ui, |ui| {
+                            let original = session.name();
+                            let mut current = &original;
+                            let blank = String::new();
+
+                            ui.selectable_value(&mut current, &blank, "");
+
+                            let names = session.list();
+                            for name in &names {
+                                ui.selectable_value(&mut current, name, name);
+                            }
+
+                            if current != &original {
+                                errors.distil(self.session.switch(current));
+                                settings.update(|sets| sets.session = self.session.name_opt());
+                            }
+                        });
+
+                    if let Some(renaming) = self.rename_session.as_mut() {
+                        let editor = ui.text_edit_singleline(renaming);
+                        if editor.lost_focus() {
+                            if !renaming.is_empty() {
+                                errors.distil(self.session.rename(renaming));
+                                settings.update(|sets| sets.session = self.session.name_opt());
+                            }
+                            self.rename_session = None;
+                        }
+                        editor.request_focus();
+                    }
+
+                    StripBuilder::new(ui)
+                        .size(Size::exact(16.0))
+                        .vertical(|mut strip| {
+                            strip.cell(|ui| {
+                                StripBuilder::new(ui)
+                                    .sizes(Size::remainder(), 5)
+                                    .horizontal(|mut strip| {
+                                        strip.cell(|ui| {
+                                            if ui
+                                                .button(MAGIC_WAND)
+                                                .on_hover_text("Create")
+                                                .clicked()
+                                            {
+                                                let datetime = chrono::offset::Local::now();
+                                                let timestamp = datetime
+                                                    .format("unnamed-%Y-%m-%dT%H:%M:%S")
+                                                    .to_string();
+                                                errors.distil(self.session.switch(&timestamp));
+                                                errors.distil(self.session.save());
+                                                settings.update(|sets| {
+                                                    sets.session = self.session.name_opt()
+                                                });
+                                            }
+                                        });
+                                        strip.cell(|ui| {
+                                            if ui.button(PENCIL).on_hover_text("Rename").clicked() {
+                                                self.rename_session = Some(self.session.name());
+                                            }
+                                        });
+                                        strip.cell(|ui| {
+                                            if ui
+                                                .button(DOWNLOAD_SIMPLE)
+                                                .on_hover_text("Import")
+                                                .clicked()
+                                                && let Some(path) = rfd::FileDialog::new()
+                                                    .set_directory(
+                                                        settings
+                                                            .view(|s| s.last_export_dir.clone()),
+                                                    )
+                                                    .pick_file()
+                                            {
+                                                settings.update(|s| {
+                                                    s.last_export_dir = path
+                                                        .parent()
+                                                        .map(|p| p.to_path_buf())
+                                                        .unwrap_or_default()
+                                                });
+                                                errors.distil(self.session.import(&path));
+                                            }
+                                        });
+                                        strip.cell(|ui| {
+                                            if ui
+                                                .button(UPLOAD_SIMPLE)
+                                                .on_hover_text("Export")
+                                                .clicked()
+                                                && let Some(path) = rfd::FileDialog::new()
+                                                    .set_directory(
+                                                        settings
+                                                            .view(|s| s.last_export_dir.clone()),
+                                                    )
+                                                    .set_file_name(format!(
+                                                        "{}.yml",
+                                                        session.name()
+                                                    ))
+                                                    .save_file()
+                                            {
+                                                settings.update(|s| {
+                                                    s.last_export_dir = path
+                                                        .parent()
+                                                        .map(|p| p.to_path_buf())
+                                                        .unwrap_or_default()
+                                                });
+                                                errors.distil(self.session.export(&path));
+                                            }
+                                        });
+                                        strip.cell(|ui| {
+                                            ui.menu_button(TRASH, |ui| {
+                                                if ui.button("OK").clicked() {
+                                                    let old_name = session.name();
+                                                    errors.distil(self.session.switch(""));
+                                                    errors.distil(self.session.delete(&old_name));
+                                                    settings.update(|sets| {
+                                                        sets.session = self.session.name_opt()
+                                                    });
+                                                    ui.close();
+                                                }
+                                            })
+                                            .response
+                                            .on_hover_text("Delete");
+                                        });
+                                    });
+                            });
+                        });
+                });
+            });
+
+            ui.separator();
+            ui.vertical_centered(|ui| ui.monospace("Branches"));
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let lineage = self.session.view(|history| history.lineage());
 
