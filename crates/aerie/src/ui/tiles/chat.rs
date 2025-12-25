@@ -17,7 +17,7 @@ impl super::AppState {
     pub fn chat_ui(&mut self, ui: &mut egui::Ui) {
         let settings = self.settings.clone();
         let errors = self.errors.clone();
-        let workflows = self.workflows.names().cloned().collect_vec();
+        let workflows = self.workflows.names().map(|s| s.to_string()).collect_vec();
 
         // TODO: top panel with helper actions
         egui::TopBottomPanel::bottom("prompt")
@@ -52,7 +52,8 @@ impl super::AppState {
                                                     &mut settings_rw.automation,
                                                     Some(flow.clone()),
                                                     flow,
-                                                );
+                                                )
+                                                .on_hover_text(self.workflows.description(flow));
                                             }
                                         }
                                     });
@@ -76,14 +77,16 @@ impl super::AppState {
                     let automation = self
                         .settings
                         .view(|s| s.automation.clone())
-                        .unwrap_or("__default__".into());
+                        .unwrap_or_default();
 
-                    if self.workflows.names().contains(&automation) {
+                    if automation.is_empty() || workflows.contains(&automation) {
                         // TODO: deal with this nuking any edits in progress
                         self.workflows.switch(&automation);
                         self.exec_workflow();
 
                         let _user_prompt = std::mem::take(&mut *prompt_.write().unwrap());
+                    } else {
+                        errors.push(anyhow::anyhow!("Workflow {automation} does not exist."));
                     }
                 }
             });
@@ -109,7 +112,9 @@ impl super::AppState {
                                     |ui| {
                                         for entry in aside {
                                             if let ChatContent::Message(message) = &entry.content {
-                                                render_message(ui, md_cache, message);
+                                                ui.push_id(entry.id, |ui| {
+                                                    render_message(ui, md_cache, message)
+                                                });
                                             }
                                         }
                                     },
@@ -124,7 +129,9 @@ impl super::AppState {
                                     {
                                         self.branch_point = Some(msg.id);
                                     }
-                                    render_message(ui, md_cache, message);
+                                    ui.push_id(msg.id, |ui| {
+                                        render_message(ui, md_cache, message);
+                                    });
                                 }
                                 ChatContent::Aside {
                                     automation: workflow,
@@ -138,8 +145,10 @@ impl super::AppState {
                                     .id_salt(msg.id)
                                     .default_open(!collapsed)
                                     .show(ui, |ui| {
-                                        for message in content {
-                                            render_message(ui, md_cache, message);
+                                        for (idx, message) in content.iter().enumerate() {
+                                            ui.push_id(idx, |ui| {
+                                                render_message(ui, md_cache, message)
+                                            });
                                         }
                                     });
                                     if resp.fully_closed()

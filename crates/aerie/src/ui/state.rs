@@ -8,6 +8,7 @@ use egui_tiles::SimplificationOptions;
 use itertools::Itertools;
 use rmcp::model::Tool;
 use std::{
+    borrow::Cow,
     collections::VecDeque,
     fs::OpenOptions,
     path::Path,
@@ -26,7 +27,11 @@ use crate::{
     transmute::Transmuter,
     ui::tiles::messages::MessageGraph,
     utils::ErrorList,
-    workflow::{ShadowGraph, WorkNode, fixup_workflow, runner::ExecState, store::WorkflowStore},
+    workflow::{
+        ShadowGraph, WorkNode, fixup_workflow,
+        runner::ExecState,
+        store::{WorkflowStore, WorkflowStoreDir},
+    },
 };
 
 const SOFT_LIMIT: usize = 128;
@@ -59,7 +64,7 @@ pub struct AppState {
 
     pub tool_editor: Option<ToolEditorState>,
 
-    pub workflows: WorkflowState,
+    pub workflows: WorkflowState<WorkflowStoreDir>,
 
     pub message_graph: MessageGraph,
 
@@ -126,7 +131,8 @@ impl egui_tiles::Behavior<Pane> for AppState {
 
 type RunOutput = Arc<ArcSwap<im::OrdMap<String, crate::workflow::Value>>>;
 
-pub struct WorkflowState {
+/// Portion of the UI state dealing with workflows.
+pub struct WorkflowState<W: WorkflowStore> {
     pub frozen: bool,
     pub running: Arc<AtomicBool>,
     pub interrupt: Arc<AtomicBool>,
@@ -136,7 +142,7 @@ pub struct WorkflowState {
     pub switch_count: usize,
 
     /// Load/save shadow graphs to disk
-    pub store: WorkflowStore,
+    pub store: W,
 
     /// Data for the graph editor widget
     pub snarl: Arc<tokio::sync::RwLock<Snarl<WorkNode>>>,
@@ -158,33 +164,26 @@ pub struct WorkflowState {
     pub outputs: im::Vector<(DateTime<Local>, RunOutput)>,
 }
 
-impl WorkflowState {
-    // TODO: store in individual files or a key-value store
-    pub fn from_path(
-        path: impl AsRef<Path>,
-        flow_name: Option<String>,
-        tutorial: bool,
-    ) -> anyhow::Result<Self> {
+impl<W: WorkflowStore> WorkflowState<W> {
+    pub fn new(store: W, current: Option<String>) -> Self {
         use egui_snarl::ui::{BackgroundPattern, Grid, NodeLayout, PinPlacement, SnarlStyle};
-        let store = WorkflowStore::load(path, tutorial)?;
-
-        let edit_workflow = flow_name
-            .filter(|n| store.workflows.contains_key(n))
+        let edit_workflow = current
+            .filter(|n| store.exists(n))
             .unwrap_or("basic".to_string());
 
-        let snarl = store.get_snarl(edit_workflow.as_ref()).unwrap_or_default();
-        let snarl = fixup_workflow(snarl);
         let baseline: ShadowGraph<WorkNode> = store.get(edit_workflow.as_ref()).unwrap_or_default();
+        let snarl = Snarl::try_from(baseline.clone()).unwrap_or_default();
+        let snarl = fixup_workflow(snarl);
 
         let snarl = Arc::new(tokio::sync::RwLock::new(snarl));
 
-        Ok(Self {
+        Self {
             frozen: false,
             running: Arc::new(AtomicBool::new(false)),
             interrupt: Arc::new(AtomicBool::new(false)),
             editing: edit_workflow.clone(),
             renaming: None,
-            store: store.clone(),
+            store,
             snarl: snarl.clone(),
             style: SnarlStyle {
                 crisp_magnified_text: Some(true),
@@ -207,7 +206,7 @@ impl WorkflowState {
             undo_stack: Default::default(),
             redo_stack: Default::default(),
             outputs: Default::default(),
-        })
+        }
     }
 
     pub fn has_changes(&self) -> bool {
@@ -247,29 +246,49 @@ impl WorkflowState {
         self.switch_count += 1;
     }
 
-    pub fn rename(&mut self) {
-        if Some(&self.editing) == self.renaming.as_ref() {
-            self.renaming = None;
+    pub fn rename(&mut self) -> anyhow::Result<()> {
+        let new_name = self.renaming.take();
+
+        if Some(&self.editing) == new_name.as_ref() {
+            return Ok(());
         }
 
-        let Some(new_name) = self.renaming.take() else {
-            return;
+        let Some(new_name) = new_name else {
+            return Ok(());
         };
 
-        if self.store.workflows.contains_key(&new_name) {
-            return;
+        // Prevent traversal shenanigans without being too strict
+        let new_name = Path::new(&new_name)
+            .file_name()
+            .ok_or(anyhow::anyhow!("Invalid name"))?
+            .display()
+            .to_string()
+            .trim_matches('.')
+            .trim_matches('_')
+            .to_string();
+
+        if self.store.exists(&new_name) {
+            anyhow::bail!("Workflow {new_name} exists!");
         }
 
-        self.store.rename(&self.editing, &new_name);
+        if self.store.exists(&self.editing) {
+            self.store.rename(&self.editing, &new_name)?;
+        }
+
         self.editing = new_name;
+        Ok(())
     }
 
-    pub fn names(&self) -> impl Iterator<Item = &String> {
-        self.store.workflows.keys()
+    pub fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
+        self.store.names()
     }
 
-    pub fn remove(&mut self) {
-        self.store.remove(&self.editing);
+    pub fn description(&self, name: &str) -> Cow<'_, str> {
+        self.store.description(name)
+    }
+
+    pub fn remove(&mut self) -> anyhow::Result<()> {
+        self.store.remove(&self.editing)
     }
 
     pub fn cast_shadow(&mut self, shadow: ShadowGraph<WorkNode>) {
@@ -278,7 +297,7 @@ impl WorkflowState {
         }
 
         if !self.undo_stack.contains_key(&self.editing)
-            && let Err(err) = self.store.create_backup(&self.editing)
+            && let Err(err) = self.store.backup(&self.editing)
         {
             tracing::warn!("Error while backing up {}: {err:?}", &self.editing);
         }
@@ -425,9 +444,10 @@ impl WorkflowState {
             .and_then(|s| s.to_os_string().into_string().ok())
             .unwrap_or_default();
 
-        let name = if name.is_empty() || self.names().contains(&name) {
-            // TODO: Use current datetime
-            std::iter::chain([name], [uuid::Uuid::new_v4().to_string()]).join("-")
+        let datetime = chrono::offset::Local::now();
+        let timestamp = datetime.format("%Y-%m-%dT%H:%M:%S").to_string();
+        let name = if name.is_empty() || self.names().contains(name.as_str()) {
+            std::iter::chain([name], [timestamp]).join("-")
         } else {
             name
         };
@@ -435,7 +455,7 @@ impl WorkflowState {
         let reader = OpenOptions::new().read(true).open(path)?;
         let data: ShadowGraph<WorkNode> = serde_yml::from_reader(reader)?;
 
-        self.store.put(&name, data);
+        self.store.save(&name, data)?;
         // self.store.save()?; // maybe don't?
         self.switch(&name);
         self.baseline = Default::default();

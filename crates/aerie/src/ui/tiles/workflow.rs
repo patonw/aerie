@@ -5,18 +5,18 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
-use egui::{Align2, Color32, ComboBox, Hyperlink, RichText, Ui};
+use egui::{Align2, Color32, ComboBox, Hyperlink, KeyboardShortcut, RichText, Ui};
 use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular::{
     ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, CHECK_CIRCLE, DOWNLOAD_SIMPLE, HAND_PALM,
-    HOURGLASS_MEDIUM, INFO, PLAY, PLAY_CIRCLE, STOP, UPLOAD_SIMPLE, WARNING,
+    HOURGLASS_MEDIUM, INFO, MAGIC_WAND, PENCIL, PLAY, PLAY_CIRCLE, STOP, TRASH, UPLOAD_SIMPLE,
+    WARNING,
 };
 use egui_snarl::{
     NodeId, Snarl,
-    ui::{SnarlViewer, SnarlWidget},
+    ui::{SnarlViewer, SnarlWidget, get_selected_nodes},
 };
 use itertools::Itertools;
-use uuid::Uuid;
 
 use crate::{
     config::ConfigExt as _,
@@ -25,10 +25,18 @@ use crate::{
         EditContext, RunContext, ShadowGraph, WorkNode,
         nodes::CommentNode,
         runner::{ExecState, WorkflowRunner},
+        store::WorkflowStore as _,
     },
 };
 
+const SHORTCUT_RUN: KeyboardShortcut = KeyboardShortcut {
+    modifiers: egui::Modifiers::CTRL,
+    logical_key: egui::Key::Enter,
+};
+
 struct WorkflowViewer {
+    view_id: egui::Id,
+
     edit_ctx: EditContext,
 
     // TODO: store this in the app state so it isn't clobbered every frame
@@ -479,6 +487,13 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui: &mut Ui,
         snarl: &mut Snarl<WorkNode>,
     ) {
+        let selection = get_selected_nodes(self.view_id, ui.ctx());
+        let targets = if selection.contains(&node) {
+            selection
+        } else {
+            vec![node]
+        };
+
         let help_link = snarl[node].as_ui().help_link();
         if !help_link.is_empty() {
             ui.add(Hyperlink::from_label_and_url("Help", help_link).open_in_new_tab(true));
@@ -487,11 +502,15 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         if !matches!(snarl[node], WorkNode::Comment(_)) {
             if self.shadow.is_disabled(node) {
                 if ui.button("Enable").clicked() {
-                    self.shadow = self.shadow.enable_node(node);
+                    for node in &targets {
+                        self.shadow = self.shadow.enable_node(*node);
+                    }
                     ui.close();
                 }
             } else if ui.button("Disable").clicked() {
-                self.shadow = self.shadow.disable_node(node);
+                for node in &targets {
+                    self.shadow = self.shadow.disable_node(*node);
+                }
                 ui.close();
             }
         }
@@ -499,8 +518,10 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         // Alleviate accidental clicks
         ui.menu_button("Remove", |ui| {
             if ui.button("OK").clicked() {
-                snarl.remove_node(node);
-                self.shadow = self.shadow.enable_node(node).without_node(&node);
+                for node in &targets {
+                    snarl.remove_node(*node);
+                    self.shadow = self.shadow.enable_node(*node).without_node(node);
+                }
 
                 ui.close();
             }
@@ -510,19 +531,27 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
 
 impl super::AppState {
     pub fn workflow_ui(&mut self, ui: &mut egui::Ui) {
+        let running = self
+            .workflows
+            .running
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        if !running && ui.ctx().input_mut(|i| i.consume_shortcut(&SHORTCUT_RUN)) {
+            self.exec_workflow();
+        }
+
         egui::CentralPanel::default().show_inside(ui, |ui| {
             let edit_ctx = EditContext::builder()
                 .toolbox(self.agent_factory.toolbox.clone())
                 .errors(self.errors.clone())
                 .build();
 
-            let running = self
-                .workflows
-                .running
-                .load(std::sync::atomic::Ordering::Relaxed);
-
             let shadow = self.workflows.shadow.clone();
             let mut viewer = WorkflowViewer {
+                view_id: egui::Id::new(format!(
+                    "{} viewer #{}",
+                    self.workflows.editing, self.workflows.switch_count
+                )),
                 edit_ctx,
                 shadow,
                 running,
@@ -534,10 +563,12 @@ impl super::AppState {
             // Snarl will draw our persisted positions and sizes.
             ui.push_id(self.workflows.switch_count, |ui| {
                 let mut snarl = self.workflows.snarl.blocking_write();
-                SnarlWidget::new()
-                    .id_salt(&self.workflows.editing)
-                    .style(self.workflows.style)
-                    .show(&mut snarl, &mut viewer, ui);
+                let widget = SnarlWidget::new()
+                    .id(viewer.view_id)
+                    .style(self.workflows.style);
+                widget.show(&mut snarl, &mut viewer, ui);
+
+                // tracing::debug!("Selection: {:?}", widget.get_selected_nodes(ui));
             });
 
             self.workflows.cast_shadow(viewer.shadow);
@@ -602,34 +633,71 @@ impl super::AppState {
                 .width(ui.available_width())
                 .selected_text(&self.workflows.editing)
                 .show_ui(ui, |ui| {
-                    let names = self.workflows.store.workflows.keys().cloned().collect_vec();
+                    let original = self.workflows.editing.clone();
+                    let mut current = &original;
+
+                    let blank = String::new();
+                    ui.selectable_value(&mut current, &blank, "");
+
+                    let names = self.workflows.names().map(|s| s.to_string()).collect_vec();
                     for name in &names {
-                        if !name.starts_with("__") {
-                            let original = self.workflows.editing.clone();
-                            let mut current = &original;
-                            ui.selectable_value(&mut current, name, name);
-                            if current != &original {
-                                self.workflows.switch(current);
-                            }
-                        }
+                        ui.selectable_value(&mut current, name, name);
+                    }
+                    if current != &original {
+                        self.workflows.switch(current);
                     }
                 });
 
             if let Some(renaming) = self.workflows.renaming.as_mut() {
-                if ui.text_edit_singleline(renaming).lost_focus() {
-                    self.workflows.rename();
+                let editor = ui.text_edit_singleline(renaming);
+                if editor.lost_focus() {
+                    errors.distil(self.workflows.rename());
                 }
-            } else if ui.button("Rename").clicked() {
-                self.workflows.renaming = Some(self.workflows.editing.clone());
-            }
 
-            if ui.button("New").clicked() {
-                self.workflows.switch(&Uuid::new_v4().to_string());
+                editor.request_focus();
             }
 
             StripBuilder::new(ui)
-                .size(Size::exact(16.0))
+                .sizes(Size::exact(16.0), 2)
                 .vertical(|mut strip| {
+                    strip.cell(|ui| {
+                        StripBuilder::new(ui)
+                            .sizes(Size::remainder(), 3)
+                            .horizontal(|mut strip| {
+                                strip.cell(|ui| {
+                                    if ui.button(MAGIC_WAND).on_hover_text("Create").clicked() {
+                                        let datetime = chrono::offset::Local::now();
+                                        let timestamp = datetime
+                                            .format("unnamed-%Y-%m-%dT%H:%M:%S")
+                                            .to_string();
+                                        self.workflows.switch(&timestamp);
+                                    }
+                                });
+                                strip.cell(|ui| {
+                                    if ui.button(PENCIL).on_hover_text("Rename").clicked() {
+                                        self.workflows.renaming =
+                                            Some(self.workflows.editing.clone());
+                                    }
+                                });
+                                strip.cell(|ui| {
+                                    ui.menu_button(TRASH, |ui| {
+                                        if ui.button("OK").clicked() {
+                                            errors.distil(self.workflows.remove());
+                                            let next_name = self
+                                                .workflows
+                                                .names()
+                                                .next()
+                                                .map(|s| s.to_string())
+                                                .unwrap_or("default".to_string());
+                                            self.workflows.switch(&next_name);
+                                            ui.close();
+                                        }
+                                    })
+                                    .response
+                                    .on_hover_text("Delete");
+                                });
+                            });
+                    });
                     strip.cell(|ui| {
                         StripBuilder::new(ui)
                             .sizes(Size::remainder(), 2)
@@ -680,21 +748,6 @@ impl super::AppState {
                             });
                     });
                 });
-
-            ui.menu_button("Delete", |ui| {
-                if ui.button("OK").clicked() {
-                    self.workflows.remove();
-                    self.workflows.store.save().unwrap();
-                    let next_name = self
-                        .workflows
-                        .names()
-                        .next()
-                        .cloned()
-                        .unwrap_or("default".to_string());
-                    self.workflows.switch(&next_name);
-                    ui.close();
-                }
-            });
 
             ui.separator();
 
@@ -794,10 +847,14 @@ impl super::AppState {
             !self.workflows.shadow.fast_eq(&self.workflows.baseline)
         );
 
+        // self.workflows
+        //     .store
+        //     .put(&self.workflows.editing, self.workflows.shadow.clone());
+        // self.workflows.store.save_all().unwrap();
         self.workflows
             .store
-            .put(&self.workflows.editing, self.workflows.shadow.clone());
-        self.workflows.store.save().unwrap();
+            .save(&self.workflows.editing, self.workflows.shadow.clone())
+            .unwrap();
 
         // let mut snarl = self.workflows.snarl.blocking_write();
         // *snarl = Snarl::try_from(self.workflows.shadow.clone()).unwrap();
@@ -810,6 +867,9 @@ impl super::AppState {
         let snarl_ = self.workflows.snarl.clone();
         let mut target = { self.workflows.snarl.blocking_read().clone() };
         let task_count_ = self.task_count.clone();
+
+        self.settings
+            .update(|s| s.automation = Some(self.workflows.editing.clone()));
 
         self.session.scratch.clear();
         let mut exec = {
