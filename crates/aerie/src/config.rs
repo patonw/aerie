@@ -1,8 +1,9 @@
+use arc_swap::ArcSwap;
 use cached::proc_macro::cached;
 use glob::{Pattern, PatternError};
 use itertools::Itertools as _;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     path::PathBuf,
     sync::{
         Arc, RwLock,
@@ -142,14 +143,51 @@ impl ConfigExt for Arc<RwLock<Settings>> {
     }
 }
 
+// Ideally have a macro take the arc, a field and callback.
+// Only clones if callback returns different value for field.
+impl ConfigExt for Arc<ArcSwap<Settings>> {
+    fn view<T>(&self, mut cb: impl FnMut(&Settings) -> T) -> T {
+        let settings = self.load();
+        cb(&settings)
+    }
+
+    // Clone to stack for working copy. Not sure which way is better
+    // This compares every field
+    fn update<T>(&self, cb: impl FnOnce(&mut Settings) -> T) -> T {
+        let mut settings = self.load().as_ref().clone();
+
+        let result = cb(&mut settings);
+
+        // Only move to stack if changed
+        if settings != *self.load().as_ref() {
+            self.store(Arc::new(settings));
+        }
+
+        result
+    }
+
+    // This also clones the whole object (usually), but to the heap
+    // fn update<T>(&self, cb: impl FnOnce(&mut Settings) -> T) -> T {
+    //     let mut settings = self.load_full();
+    //
+    //     // This is going to constantly clone the object.
+    //     // We should optimize to only clone on actual changes
+    //     let res = cb(Arc::make_mut(&mut settings));
+    //
+    //     self.store(settings);
+    //
+    //     res
+    // }
+}
+
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Clone)]
 pub struct ToolSettings {
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub provider: BTreeMap<String, ToolSpec>,
+    #[serde(default, skip_serializing_if = "im::OrdMap::is_empty")]
+    pub provider: im::OrdMap<String, ToolSpec>,
 
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub toolset: BTreeMap<String, ToolSelector>,
+    #[serde(default, skip_serializing_if = "im::OrdMap::is_empty")]
+    pub toolset: im::OrdMap<String, ToolSelector>,
 }
 
 impl ToolSettings {

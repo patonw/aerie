@@ -10,10 +10,8 @@ impl super::AppState {
         let errors = self.errors.clone();
         let mut trash_idx = None;
 
-        let scroll_bottom = self.task_count.load(Ordering::Relaxed) > 0 && {
-            let settings_r = self.settings.read().unwrap();
-            settings_r.autoscroll
-        };
+        let scroll_bottom =
+            self.task_count.load(Ordering::Relaxed) > 0 && self.settings.view(|s| s.autoscroll);
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {

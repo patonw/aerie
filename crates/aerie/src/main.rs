@@ -5,7 +5,7 @@ use egui::KeyboardShortcut;
 use egui_commonmark::*;
 use egui_tiles::{LinearDir, TileId};
 use std::{
-    sync::{Arc, RwLock, atomic::AtomicU16},
+    sync::{Arc, atomic::AtomicU16},
     time::{Duration, Instant},
 };
 use tracing_subscriber::{
@@ -111,7 +111,7 @@ fn main() -> anyhow::Result<()> {
     let session = ChatSession::from_dir_name(session_dir, session_name).build()?;
 
     let mut stored_settings = Arc::new(settings.clone());
-    let settings = Arc::new(RwLock::new(settings));
+    let settings = Arc::new(ArcSwap::from_pointee(settings));
 
     // Our application state:
     let task_count = Arc::new(AtomicU16::new(0));
@@ -231,11 +231,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        let dirty = {
-            // Hmmm, should we change to only fire after input has stopped for a duration?
-            let settings_r = settings_.read().unwrap();
-            *settings_r != *stored_settings
-        };
+        let dirty = settings_.view(|s| *s != *stored_settings);
 
         if dirty && debounce < Instant::now() {
             // This will apply/save settings every n seconds *while* or *after* they have been changed
@@ -249,8 +245,7 @@ fn main() -> anyhow::Result<()> {
                 save_settings(settings__, settings_path_).await;
             });
 
-            let settings_r = settings_.read().unwrap();
-            stored_settings = Arc::new(settings_r.clone());
+            stored_settings = settings_.view(|s| Arc::new(s.clone()));
         }
     })
     .map_err(|e| anyhow::anyhow!("I can't {e:?}"))?;
@@ -262,12 +257,9 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn save_settings(settings: Arc<RwLock<Settings>>, settings_path: std::path::PathBuf) {
+async fn save_settings(settings: Arc<ArcSwap<Settings>>, settings_path: std::path::PathBuf) {
     use tokio::io::AsyncWriteExt as _;
-    let text = {
-        let settings_r = settings.read().unwrap();
-        serde_yml::to_string(&*settings_r).unwrap()
-    };
+    let text = settings.view(|s| serde_yml::to_string(s).unwrap());
 
     let mut file = tokio::fs::File::create(settings_path).await.unwrap();
     file.write_all(text.as_bytes()).await.unwrap();

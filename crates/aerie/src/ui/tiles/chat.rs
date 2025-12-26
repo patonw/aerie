@@ -96,11 +96,9 @@ impl super::AppState {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.set_width(ui.available_width());
 
-                let scroll_bottom = self.task_count.load(Ordering::Relaxed) > 0 && {
-                    let settings_r = self.settings.read().unwrap();
-                    // TODO: Floating button
-                    settings_r.autoscroll || ui.button("Scroll to bottom.").clicked()
-                };
+                let scroll_bottom = self.task_count.load(Ordering::Relaxed) > 0
+                    && (self.settings.view(|s| s.autoscroll)
+                        || ui.button("Scroll to bottom.").clicked());
 
                 let md_cache = &mut self.cache;
                 self.session.view(|history| {
