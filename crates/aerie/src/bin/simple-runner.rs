@@ -1,14 +1,11 @@
-use std::{
-    fs::OpenOptions,
-    path::PathBuf,
-    sync::{Arc, RwLock},
-};
+use std::{fs::OpenOptions, path::PathBuf, sync::Arc};
 
 use aerie::{
     AgentFactory, ChatSession, Settings,
     utils::message_text,
     workflow::{RunContext, ShadowGraph, WorkNode, runner::WorkflowRunner, write_value},
 };
+use arc_swap::ArcSwap;
 use clap::Parser;
 use egui_snarl::Snarl;
 use itertools::Itertools as _;
@@ -134,7 +131,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut agent_factory = AgentFactory::builder()
         .rt(rt.handle().clone())
-        .settings(Arc::new(RwLock::new(settings.clone())))
+        .settings(Arc::new(ArcSwap::from_pointee(settings.clone())))
         .build();
 
     agent_factory.reload_tools()?;

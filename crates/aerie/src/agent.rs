@@ -64,7 +64,7 @@ impl rig::tool::Tool for StructuredSubmit {
 #[derive(TypedBuilder, Clone)]
 pub struct AgentFactory {
     pub rt: tokio::runtime::Handle,
-    pub settings: Arc<std::sync::RwLock<Settings>>,
+    pub settings: Arc<ArcSwap<Settings>>,
 
     #[builder(default)]
     pub toolbox: Arc<Toolbox>,
@@ -75,7 +75,7 @@ pub struct AgentFactory {
 
 impl AgentFactory {
     pub fn agent_builder(&self, provider_model: &str) -> anyhow::Result<AgentBuilderT> {
-        let settings = self.settings.read().unwrap();
+        let (preamble, temperature) = self.settings.view(|s| (s.preamble.clone(), s.temperature));
 
         let (provider, model) = self.parse_model(provider_model)?;
 
@@ -87,8 +87,8 @@ impl AgentFactory {
             inner: Arc::from(completion),
         };
         Ok(AgentBuilderSimple::new(handle)
-            .preamble(&settings.preamble)
-            .temperature(settings.temperature))
+            .preamble(&preamble)
+            .temperature(temperature))
     }
 
     pub fn spec_to_agent(&self, spec: &AgentSpec) -> anyhow::Result<AgentT> {
@@ -155,8 +155,8 @@ impl AgentFactory {
         }
 
         if let Some(tools) = &step.tools {
-            let settings = self.settings.read().unwrap();
-            if let Some(toolset) = settings.tools.toolset.get(tools) {
+            let toolset = self.settings.view(|s| s.tools.toolset.get(tools).cloned());
+            if let Some(toolset) = &toolset {
                 builder = self.toolbox.apply(builder, toolset);
             }
         }

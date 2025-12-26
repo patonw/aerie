@@ -12,7 +12,7 @@ use std::{
     fs::OpenOptions,
     path::Path,
     sync::{
-        Arc, RwLock,
+        Arc,
         atomic::{AtomicBool, AtomicU16},
     },
     time::{Duration, SystemTime},
@@ -53,7 +53,7 @@ pub struct AppState {
     #[builder(default)]
     pub errors: ErrorList<anyhow::Error>,
 
-    pub settings: Arc<RwLock<Settings>>,
+    pub settings: Arc<ArcSwap<Settings>>,
 
     #[builder(default)]
     pub task_count: Arc<AtomicU16>,
