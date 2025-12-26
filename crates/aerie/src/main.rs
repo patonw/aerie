@@ -1,3 +1,4 @@
+use arc_swap::ArcSwap;
 use clap::Parser as _;
 use eframe::egui;
 use egui::KeyboardShortcut;
@@ -114,9 +115,9 @@ fn main() -> anyhow::Result<()> {
 
     // Our application state:
     let task_count = Arc::new(AtomicU16::new(0));
-    let log_history = Arc::new(RwLock::new(Vec::<LogEntry>::new()));
+    let log_history: Arc<arc_swap::ArcSwapAny<Arc<im::Vector<LogEntry>>>> =
+        Arc::new(ArcSwap::from_pointee(im::Vector::<LogEntry>::new()));
     let cache = CommonMarkCache::default();
-    let prompt = Arc::new(RwLock::new(String::new()));
     let mut debounce = Instant::now() + Duration::from_secs(1);
 
     let log_history_ = log_history.clone();
@@ -124,8 +125,16 @@ fn main() -> anyhow::Result<()> {
     // TODO: clean shutdown
     rt.handle().spawn(async move {
         while let Ok(entry) = log_rx.recv_async().await {
-            let mut log_rw = log_history_.write().unwrap();
-            log_rw.push(entry);
+            log_history_.rcu(|logs| {
+                let mut logs = logs.as_ref().clone();
+                logs.push_back(entry.clone());
+
+                if logs.len() > 1000 {
+                    logs.skip(logs.len() - 1000)
+                } else {
+                    logs
+                }
+            });
         }
     });
 
@@ -177,7 +186,6 @@ fn main() -> anyhow::Result<()> {
         .task_count(task_count.clone())
         .session(session)
         .cache(cache)
-        .prompt(prompt.clone())
         .rt(rt.handle().clone())
         .agent_factory(agent_factory)
         .workflows(flow_state)

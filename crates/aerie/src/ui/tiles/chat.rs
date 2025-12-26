@@ -3,7 +3,7 @@ use egui_commonmark::*;
 use egui_phosphor::regular::GIT_BRANCH;
 use itertools::Itertools;
 use rig::message::{Message, UserContent};
-use std::{f32, sync::atomic::Ordering};
+use std::{borrow::Cow, sync::atomic::Ordering};
 
 use crate::{
     ChatContent,
@@ -62,18 +62,19 @@ impl super::AppState {
                     });
 
                 egui::CentralPanel::default().show_inside(ui, |ui| {
-                    let mut prompt_w = self.prompt.write().unwrap();
-                    // ui.text_edit_multiline(&mut *prompt_w);
-                    let widget = egui::TextEdit::multiline(&mut *prompt_w)
+                    let mut prompt_w = Cow::Borrowed(self.prompt.as_str());
+                    let widget = egui::TextEdit::multiline(&mut prompt_w)
                         .desired_width(f32::INFINITY)
                         .hint_text("Type your message here \u{1F64B}");
 
                     ui.add_sized(ui.available_size(), widget);
+
+                    if let Cow::Owned(prompt) = prompt_w {
+                        self.prompt = prompt;
+                    }
                 });
 
                 if submitted {
-                    let prompt_ = self.prompt.clone();
-
                     let automation = self
                         .settings
                         .view(|s| s.automation.clone())
@@ -84,7 +85,7 @@ impl super::AppState {
                         self.workflows.switch(&automation);
                         self.exec_workflow();
 
-                        let _user_prompt = std::mem::take(&mut *prompt_.write().unwrap());
+                        self.prompt = String::new();
                     } else {
                         errors.push(anyhow::anyhow!("Workflow {automation} does not exist."));
                     }
@@ -211,14 +212,13 @@ impl super::AppState {
 
             // Copy prompt from branch point into chat input
             self.session.view(|hist| {
-                let mut prompt_w = self.prompt.write().unwrap();
-                if prompt_w.is_empty()
+                if self.prompt.is_empty()
                     && let Some(entry) = hist.store.get(&branch_point)
                     && let ChatContent::Message(msg) = &entry.content
                     && let Message::User { content } = msg
                     && let UserContent::Text(text) = content.first()
                 {
-                    *prompt_w = text.text().to_string();
+                    self.prompt = text.text().to_string();
                 }
             });
 
