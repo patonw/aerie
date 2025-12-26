@@ -2,6 +2,7 @@ use tracing::Subscriber;
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
 // TODO: preserve more data
+#[derive(Debug, Clone)]
 pub struct LogEntry(pub tracing::Level, pub String);
 
 impl LogEntry {

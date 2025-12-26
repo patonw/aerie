@@ -11,7 +11,7 @@ impl super::AppState {
             let theme =
                 egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
 
-            let logs_r = self.log_history.read().unwrap();
+            let logs_r = self.log_history.load();
             for entry in logs_r.iter() {
                 // ui.label(entry.message());
                 egui_extras::syntax_highlighting::code_view_ui(

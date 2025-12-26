@@ -909,7 +909,7 @@ impl super::AppState {
                 .transmuter(self.transmuter.clone())
                 .interrupt(self.workflows.interrupt.clone())
                 .history(self.session.history.clone())
-                .user_prompt(self.prompt.read().unwrap().clone())
+                .user_prompt(self.prompt.clone())
                 .model(self.settings.view(|s| s.llm_model.clone()))
                 .temperature(self.settings.view(|s| s.temperature))
                 .seed(self.settings.view(|s| s.seed.clone()))

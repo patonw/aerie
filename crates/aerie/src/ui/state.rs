@@ -59,14 +59,14 @@ pub struct AppState {
     pub task_count: Arc<AtomicU16>,
 
     #[builder(default)]
-    pub log_history: Arc<RwLock<Vec<LogEntry>>>,
+    pub log_history: Arc<arc_swap::ArcSwapAny<Arc<im::Vector<LogEntry>>>>,
 
     pub session: ChatSession,
 
     pub cache: CommonMarkCache,
 
     #[builder(default)]
-    pub prompt: Arc<RwLock<String>>,
+    pub prompt: String,
 
     pub agent_factory: AgentFactory,
 
