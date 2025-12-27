@@ -6,6 +6,7 @@ use std::{
     ops::Deref,
     sync::Arc,
 };
+use typed_builder::TypedBuilder;
 
 use crate::workflow::{ShadowGraph, Wire, WorkflowError};
 
@@ -21,13 +22,23 @@ pub enum ExecState {
     Failed,
 }
 
-#[derive(Default)]
+#[derive(TypedBuilder)]
 pub struct WorkflowRunner {
+    #[builder(default)]
     pub graph: ShadowGraph<WorkNode>,
+
     pub run_ctx: RunContext,
+
+    #[builder(default)]
     pub successors: BTreeMap<NodeId, BTreeSet<NodeId>>,
+
+    #[builder(default)]
     pub dependencies: BTreeMap<NodeId, BTreeMap<usize, OutPinId>>,
+
+    #[builder(default)]
     pub node_state: Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>>,
+
+    #[builder(default)]
     pub ready_nodes: BTreeSet<NodeId>,
 }
 

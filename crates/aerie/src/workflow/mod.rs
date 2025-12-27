@@ -11,9 +11,10 @@ use rig::message::Message;
 use serde::{Deserialize, Serialize};
 use std::{hash::Hash, sync::Arc};
 use thiserror::Error;
+use typed_builder::TypedBuilder;
 
 use crate::{
-    ChatHistory, Toolbox, Toolset,
+    AgentFactory, ChatHistory, Toolbox, Toolset,
     utils::{ErrorList, ImmutableMapExt as _, ImmutableSetExt as _},
 };
 
@@ -73,23 +74,29 @@ pub struct EditContext {
     pub toolbox: Arc<Toolbox>,
 }
 
-#[derive(Default)]
+#[derive(TypedBuilder)]
 pub struct RunContext {
-    pub toolbox: Arc<Toolbox>,
+    pub agent_factory: AgentFactory,
 
     /// Snapshot of the chat before the workflow is run
+    #[builder(default)]
     pub history: Arc<ArcSwap<ChatHistory>>,
 
     /// The user's prompt that initiated the workflow run
+    #[builder(default)]
     pub user_prompt: String,
 
+    #[builder(default)]
     pub model: String,
 
+    #[builder(default)]
     pub temperature: f64,
 
     /// Final chat snapshot at the end of the workflow run that we want to keep
+    #[builder(default)]
     pub response: Option<Arc<ChatHistory>>,
 
+    #[builder(default)]
     pub errors: ErrorList<anyhow::Error>,
 }
 
