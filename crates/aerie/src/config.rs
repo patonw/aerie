@@ -44,6 +44,9 @@ pub struct Settings {
     #[serde(default)]
     pub llm_model: String,
 
+    #[serde(default, skip_serializing_if = "im::Vector::is_empty")]
+    pub prev_models: im::Vector<String>,
+
     #[serde(default)]
     pub preamble: String,
 

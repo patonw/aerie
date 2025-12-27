@@ -1,8 +1,8 @@
 use itertools::Itertools;
+use rig::{agent::AgentBuilderSimple, completion::CompletionModel};
 use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
 use tokio::process::Command;
 
-use rig::{agent::AgentBuilderSimple, providers::ollama::CompletionModel};
 use rmcp::{
     RoleClient, ServiceExt as _,
     model::Tool,
@@ -11,8 +11,6 @@ use rmcp::{
 };
 
 use super::config::{ToolSpec, Toolset};
-
-type AgentT = AgentBuilderSimple<CompletionModel>;
 
 #[derive(Clone)]
 pub enum ToolProvider {
@@ -23,7 +21,11 @@ pub enum ToolProvider {
 }
 
 impl ToolProvider {
-    pub fn select_tools(&self, agent: AgentT, selector: impl Fn(&Tool) -> bool) -> AgentT {
+    pub fn select_tools<M: CompletionModel>(
+        &self,
+        agent: AgentBuilderSimple<M>,
+        selector: impl Fn(&Tool) -> bool,
+    ) -> AgentBuilderSimple<M> {
         match self {
             ToolProvider::MCP { client, tools } => {
                 let selection = tools
@@ -94,11 +96,18 @@ impl Toolbox {
         self
     }
 
-    pub fn all_tools(&self, agent: AgentT) -> AgentT {
+    pub fn all_tools<M: CompletionModel>(
+        &self,
+        agent: AgentBuilderSimple<M>,
+    ) -> AgentBuilderSimple<M> {
         self.select_tools(agent, |_, _| true)
     }
 
-    pub fn select_chains(&self, agent: AgentT, selection: &[&str]) -> AgentT {
+    pub fn select_chains<M: CompletionModel>(
+        &self,
+        agent: AgentBuilderSimple<M>,
+        selection: &[&str],
+    ) -> AgentBuilderSimple<M> {
         self.providers
             .iter()
             .filter(|(k, _)| selection.contains(&k.as_str()))
@@ -106,13 +115,21 @@ impl Toolbox {
             .fold(agent, |agent, chain| chain.select_tools(agent, |_| true))
     }
 
-    pub fn select_tools(&self, agent: AgentT, pred: impl Fn(&str, &Tool) -> bool) -> AgentT {
+    pub fn select_tools<M: CompletionModel>(
+        &self,
+        agent: AgentBuilderSimple<M>,
+        pred: impl Fn(&str, &Tool) -> bool,
+    ) -> AgentBuilderSimple<M> {
         self.providers.iter().fold(agent, |agent, (name, chain)| {
             chain.select_tools(agent, |tool| pred(name, tool))
         })
     }
 
-    pub fn apply(&self, agent: AgentT, toolset: &Toolset) -> AgentT {
+    pub fn apply<M: CompletionModel>(
+        &self,
+        agent: AgentBuilderSimple<M>,
+        toolset: &Toolset,
+    ) -> AgentBuilderSimple<M> {
         self.select_tools(agent, |name, tool| toolset.apply(name, tool))
     }
 }

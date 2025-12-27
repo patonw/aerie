@@ -1,13 +1,9 @@
 use std::sync::Arc;
 
 use decorum::E64;
+use egui::TextEdit;
 use itertools::Itertools;
-use rig::{
-    agent::{AgentBuilderSimple, PromptRequest},
-    client::{CompletionClient as _, ProviderClient as _},
-    message::Message,
-    providers::ollama,
-};
+use rig::{agent::PromptRequest, message::Message};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -125,26 +121,7 @@ impl UiNode for LLM {
             }
             1 => {
                 if remote.is_none() {
-                    // TODO: componentize and dynamic discovery
-                    egui::ComboBox::from_label("model")
-                        .selected_text(self.model.to_string())
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.model,
-                                "devstral:latest".to_string(),
-                                "Devstral",
-                            );
-                            ui.selectable_value(
-                                &mut self.model,
-                                "magistral:latest".to_string(),
-                                "Magistral",
-                            );
-                            ui.selectable_value(
-                                &mut self.model,
-                                "my-qwen3-coder:30b".to_string(),
-                                "Qwen3 Coder",
-                            );
-                        });
+                    ui.add(TextEdit::singleline(&mut self.model).hint_text("provider/model:tag"));
                 } else {
                     ui.label("model");
                 }
@@ -286,14 +263,14 @@ impl LLM {
             _ => unreachable!(),
         };
 
-        let llm_client = ollama::Client::from_env();
-
-        let mut agent = AgentBuilderSimple::new(llm_client.completion_model(model))
+        let mut agent = ctx
+            .agent_factory
+            .builder(model)?
             .temperature(temperature.into())
             .preamble(preamble);
 
         if let Some(tools) = toolset {
-            agent = ctx.toolbox.apply(agent, &tools);
+            agent = ctx.agent_factory.toolbox.apply(agent, &tools);
         }
 
         let agent = agent.build();

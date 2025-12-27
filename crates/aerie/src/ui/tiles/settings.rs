@@ -1,4 +1,5 @@
-use egui::RichText;
+use egui::{RichText, TextEdit};
+use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE;
 use itertools::Itertools;
 
 use crate::config::ConfigExt as _;
@@ -10,27 +11,55 @@ impl super::AppState {
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                egui::ComboBox::from_label("Model")
-                    .selected_text(settings.view(|s| s.llm_model.to_string()))
-                    .show_ui(ui, |ui| {
-                        settings.update(|settings_rw| {
-                            ui.selectable_value(
-                                &mut settings_rw.llm_model,
-                                "devstral:latest".to_string(),
-                                "Devstral",
-                            );
-                            ui.selectable_value(
-                                &mut settings_rw.llm_model,
-                                "magistral:latest".to_string(),
-                                "Magistral",
-                            );
-                            ui.selectable_value(
-                                &mut settings_rw.llm_model,
-                                "my-qwen3-coder:30b".to_string(),
-                                "Qwen3 Coder",
-                            );
-                        });
+                settings.update(|settings| {
+                    ui.horizontal(|ui| {
+                        if !settings.prev_models.is_empty() {
+                            // Attempts to force UI to recompute max-width when longer model name.
+                            // Would like some kind of generation ID instead of len.
+                            ui.push_id(settings.prev_models.len(), |ui| {
+                                ui.menu_button(CLOCK_COUNTER_CLOCKWISE, |ui| {
+                                    let mut selected = None;
+                                    for (i, name) in settings.prev_models.iter().enumerate() {
+                                        if ui.button(name).clicked() {
+                                            selected = Some(i);
+                                        }
+                                    }
+
+                                    if let Some(i) = selected {
+                                        settings.llm_model = settings.prev_models.remove(i);
+                                        settings.prev_models.push_front(settings.llm_model.clone());
+                                    }
+
+                                    if ui
+                                        .add_sized(
+                                            egui::vec2(ui.min_size().x, 0.0),
+                                            egui::Button::new(RichText::new("clear").weak())
+                                                .small(),
+                                        )
+                                        .clicked()
+                                    {
+                                        settings.prev_models.clear();
+                                    }
+                                });
+                            });
+                        }
+
+                        if ui
+                            .add(
+                                TextEdit::singleline(&mut settings.llm_model)
+                                    .hint_text("provider/model:tag"),
+                            )
+                            .lost_focus()
+                            && !settings.llm_model.is_empty()
+                        {
+                            settings.prev_models.retain(|m| m != &settings.llm_model);
+                            settings.prev_models.push_front(settings.llm_model.clone());
+                            settings.prev_models = settings
+                                .prev_models
+                                .take(16.min(settings.prev_models.len()));
+                        }
                     });
+                });
 
                 settings.update(|settings_rw| {
                     ui.add(

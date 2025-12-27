@@ -1,11 +1,9 @@
 use itertools::Itertools;
-use std::sync::Arc;
-
 use rig::{
     agent::{Agent, AgentBuilderSimple},
-    client::{CompletionClient as _, ProviderClient as _},
-    providers::ollama::{self, CompletionModel},
+    client::{builder::DynClientBuilder, completion::CompletionModelHandle},
 };
+use std::sync::Arc;
 
 use crate::config::ConfigExt as _;
 
@@ -15,7 +13,8 @@ pub use super::logging::{LogChannelLayer, LogEntry};
 pub use super::pipeline::{Pipeline, Workstep};
 pub use super::toolbox::{ToolProvider, Toolbox};
 
-type AgentT = AgentBuilderSimple<CompletionModel>;
+pub type AgentBuilderT = AgentBuilderSimple<CompletionModelHandle<'static>>;
+pub type AgentT = Agent<CompletionModelHandle<'static>>;
 
 #[derive(Clone)]
 pub struct AgentFactory {
@@ -25,22 +24,43 @@ pub struct AgentFactory {
 }
 
 impl AgentFactory {
-    pub fn builder(&self) -> AgentT {
+    pub fn builder(&self, provider_model: &str) -> anyhow::Result<AgentBuilderT> {
         let settings = self.settings.read().unwrap();
-        let llm_client = ollama::Client::from_env();
-        let model = if settings.llm_model.is_empty() {
-            "devstral:latest"
-        } else {
-            settings.llm_model.as_str()
-        };
 
-        AgentBuilderSimple::new(llm_client.completion_model(model))
+        let (provider, model) = self.parse_model(provider_model)?;
+
+        tracing::info!("Building agent with provider {provider} model {model}");
+
+        let completion = DynClientBuilder::new().completion(&provider, &model)?;
+
+        let handle = CompletionModelHandle {
+            inner: Arc::from(completion),
+        };
+        Ok(AgentBuilderSimple::new(handle)
             .preamble(&settings.preamble)
-            .temperature(settings.temperature)
+            .temperature(settings.temperature))
     }
 
-    pub fn agent(&self, step: &Workstep) -> Agent<CompletionModel> {
-        let mut builder = self.builder();
+    fn parse_model(&self, provider_model: &str) -> anyhow::Result<(String, String)> {
+        let (provider, model) = provider_model
+            .split_once("/")
+            .map(|(p, m)| (p.to_string(), m.to_string()))
+            .or_else(|| {
+                self.settings.view(|s| {
+                    s.llm_model
+                        .split_once("/")
+                        .map(|(p, m)| (p.to_string(), m.to_string()))
+                })
+            })
+            .ok_or(anyhow::anyhow!(
+                "Could not determine LLM provider and model"
+            ))?;
+        Ok((provider, model))
+    }
+
+    pub fn agent(&self, step: &Workstep) -> AgentT {
+        let mut builder = self.builder("").unwrap();
+
         if let Some(temperature) = step.temperature {
             builder = builder.temperature(temperature);
         }

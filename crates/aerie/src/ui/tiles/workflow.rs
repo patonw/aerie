@@ -14,7 +14,7 @@ use crate::{
     config::ConfigExt as _,
     utils::ErrorDistiller as _,
     workflow::{
-        EditContext, ShadowGraph, WorkNode,
+        EditContext, RunContext, ShadowGraph, WorkNode,
         runner::{ExecState, WorkflowRunner},
     },
 };
@@ -380,16 +380,18 @@ impl super::AppState {
         let task_count_ = self.task_count.clone();
 
         let mut exec = {
-            let mut exec = WorkflowRunner::default();
-            self.workflows.node_state = exec.init(&self.workflows.shadow);
+            let run_ctx = RunContext::builder()
+                .history(self.session.history.clone())
+                .user_prompt(self.prompt.read().unwrap().clone())
+                .model(self.settings.view(|s| s.llm_model.clone()))
+                .temperature(self.settings.view(|s| s.temperature))
+                .errors(self.errors.clone())
+                .agent_factory(self.agent_factory.clone())
+                .build();
 
-            // TODO: clean this up
-            exec.run_ctx.history = self.session.history.clone();
-            exec.run_ctx.user_prompt = self.prompt.read().unwrap().clone();
-            exec.run_ctx.model = self.settings.view(|s| s.llm_model.clone());
-            exec.run_ctx.temperature = self.settings.view(|s| s.temperature);
-            exec.run_ctx.errors = self.errors.clone();
-            exec.run_ctx.toolbox = self.agent_factory.toolbox.clone();
+            let mut exec = WorkflowRunner::builder().run_ctx(run_ctx).build();
+
+            self.workflows.node_state = exec.init(&self.workflows.shadow);
 
             exec
         };
