@@ -3,7 +3,7 @@ use cached::proc_macro::cached;
 use glob::{Pattern, PatternError};
 use itertools::Itertools as _;
 use std::{
-    collections::BTreeSet,
+    borrow::Cow,
     path::PathBuf,
     sync::{
         Arc, RwLock,
@@ -299,12 +299,22 @@ impl ToolSpec {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum Ternary<T>
+where
+    T: std::fmt::Debug + PartialOrd + Ord,
+{
+    None,
+    Some(im::OrdSet<T>),
+    All,
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolSelector(BTreeSet<String>);
+pub struct ToolSelector(pub im::OrdSet<String>);
 
 impl ToolSelector {
     pub fn empty() -> Self {
-        Self(Default::default())
+        Self(im::OrdSet::new())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -336,21 +346,23 @@ impl ToolSelector {
         self.add(&format!("{provider}/{}", tool.name));
     }
 
-    pub fn exclude(&mut self, provider: &str, tool: &Tool) {
-        let path = format!("{provider}/{}", tool.name);
-        self.0.retain(|it| {
-            if let Ok(pattern) = tool_glob(it.clone()) {
-                !pattern.matches(&path)
-            } else {
-                false
-            }
-        });
-    }
-    pub fn toggle(&mut self, provider: &str, tool: &Tool) {
-        if self.apply(provider, tool) {
-            self.exclude(provider, tool);
+    pub fn provider_selection(&'_ self, provider: &str) -> Ternary<Cow<'_, str>> {
+        if self.0.contains("*/*") || self.0.contains(&format!("{provider}/*")) {
+            Ternary::All
         } else {
-            self.include(provider, tool);
+            let prefix = format!("{provider}/");
+            let tools: im::OrdSet<_> = self
+                .0
+                .iter()
+                .filter_map(|t| t.strip_prefix(&prefix))
+                .map(Cow::Borrowed)
+                .collect();
+
+            if tools.is_empty() {
+                Ternary::None
+            } else {
+                Ternary::Some(tools)
+            }
         }
     }
 
@@ -369,6 +381,6 @@ pub fn tool_glob(pattern: String) -> Result<Pattern, PatternError> {
 
 impl Default for ToolSelector {
     fn default() -> Self {
-        Self(["*/*".into()].into())
+        Self(im::ordset!["*/*".into()])
     }
 }

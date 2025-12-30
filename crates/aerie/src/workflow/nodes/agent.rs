@@ -7,12 +7,17 @@ use std::{sync::Arc, time::Duration};
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 use crate::{
-    ChatContent, ToolProvider, ToolSelector, ui::resizable_frame, workflow::WorkflowError,
+    ChatContent, ToolProvider, ToolSelector,
+    config::Ternary,
+    ui::{resizable_frame, resizable_frame_opt},
+    workflow::WorkflowError,
 };
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tools {
-    toolset: Arc<ToolSelector>,
+    pub toolset: Arc<ToolSelector>,
+
+    pub size: Option<crate::utils::EVec2>,
 }
 
 impl DynNode for Tools {
@@ -40,35 +45,69 @@ impl UiNode for Tools {
     }
 
     fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
-        ui.vertical_centered_justified(|ui| {
-            ui.horizontal_wrapped(|ui| {
-                if ui.selectable_label(self.toolset.is_all(), "all").clicked() {
-                    self.toolset = Arc::new(ToolSelector::all());
-                }
-
-                if ui
-                    .selectable_label(self.toolset.is_empty(), "none")
-                    .clicked()
-                {
-                    self.toolset = Arc::new(ToolSelector::empty());
-                }
-            });
-
-            ui.separator();
-
-            for (name, provider) in &ctx.toolbox.providers {
-                ui.collapsing(name, |ui| {
-                    let ToolProvider::MCP { tools, .. } = provider;
-                    for tool in tools {
-                        let mut active = self.toolset.apply(name, tool);
-
-                        if ui.checkbox(&mut active, tool.name.as_ref()).clicked() {
-                            // Cow-like cloning if other refs exist
-                            Arc::make_mut(&mut self.toolset).toggle(name, tool);
+        let dsize = Some(egui::vec2(250., 250.0));
+        resizable_frame_opt(dsize, &mut self.size, ui, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.selectable_label(self.toolset.is_all(), "all").clicked() {
+                            self.toolset = Arc::new(ToolSelector::all());
                         }
+
+                        if ui
+                            .selectable_label(self.toolset.is_empty(), "none")
+                            .clicked()
+                        {
+                            self.toolset = Arc::new(ToolSelector::empty());
+                        }
+                    });
+
+                    ui.separator();
+
+                    for (name, provider) in &ctx.toolbox.providers {
+                        egui::collapsing_header::CollapsingState::load_with_default_open(
+                            ui.ctx(),
+                            ui.id().with(name),
+                            false,
+                        )
+                        .show_header(ui, |ui| {
+                            let (mut checked, maybe) = {
+                                match self.toolset.provider_selection(name) {
+                                    Ternary::None => (false, false),
+                                    Ternary::Some(_) => (false, true),
+                                    Ternary::All => (true, false),
+                                }
+                            };
+
+                            let widget =
+                                egui::Checkbox::new(&mut checked, name).indeterminate(maybe);
+
+                            if ui.add(widget).clicked() {
+                                self.toolset = Arc::new(ctx.toolbox.toggle_provider(
+                                    &self.toolset,
+                                    name,
+                                    if checked { Ternary::All } else { Ternary::None },
+                                ));
+                            }
+                        })
+                        .body(|ui| {
+                            let ToolProvider::MCP { tools, .. } = provider;
+                            for tool in tools {
+                                let mut active = self.toolset.apply(name, tool);
+
+                                if ui.checkbox(&mut active, tool.name.as_ref()).clicked() {
+                                    self.toolset = Arc::new(ctx.toolbox.toggle_tool(
+                                        &self.toolset,
+                                        name,
+                                        tool,
+                                        active,
+                                    ));
+                                }
+                            }
+                        });
                     }
                 });
-            }
+            });
         });
     }
 }

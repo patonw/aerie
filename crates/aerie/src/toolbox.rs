@@ -13,6 +13,8 @@ use rmcp::{
     },
 };
 
+use crate::config::Ternary;
+
 use super::config::{ToolSelector, ToolSpec};
 
 #[derive(Clone)]
@@ -40,6 +42,12 @@ impl McpClient {
 }
 
 impl ToolProvider {
+    pub fn all_tool_names(&'_ self) -> Vec<Cow<'_, str>> {
+        match self {
+            ToolProvider::MCP { tools, .. } => tools.iter().map(|t| t.name.clone()).collect_vec(),
+        }
+    }
+
     pub fn contains_tool(&self, selector: impl Fn(&Tool) -> bool) -> bool {
         match self {
             ToolProvider::MCP { tools, .. } => {
@@ -248,5 +256,72 @@ impl Toolbox {
         self.provider_for(toolset, tool_name).and_then(|p| match p {
             ToolProvider::MCP { timeout, .. } => *timeout,
         })
+    }
+
+    pub fn toggle_provider(
+        &self,
+        selector: &ToolSelector,
+        provider: &str,
+        state: Ternary<Cow<str>>,
+    ) -> ToolSelector {
+        // First clear the selection for this item
+        let selection = if selector.is_all() {
+            self.providers.keys().map(|p| format!("{p}/*")).collect()
+        } else {
+            let prefix = format!("{provider}/");
+            selector
+                .0
+                .iter()
+                .filter(|it| !it.starts_with(&prefix))
+                .collect()
+        };
+
+        // Add in our target selection
+        let selection: im::OrdSet<_> = match state {
+            Ternary::None => selection,
+            Ternary::Some(items) => {
+                selection.union(items.iter().map(|t| format!("{provider}/{t}")).collect())
+            }
+            Ternary::All => selection.update(format!("{provider}/*")),
+        };
+
+        ToolSelector(selection)
+    }
+
+    pub fn toggle_tool(
+        &self,
+        selector: &ToolSelector,
+        provider: &str,
+        tool: &Tool,
+        active: bool,
+    ) -> ToolSelector {
+        match selector.provider_selection(provider) {
+            Ternary::None if active => self.toggle_provider(
+                selector,
+                provider,
+                Ternary::Some(im::ordset![tool.name.clone()]),
+            ),
+            Ternary::Some(mut items) => {
+                if active {
+                    items.insert(tool.name.clone());
+                } else {
+                    items.remove(&tool.name);
+                }
+
+                self.toggle_provider(selector, provider, Ternary::Some(items))
+            }
+            Ternary::All if !active => {
+                let tools = self
+                    .providers
+                    .get(provider)
+                    .iter()
+                    .flat_map(|p| p.all_tool_names())
+                    .filter(|n| *n != tool.name)
+                    .collect();
+
+                self.toggle_provider(selector, provider, Ternary::Some(tools))
+            }
+            _ => selector.clone(),
+        }
     }
 }
