@@ -666,7 +666,9 @@ async fn one_shot_completion(
                 }
                 StreamedAssistantContent::Final(_) => {}
             },
-            Err(_) => todo!(),
+            Err(err) => {
+                Err(WorkflowError::Provider(err.into()))?;
+            }
         }
     }
 

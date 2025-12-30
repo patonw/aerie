@@ -109,13 +109,20 @@ pub fn resizable_frame(
     ui: &mut egui::Ui,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
+    resizable_frame_opt(None, size, ui, add_contents);
+}
+
+pub fn resizable_frame_opt(
+    default_size: Option<egui::Vec2>,
+    size: &mut Option<crate::utils::EVec2>,
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    let default_size = default_size.unwrap_or(egui::vec2(300.0, 150.0));
     egui::Resize::default()
         .min_width(MIN_WIDTH)
         .min_height(MIN_HEIGHT)
-        .default_size(
-            size.map(egui::Vec2::from)
-                .unwrap_or(egui::vec2(300.0, 150.0)),
-        )
+        .default_size(size.map(egui::Vec2::from).unwrap_or(default_size))
         .with_stroke(false)
         .show(ui, |ui| {
             *size = Some(ui.available_size().into());
