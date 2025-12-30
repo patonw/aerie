@@ -175,10 +175,29 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         }
 
         // A bit hacky
-        let output_drop = self
-            .edit_ctx
-            .output_reset
-            .swap(Arc::new(Default::default()));
+        let output_swap = self.edit_ctx.output_swap.swap(None);
+        if let Some(pins) = output_swap {
+            let (first, second) = pins.as_ref();
+            tracing::debug!("Swapping pins {first:?} and {second:?}");
+
+            let first_pin = snarl.out_pin(*first);
+            let first_remotes = first_pin.remotes.clone();
+            let second_pin = snarl.out_pin(*second);
+            for in_pin_id in &second_pin.remotes {
+                let in_pin = snarl.in_pin(*in_pin_id);
+                tracing::trace!("Moving pin {in_pin:?} from {second_pin:?} to {first_pin:?}");
+                self.disconnect(&second_pin, &in_pin, snarl);
+                self.connect(&first_pin, &in_pin, snarl);
+            }
+
+            for in_pin_id in &first_remotes {
+                let in_pin = snarl.in_pin(*in_pin_id);
+                tracing::trace!("Moving pin {in_pin:?} from {first_pin:?} to {second_pin:?}");
+                self.disconnect(&first_pin, &in_pin, snarl);
+                self.connect(&second_pin, &in_pin, snarl);
+            }
+        }
+        let output_drop = self.edit_ctx.output_drop.swap(Arc::new(Default::default()));
         for out_pin_id in output_drop.iter() {
             let out_pin = snarl.out_pin(*out_pin_id);
             self.drop_outputs(&out_pin, snarl);
@@ -290,6 +309,11 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                 ui.close();
             }
 
+            if ui.button("Matcher").clicked() {
+                snarl.insert_node(pos, WorkNode::Matcher(Default::default()));
+                ui.close();
+            }
+
             if ui.button("Select").clicked() {
                 snarl.insert_node(pos, WorkNode::Select(Default::default()));
                 ui.close();
@@ -306,7 +330,12 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             }
         });
 
-        ui.menu_button("Text", |ui| {
+        ui.menu_button("Value", |ui| {
+            if ui.button("Number").clicked() {
+                snarl.insert_node(pos, WorkNode::Number(Default::default()));
+                ui.close();
+            }
+
             if ui.button("Plain Text").clicked() {
                 snarl.insert_node(pos, WorkNode::Text(Default::default()));
                 ui.close();
@@ -351,7 +380,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             }
         });
 
-        ui.menu_button("Conversation", |ui| {
+        ui.menu_button("History", |ui| {
             if ui.button("Create Message").clicked() {
                 snarl.insert_node(pos, WorkNode::CreateMessage(Default::default()));
                 ui.close();

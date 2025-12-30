@@ -1,7 +1,9 @@
 use std::convert::identity;
 
+use decorum::E64;
 use egui::RichText;
 use egui_commonmark::CommonMarkCache;
+use egui_phosphor::regular::NUMPAD;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -14,6 +16,71 @@ use crate::{
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Number {
+    f_value: E64,
+    i_value: i64,
+
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    integer: bool,
+}
+
+impl DynNode for Number {
+    fn out_kind(&self, _out_pin: usize) -> ValueKind {
+        if self.integer {
+            ValueKind::Integer
+        } else {
+            ValueKind::Number
+        }
+    }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        _inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        if self.integer {
+            Ok(vec![Value::Integer(self.i_value)])
+        } else {
+            Ok(vec![Value::Number(self.f_value)])
+        }
+    }
+}
+
+impl UiNode for Number {
+    fn title(&self) -> &str {
+        "Number"
+    }
+
+    fn show_output(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+    ) -> egui_snarl::ui::PinInfo {
+        assert_eq!(pin_id, 0);
+
+        if self.integer {
+            ui.add(egui::DragValue::new(&mut self.i_value).update_while_editing(false));
+            self.f_value = E64::assert(self.i_value as f64);
+        } else {
+            let mut inner = self.f_value.into_inner();
+            ui.add(
+                egui::DragValue::new(&mut inner)
+                    .speed(0.1)
+                    .update_while_editing(false),
+            );
+            self.f_value = E64::assert(inner);
+            self.i_value = inner as i64;
+        }
+
+        ui.toggle_value(&mut self.integer, NUMPAD)
+            .on_hover_text("treat value as integer");
+        self.out_kind(pin_id).default_pin()
+    }
+}
+
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Text {
@@ -25,10 +92,6 @@ pub struct Text {
 impl DynNode for Text {
     fn value(&self, _out_pin: usize) -> Value {
         Value::Text(self.value.clone())
-    }
-
-    fn inputs(&self) -> usize {
-        0
     }
 
     fn out_kind(&self, out_pin: usize) -> ValueKind {
