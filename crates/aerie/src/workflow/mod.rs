@@ -1,4 +1,4 @@
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use decorum::{E32, E64};
 use egui::{Color32, Stroke};
 use egui_snarl::{
@@ -100,6 +100,9 @@ pub struct EditContext {
     pub errors: ErrorList<anyhow::Error>,
 
     #[builder(default)]
+    pub output_swap: Arc<ArcSwapOption<(OutPinId, OutPinId)>>,
+
+    #[builder(default)]
     pub output_reset: Arc<ArcSwap<im::OrdSet<OutPinId>>>,
 
     #[builder(default)]
@@ -110,6 +113,11 @@ pub struct EditContext {
 }
 
 impl EditContext {
+    pub fn swap_outputs(&self, first: OutPinId, second: OutPinId) {
+        tracing::debug!("Requested to swap output pins {first:?} and {second:?}");
+        self.output_swap.store(Some(Arc::new((first, second))));
+    }
+
     pub fn reset_out_pin(&self, pin_id: OutPinId) {
         let old_set = self.output_reset.load();
         let new_set = old_set.update(pin_id);

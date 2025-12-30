@@ -2,7 +2,7 @@ use arc_swap::ArcSwap;
 use chrono::{DateTime, Local};
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use im::OrdSet;
-use itertools::Itertools;
+use itertools::{EitherOrBoth, Itertools};
 use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap},
     ops::Deref,
@@ -212,6 +212,7 @@ impl WorkflowRunner {
 
         let dyn_node = (snarl[node_id]).as_dyn();
         let single_out = dyn_node.outputs() == 1;
+        let num_outs = dyn_node.outputs();
 
         // Gather inputs
         let mut inputs = (0..dyn_node.inputs())
@@ -247,7 +248,12 @@ impl WorkflowRunner {
             if let Some(ExecState::Done(outputs)) = node_state.get(&remote.node)
                 && remote.output < outputs.len()
             {
-                inputs[*in_pin] = Some(outputs[remote.output].clone())
+                let value = &outputs[remote.output];
+                inputs[*in_pin] = if matches!(value, Value::Placeholder(_)) {
+                    None
+                } else {
+                    Some(value.clone())
+                };
             } else {
                 // Unnecessary sanity checking
                 match snarl[node_id].kind() {
@@ -287,7 +293,7 @@ impl WorkflowRunner {
         }
 
         // Find this node's connected failure output pin
-        let out_fail = (0..dyn_node.outputs()).find_map(|pin| {
+        let out_fail = (0..num_outs).find_map(|pin| {
             if !matches!(dyn_node.out_kind(pin), ValueKind::Failure) {
                 None
             } else {
@@ -313,9 +319,40 @@ impl WorkflowRunner {
             .map(|remote| remote.node)
             .collect::<BTreeSet<_>>();
 
+        // Create a lookup of output pin to remotes
+        let out_remotes = (0..num_outs)
+            .map(|pin_num| {
+                let out_pin = snarl.out_pin(OutPinId {
+                    node: node_id,
+                    output: pin_num,
+                });
+
+                let remotes = &out_pin.remotes;
+                remotes.iter().map(|p| p.node).collect::<BTreeSet<_>>()
+            })
+            .collect_vec();
+
+        // When a pin outputs a placeholder, don't allow its remotes to become ready
+        let mut blacklist: BTreeSet<NodeId> = Default::default();
+
         // Update run state of current node
         let succeeded = match snarl[node_id].execute(&self.run_ctx, node_id, inputs) {
             Ok(values) => {
+                for tooth in (0..num_outs).zip_longest(values.iter()) {
+                    match tooth {
+                        EitherOrBoth::Both(i, value) => {
+                            if matches!(value, Value::Placeholder(_)) {
+                                blacklist.extend(&out_remotes[i]);
+                            }
+                        }
+                        EitherOrBoth::Left(i) => {
+                            blacklist.extend(&out_remotes[i]);
+                        }
+                        EitherOrBoth::Right(_) => unreachable!(),
+                    }
+                }
+
+                tracing::trace!("Values: {values:?}");
                 node_state.insert(node_id, ExecState::Done(values));
                 self.node_state.store(Arc::new(node_state.clone()));
                 true
@@ -349,7 +386,21 @@ impl WorkflowRunner {
             // otherwise only non-failure (normal data) wires.
             successors
                 .iter()
-                .filter(|n| single_out || succeeded ^ fail_handlers.contains(n))
+                // .filter(|n| single_out || succeeded ^ fail_handlers.contains(n))
+                .filter(|n| {
+                    if succeeded {
+                        // Disallow anything on a pin with Placehlder output to run
+                        // This should include failure pins, but double check anyhow
+                        // matches!(snarl[**n], WorkNode::Select(_)) ||
+                        !blacklist.contains(n) && !fail_handlers.contains(n)
+                    } else if single_out {
+                        // Router nodes that mirror their input since it doesn't make sense for a
+                        // node to have only a failure output otherwise
+                        true
+                    } else {
+                        fail_handlers.contains(n)
+                    }
+                })
                 .collect_vec()
         } else {
             // Leaf node
@@ -398,7 +449,11 @@ impl WorkflowRunner {
                         node_state.insert(*successor, next_state);
                     }
                     ExecState::Disabled => {}
-                    _ => todo!(),
+                    ExecState::Done(_) => {}
+                    _ => {
+                        tracing::warn!("Not implemented for {state:?}");
+                        todo!()
+                    }
                 }
             }
         }

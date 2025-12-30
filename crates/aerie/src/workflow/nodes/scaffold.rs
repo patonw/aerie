@@ -1,11 +1,14 @@
 use std::{convert::identity, sync::Arc};
 
 use decorum::E64;
+use egui::RichText;
+use egui_phosphor::regular::{ARROW_CIRCLE_DOWN, ARROW_CIRCLE_UP, TRASH};
 use egui_snarl::OutPinId;
 use itertools::Itertools;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::workflow::WorkflowError;
+use crate::{utils::message_text, workflow::WorkflowError};
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
@@ -291,6 +294,364 @@ impl UiNode for Fallback {
         pin_id: usize,
     ) -> egui_snarl::ui::PinInfo {
         ui.label(format!("{}", pin_id + 1));
+
+        self.out_kind(pin_id).default_pin()
+    }
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Matcher {
+    kind: ValueKind,
+
+    patterns: im::Vector<String>,
+
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    exact: bool,
+
+    #[serde(skip)]
+    editing: Option<usize>,
+}
+
+impl Default for Matcher {
+    fn default() -> Self {
+        Self {
+            kind: Default::default(),
+            patterns: Default::default(),
+            exact: true,
+            editing: Default::default(),
+        }
+    }
+}
+
+impl DynNode for Matcher {
+    fn inputs(&self) -> usize {
+        2
+    }
+
+    fn in_kinds(&self, in_pin: usize) -> &[ValueKind] {
+        match in_pin {
+            0 => &[
+                ValueKind::Text,
+                ValueKind::Message,
+                ValueKind::Number,
+                ValueKind::Integer,
+                ValueKind::Json,
+            ],
+            _ if self.kind == ValueKind::Placeholder => ValueKind::all(),
+            _ => std::slice::from_ref(&self.kind),
+        }
+    }
+
+    fn outputs(&self) -> usize {
+        self.patterns.len() + 1
+    }
+
+    fn out_kind(&self, _out_pin: usize) -> ValueKind {
+        self.kind
+    }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+        let mut result = vec![Value::Placeholder(self.kind); self.patterns.len() + 1];
+        let default_pin = self.patterns.len();
+
+        let data = match &inputs[1] {
+            Some(value) => value.clone(),
+            None => {
+                return Ok(vec![]);
+            }
+        };
+
+        match &inputs[0] {
+            Some(Value::Number(number)) => {
+                if let Some(pos) = self.match_float_range(number.into_inner())? {
+                    result[pos] = data;
+                } else {
+                    result[default_pin] = data;
+                }
+
+                return Ok(result);
+            }
+            Some(Value::Integer(number)) => {
+                if let Some(pos) = self.match_int_range(*number)? {
+                    result[pos] = data;
+                } else {
+                    result[default_pin] = data;
+                }
+
+                return Ok(result);
+            }
+            Some(Value::Json(value)) => {
+                if let serde_json::Value::Number(number) = value.as_ref() {
+                    if let Some(pos) = self.match_float_range(number.as_f64().unwrap())? {
+                        result[pos] = data;
+                    } else {
+                        result[default_pin] = data;
+                    }
+
+                    return Ok(result);
+                }
+            }
+            _ => {}
+        }
+
+        let key = match &inputs[0] {
+            Some(Value::Text(text)) => text.clone(),
+            Some(Value::Message(message)) => message_text(message),
+            Some(Value::Json(value)) => match value.as_ref() {
+                serde_json::Value::String(text) => text.clone(),
+                _ => Err(WorkflowError::Conversion(format!(
+                    "Unsuppported conversion: {value:?}"
+                )))?,
+            },
+            None => Err(WorkflowError::Required(vec!["Key is required".into()]))?,
+            _ => unreachable!(),
+        };
+
+        let pos = self.match_strings(key)?;
+        let out_pin = pos.unwrap_or(default_pin);
+        result[out_pin] = data;
+
+        Ok(result)
+    }
+}
+
+impl Matcher {
+    fn match_int_range(&mut self, key: i64) -> anyhow::Result<Option<usize>> {
+        // TODO: lossless
+        self.match_float_range(key as f64)
+    }
+
+    fn match_float_range(&mut self, key: f64) -> anyhow::Result<Option<usize>> {
+        for (i, pattern) in self.patterns.iter().enumerate() {
+            for pattern in pattern.split('|') {
+                if self.exact {
+                    if pattern.trim().parse::<f64>()? == key {
+                        return Ok(Some(i));
+                    }
+                } else if let Some((min, max)) = pattern.split_once("..") {
+                    let (closed, max) = if let Some(max) = max.strip_prefix('=') {
+                        (true, max)
+                    } else {
+                        (false, max)
+                    };
+
+                    let min = min.trim().parse::<f64>()?;
+                    let max = max.trim().parse::<f64>()?;
+
+                    if closed {
+                        if (min..=max).contains(&key) {
+                            return Ok(Some(i));
+                        }
+                    } else if (min..max).contains(&key) {
+                        return Ok(Some(i));
+                    }
+                } else if pattern.trim().parse::<f64>()? == key {
+                    return Ok(Some(i));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn match_strings(&mut self, key: String) -> anyhow::Result<Option<usize>> {
+        for (i, pattern) in self.patterns.iter().enumerate() {
+            if self.exact || pattern.is_empty() {
+                for pattern in pattern.split('|') {
+                    if pattern.trim() == key.trim() {
+                        return Ok(Some(i));
+                    }
+                }
+            } else {
+                let rx = Regex::new(pattern)?;
+                if rx.is_match(&key) {
+                    return Ok(Some(i));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+}
+
+impl UiNode for Matcher {
+    fn title(&self) -> &str {
+        "Match"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Routes the data input to the output that matches the key"
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("key");
+            }
+            1 => {
+                let in_kind = match &remote {
+                    Some(Value::Placeholder(kind)) => Some(*kind),
+                    Some(value) => Some(value.kind()),
+                    _ => None,
+                };
+
+                // TODO: reset all output pins on type change
+                if self.kind == ValueKind::Placeholder
+                    && let Some(in_kind) = in_kind
+                {
+                    self.kind = in_kind;
+                }
+
+                ui.label("data");
+            }
+            _ => unreachable!(),
+        }
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+
+    fn has_body(&self) -> bool {
+        true
+    }
+
+    fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+            if ui.button("+new").clicked() {
+                ctx.swap_outputs(
+                    OutPinId {
+                        node: ctx.current_node,
+                        output: self.patterns.len(),
+                    },
+                    OutPinId {
+                        node: ctx.current_node,
+                        output: self.patterns.len() + 1,
+                    },
+                );
+                self.patterns.push_back(Default::default());
+                self.editing = Some(self.patterns.len() - 1);
+            }
+
+            ui.toggle_value(&mut self.exact, "exact");
+        });
+    }
+
+    fn show_output(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &EditContext,
+        pin_id: usize,
+    ) -> egui_snarl::ui::PinInfo {
+        if pin_id >= self.patterns.len() {
+            ui.weak("(default)")
+                .on_hover_text("If none of the following match, output to this pin");
+        } else if let Some(editing) = self.editing
+            && editing == pin_id
+        {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let pattern = self.patterns.get_mut(editing).unwrap();
+            let widget = egui::TextEdit::singleline(pattern).desired_width(200.0);
+            let resp = ui.add(widget);
+
+            ui.add_enabled_ui(pin_id > 0, |ui| {
+                if ui.button(ARROW_CIRCLE_UP).clicked() {
+                    ctx.swap_outputs(
+                        OutPinId {
+                            node: ctx.current_node,
+                            output: pin_id,
+                        },
+                        OutPinId {
+                            node: ctx.current_node,
+                            output: pin_id - 1,
+                        },
+                    );
+
+                    self.editing = Some(editing - 1);
+                    self.patterns.swap(editing, editing - 1);
+                    resp.request_focus();
+                }
+            });
+
+            ui.add_enabled_ui(pin_id < self.patterns.len() - 1, |ui| {
+                if ui.button(ARROW_CIRCLE_DOWN).clicked() {
+                    ctx.swap_outputs(
+                        OutPinId {
+                            node: ctx.current_node,
+                            output: pin_id,
+                        },
+                        OutPinId {
+                            node: ctx.current_node,
+                            output: pin_id + 1,
+                        },
+                    );
+
+                    self.editing = Some(editing + 1);
+                    self.patterns.swap(editing, editing + 1);
+                    resp.request_focus();
+                }
+            });
+
+            // Can only delete last one
+            if pin_id == self.patterns.len() - 1
+                && ui
+                    .menu_button(TRASH, |ui| {
+                        if ui.button("Remove").clicked() {
+                            ctx.swap_outputs(
+                                OutPinId {
+                                    node: ctx.current_node,
+                                    output: pin_id,
+                                },
+                                OutPinId {
+                                    node: ctx.current_node,
+                                    output: pin_id + 1,
+                                },
+                            );
+                            ctx.drop_out_pin(OutPinId {
+                                node: ctx.current_node,
+                                output: pin_id + 1,
+                            });
+
+                            self.patterns.pop_back();
+                        }
+                    })
+                    .response
+                    .clicked()
+            {
+                resp.request_focus();
+            }
+
+            if resp.lost_focus() {
+                self.editing = None;
+            }
+
+            resp.request_focus();
+        } else {
+            let pattern = &self.patterns[pin_id];
+            let text = if pattern.is_empty() {
+                RichText::new("(empty)").weak()
+            } else {
+                RichText::new(pattern)
+            };
+            let widget = egui::Label::new(text).truncate();
+            if ui
+                .add(widget)
+                .interact(egui::Sense::click())
+                .double_clicked()
+            {
+                self.editing = Some(pin_id);
+            }
+        }
 
         self.out_kind(pin_id).default_pin()
     }
