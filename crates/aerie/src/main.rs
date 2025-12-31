@@ -1,11 +1,14 @@
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use clap::Parser as _;
 use eframe::egui;
 use egui::KeyboardShortcut;
 use egui_commonmark::*;
 use egui_tiles::{LinearDir, TileId};
 use std::{
-    sync::{Arc, atomic::AtomicU16},
+    sync::{
+        Arc,
+        atomic::{AtomicU16, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tracing_subscriber::{
@@ -120,6 +123,9 @@ fn main() -> anyhow::Result<()> {
     let cache = CommonMarkCache::default();
     let mut debounce = Instant::now() + Duration::from_secs(1);
 
+    let next_workflow: Arc<ArcSwapOption<String>> = Default::default();
+    let next_prompt: Arc<ArcSwapOption<String>> = Default::default();
+
     let log_history_ = log_history.clone();
 
     // TODO: clean shutdown
@@ -137,13 +143,6 @@ fn main() -> anyhow::Result<()> {
             });
         }
     });
-
-    let mut agent_factory = AgentFactory::builder()
-        .rt(rt.handle().to_owned())
-        .settings(settings.clone())
-        .build();
-
-    agent_factory.reload_tools()?;
 
     let mut tiles = egui_tiles::Tiles::default();
     let tabs: Vec<TileId> = vec![
@@ -178,7 +177,17 @@ fn main() -> anyhow::Result<()> {
 
     let flow_name = settings.view(|s| s.automation.clone());
     let flow_store = WorkflowStoreDir::load_all(workflow_dir, true)?;
-    let flow_state = WorkflowState::new(flow_store, flow_name);
+    let flow_state = WorkflowState::new(flow_store.clone(), flow_name);
+
+    let mut agent_factory = AgentFactory::builder()
+        .rt(rt.handle().to_owned())
+        .settings(settings.clone())
+        .store(Some(flow_store.clone()))
+        .next_workflow(next_workflow.clone())
+        .next_prompt(next_prompt.clone())
+        .build();
+
+    agent_factory.reload_tools()?;
 
     let mut behavior = AppState::builder()
         .settings(settings.clone())
@@ -246,6 +255,34 @@ fn main() -> anyhow::Result<()> {
             });
 
             stored_settings = settings_.view(|s| Arc::new(s.clone()));
+        }
+
+        let running = task_count.load(Ordering::Relaxed) > 0;
+
+        if !running && next_prompt.load().is_some() {
+            let prompt = next_prompt
+                .swap(Default::default())
+                .unwrap()
+                .as_ref()
+                .to_owned();
+
+            behavior.prompt = prompt;
+        }
+
+        let next_workflow = if !running && next_workflow.load().is_some() {
+            next_workflow.swap(Default::default())
+        } else {
+            None
+        };
+
+        if let Some(next_workflow) = next_workflow {
+            behavior.workflows.switch(&next_workflow);
+
+            let autorun = settings_.view(|s| s.autoruns);
+            if behavior.run_count < autorun {
+                behavior.run_count += 1;
+                behavior.exec_workflow();
+            }
         }
     })
     .map_err(|e| anyhow::anyhow!("I can't {e:?}"))?;

@@ -1,7 +1,6 @@
 use arc_swap::ArcSwap;
 use cached::proc_macro::cached;
 use glob::{Pattern, PatternError};
-use itertools::Itertools as _;
 use std::{
     borrow::Cow,
     path::PathBuf,
@@ -16,8 +15,6 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
 use clap::{Parser, Subcommand};
-
-use crate::{ToolProvider, Toolbox};
 
 #[derive(Parser, Clone, Debug)]
 #[command(version, about, long_about = None)]
@@ -104,6 +101,9 @@ pub struct Settings {
     pub automation: Option<String>,
 
     #[serde(default)]
+    pub autoruns: usize,
+
+    #[serde(default)]
     pub session: Option<String>,
 
     #[serde(default)]
@@ -188,27 +188,6 @@ pub struct ToolSettings {
 
     #[serde(default, skip_serializing_if = "im::OrdMap::is_empty")]
     pub toolset: im::OrdMap<String, ToolSelector>,
-}
-
-impl ToolSettings {
-    pub async fn load_toolbox(&self) -> anyhow::Result<Toolbox> {
-        let mut toolbox = Toolbox::default();
-
-        let providers = self
-            .provider
-            .iter()
-            .filter(|(_, spec)| spec.enabled())
-            .map(|(name, spec)| (name.clone(), spec.clone()))
-            .collect_vec();
-
-        for (tool_name, tool_spec) in providers {
-            let toolkit = ToolProvider::from_spec(&tool_spec).await?;
-
-            toolbox.with_provider(&tool_name, toolkit);
-        }
-
-        Ok(toolbox)
-    }
 }
 
 /// Configuration to access a tool provider
@@ -366,11 +345,11 @@ impl ToolSelector {
         }
     }
 
-    pub fn apply(&self, provider: &str, tool: &Tool) -> bool {
+    pub fn apply(&self, provider: &str, tool_name: &str) -> bool {
         self.0
             .iter()
             .filter_map(|it| tool_glob(it.clone()).ok())
-            .any(|it| it.matches(&format!("{provider}/{}", tool.name)))
+            .any(|it| it.matches(&format!("{provider}/{}", tool_name)))
     }
 }
 

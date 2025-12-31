@@ -883,6 +883,7 @@ impl super::AppState {
                         }
                     });
                 } else if ui.button(play_layout()).clicked() {
+                    self.run_count = 0;
                     self.exec_workflow();
                 }
             });
@@ -1015,7 +1016,6 @@ impl super::AppState {
                 scratch.clear();
             }
         });
-        self.rt.spawn(async move {});
     }
 }
 

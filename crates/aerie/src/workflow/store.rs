@@ -4,8 +4,10 @@ use std::{
     fs::OpenOptions,
     hash::DefaultHasher,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
+use arc_swap::ArcSwap;
 use itertools::Itertools;
 
 use crate::workflow::ShadowGraph;
@@ -185,7 +187,7 @@ pub struct WorkflowStoreDir {
     path: PathBuf,
 
     /// Cache of loaded workflows
-    cache: im::OrdMap<String, WorkGraph>,
+    cache: Arc<ArcSwap<im::OrdMap<String, WorkGraph>>>,
 }
 
 impl WorkflowStoreDir {
@@ -213,7 +215,7 @@ impl WorkflowStoreDir {
 
         let mut this = Self {
             path,
-            cache: workflows,
+            cache: Arc::new(ArcSwap::from_pointee(workflows)),
         };
 
         tracing::info!("Loaded all workflows: {:?}", this.names().collect_vec());
@@ -230,7 +232,8 @@ impl WorkflowStoreDir {
             }
         }
 
-        this.cache.insert("".into(), Default::default());
+        this.cache
+            .rcu(|cache| cache.update("".into(), Default::default()));
 
         Ok(this)
     }
@@ -253,26 +256,24 @@ impl WorkflowStore for WorkflowStoreDir {
     // type Graph = WorkGraph;
 
     fn load(&mut self, name: &str) -> anyhow::Result<WorkGraph> {
-        if let Some(graph) = self.cache.get(name) {
+        if let Some(graph) = self.cache.load().get(name) {
             return Ok(graph.clone());
         }
 
         let path = self.path.join(name).with_extension("yml");
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
+        let file = OpenOptions::new().read(true).open(path)?;
 
         let shadow_graph: WorkGraph = serde_yml::from_reader(file)?;
-        self.cache.insert(name.to_string(), shadow_graph.clone());
+        self.cache
+            .rcu(|cache| cache.update(name.to_string(), shadow_graph.clone()));
 
         Ok(shadow_graph)
     }
 
     fn save(&mut self, name: &str, value: WorkGraph) -> anyhow::Result<()> {
         if !name.is_empty() {
-            self.cache.insert(name.to_string(), value.clone());
+            self.cache
+                .rcu(|cache| cache.update(name.to_string(), value.clone()));
 
             let path = self.path.join(name).with_extension("yml");
             tracing::info!("Saving {name} to {path:?}: {value:?}");
@@ -297,7 +298,7 @@ impl WorkflowStore for WorkflowStoreDir {
     }
 
     fn exists(&self, key: &str) -> bool {
-        self.cache.contains_key(key) || self.path.join(key).with_extension("yml").exists()
+        self.cache.load().contains_key(key) || self.path.join(key).with_extension("yml").exists()
     }
 
     fn description(&self, key: &str) -> Cow<'_, str> {
@@ -314,15 +315,16 @@ impl WorkflowStore for WorkflowStoreDir {
 
     // TODO: deprecate
     fn get(&self, key: &str) -> Option<WorkGraph> {
-        self.cache.get(key).cloned()
+        self.cache.load().get(key).cloned()
     }
 
     fn put(&mut self, key: &str, value: WorkGraph) {
-        self.cache.insert(key.into(), value);
+        self.cache
+            .rcu(|cache| cache.update(key.into(), value.clone()));
     }
 
     fn remove(&mut self, key: &str) -> anyhow::Result<()> {
-        self.cache.remove(key);
+        self.cache.rcu(|cache| cache.without(key));
         let path = self.path.join(key).with_extension("yml");
         std::fs::remove_file(path)?;
 
@@ -330,9 +332,15 @@ impl WorkflowStore for WorkflowStoreDir {
     }
 
     fn rename(&mut self, old_name: &str, new_name: &str) -> anyhow::Result<()> {
-        if let Some(value) = self.cache.remove(old_name) {
-            self.cache.insert(new_name.to_string(), value);
-        }
+        self.cache.rcu(|cache| {
+            if let Some(value) = cache.get(old_name) {
+                cache
+                    .without(old_name)
+                    .update(new_name.to_string(), value.clone())
+            } else {
+                cache.as_ref().clone()
+            }
+        });
 
         let old_path = self.path.join(old_name).with_extension("yml");
         let new_path = self.path.join(new_name).with_extension("yml");
@@ -345,7 +353,7 @@ impl WorkflowStore for WorkflowStoreDir {
         use std::hash::{Hash, Hasher};
 
         tracing::info!("Creating backup for {name}");
-        if let Some(graph) = self.cache.get(name)
+        if let Some(graph) = self.cache.load().get(name)
             && let Some(dir) = self.path.parent()
         {
             let dir = dir.join("backups");

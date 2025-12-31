@@ -60,10 +60,29 @@ impl super::AppState {
                     });
                 });
 
-                settings.update(|settings_rw| {
-                    ui.add(egui::Slider::new(&mut settings_rw.temperature, 0.0..=1.0).text("T"))
-                        .on_hover_text("temperature");
-                });
+                egui::Grid::new("Settings Editor")
+                    .num_columns(2)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.label("temperature").on_hover_text(
+                            "controls the amount of variation/creativity in LLM outputs",
+                        );
+                        settings.update(|settings_rw| {
+                            ui.add(egui::Slider::new(&mut settings_rw.temperature, 0.0..=1.0));
+                        });
+
+                        ui.end_row();
+
+                        ui.label("autorun").on_hover_text(
+                            "Number of additional turns to execute chained workflows automatically",
+                        );
+                        settings.update(|settings_rw| {
+                            let widget = egui::DragValue::new(&mut settings_rw.autoruns)
+                                .update_while_editing(false);
+                            ui.add(widget);
+                        });
+                        ui.end_row();
+                    });
 
                 settings.update(|settings_rw| {
                     egui::CollapsingHeader::new("Flags")

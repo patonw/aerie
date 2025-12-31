@@ -68,6 +68,9 @@ pub struct AppState {
     #[builder(default)]
     pub prompt: String,
 
+    #[builder(default)]
+    pub run_count: usize,
+
     pub agent_factory: AgentFactory,
 
     #[builder(default)]
