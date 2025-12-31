@@ -126,7 +126,7 @@ impl super::AppState {
                         // TODO: Show any errors connecting to provider
                         if let Some(provider) = self.agent_factory.toolbox.providers.get(name) {
 
-                            let ToolProvider::MCP { tools, .. } = provider;
+                            let ToolProvider::MCP { tools, .. } = provider else { unreachable!() };
                             for item in tools {
                                 ui.horizontal(|ui| {
                                     let selected = matches!(

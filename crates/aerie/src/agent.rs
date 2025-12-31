@@ -1,5 +1,5 @@
 use anyhow::{Context as _, anyhow};
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use decorum::E64;
 use derive_builder::Builder;
 use itertools::Itertools;
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::{hash::Hash, sync::Arc};
 use typed_builder::TypedBuilder;
 
-use crate::config::ConfigExt as _;
+use crate::{config::ConfigExt as _, workflow::store::WorkflowStoreDir};
 
 pub use super::chat::{ChatContent, ChatEntry, ChatHistory, ChatSession};
 pub use super::config::{Settings, ToolSelector, ToolSpec};
@@ -64,13 +64,23 @@ impl rig::tool::Tool for StructuredSubmit {
 #[derive(TypedBuilder, Clone)]
 pub struct AgentFactory {
     pub rt: tokio::runtime::Handle,
+
     pub settings: Arc<ArcSwap<Settings>>,
+
+    #[builder(default)]
+    pub store: Option<WorkflowStoreDir>,
 
     #[builder(default)]
     pub toolbox: Arc<Toolbox>,
 
     #[builder(default)]
     pub cache: Arc<ArcSwap<im::HashMap<AgentSpec, AgentT>>>,
+
+    #[builder(default)]
+    pub next_workflow: Arc<ArcSwapOption<String>>,
+
+    #[builder(default)]
+    pub next_prompt: Arc<ArcSwapOption<String>>,
 }
 
 impl AgentFactory {
@@ -185,6 +195,17 @@ impl AgentFactory {
                 .with_context(|| format!("Could not load tools for {provider}: {spec:?}"))?;
 
             toolbox.with_provider(&provider, toolkit);
+        }
+
+        if let Some(store) = &self.store {
+            toolbox.with_provider(
+                "chainer",
+                ToolProvider::Chainer {
+                    workflows: store.clone(),
+                    next_workflow: self.next_workflow.clone(),
+                    next_prompt: self.next_prompt.clone(),
+                },
+            );
         }
 
         self.toolbox = Arc::new(toolbox);

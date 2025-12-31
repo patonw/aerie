@@ -3,13 +3,19 @@ use std::{fs::OpenOptions, path::PathBuf, sync::Arc};
 use aerie::{
     AgentFactory, ChatSession, Settings,
     utils::message_text,
-    workflow::{RunContext, ShadowGraph, WorkNode, runner::WorkflowRunner, write_value},
+    workflow::{
+        RunContext, ShadowGraph, WorkNode,
+        runner::WorkflowRunner,
+        store::{WorkflowStore as _, WorkflowStoreDir},
+        write_value,
+    },
 };
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use clap::Parser;
 use egui_snarl::Snarl;
 use itertools::Itertools as _;
 use serde::Serializer as _;
+use serde_json::json;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 /// A minimalist workflow runner that dumps outputs to the console as a JSON object.
@@ -21,9 +27,9 @@ struct Args {
     /// The workflow file to run
     workflow: PathBuf,
 
-    /// Save outputs as individual files in a directory
+    /// Path to a workflow directory for chain execution
     #[arg(short, long)]
-    out_dir: Option<PathBuf>,
+    workstore: Option<PathBuf>,
 
     /// A session to use in the workflow.
     /// Updates are discarded unless `--update` is also used.
@@ -50,8 +56,20 @@ struct Args {
     temperature: Option<f64>,
 
     /// Initial user prompt if required by the workflow.
+    #[arg(short, long, visible_alias("prompt"))]
+    input: Option<String>,
+
+    /// Save outputs as individual files in a directory
     #[arg(short, long)]
-    prompt: Option<String>,
+    out_dir: Option<PathBuf>,
+
+    /// Number of extra turns to run chained workflows
+    #[arg(short, long, default_value_t = 0)]
+    autoruns: usize,
+
+    /// Prints an additional object containing the next workflow after the last run
+    #[arg(short, long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    next: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -62,20 +80,18 @@ fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
+    if args.autoruns > 0 && args.workstore.is_none() {
+        anyhow::bail!("Cannot use autorun without a workflow store");
+    }
+
     if let Some(out_dir) = &args.out_dir {
         std::fs::create_dir_all(out_dir)?;
     }
 
-    // let pattern = args.filter.as_ref().cloned().unwrap_or("*".into());
-    // let out_glob = Pattern::new(&pattern)?;
-
-    let workflow_path = args.workflow.as_path();
-    if !workflow_path.is_file() {
-        anyhow::bail!("Invalid file: {workflow_path:?}");
-    }
-
-    let reader = OpenOptions::new().read(true).open(workflow_path)?;
-    let shadow: ShadowGraph<WorkNode> = serde_yml::from_reader(reader)?;
+    let mut workflow_store = args
+        .workstore
+        .map(|p| WorkflowStoreDir::load_all(p, false))
+        .transpose()?;
 
     let session_dir = args
         .session
@@ -100,10 +116,11 @@ fn main() -> anyhow::Result<()> {
         }
         path.clone()
     } else {
-        dirs::config_dir()
-            .map(|p| p.join("emberlain"))
-            .unwrap_or_default()
-            .join("workbench.yml")
+        Default::default()
+        // dirs::config_dir()
+        //     .map(|p| p.join("aerie"))
+        //     .unwrap_or_default()
+        //     .join("workbench.yml")
     };
 
     // Runtime settings:
@@ -129,62 +146,117 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()?;
 
+    let next_workflow: Arc<ArcSwapOption<String>> = Default::default();
+    let next_prompt: Arc<ArcSwapOption<String>> = Default::default();
     let mut agent_factory = AgentFactory::builder()
         .rt(rt.handle().clone())
         .settings(Arc::new(ArcSwap::from_pointee(settings.clone())))
+        .store(workflow_store.clone())
+        .next_workflow(next_workflow.clone())
+        .next_prompt(next_prompt.clone())
         .build();
 
     agent_factory.reload_tools()?;
 
-    let run_ctx = RunContext::builder()
-        .runtime(rt.handle().clone())
-        .agent_factory(agent_factory)
-        .history(session.history.clone())
-        .user_prompt(args.prompt.as_ref().cloned().unwrap_or_default())
-        .model(settings.llm_model.clone())
-        .temperature(settings.temperature)
-        .seed(settings.seed)
-        .build();
-
-    let saver_task = if let Some(out_dir) = &args.out_dir {
-        rt.handle()
-            .spawn(file_output(run_ctx.outputs.receiver(), out_dir.clone()))
+    let mut prompt = args.input.as_ref().cloned().unwrap_or_default();
+    let workflow_path = args.workflow.as_path();
+    let mut shadow: ShadowGraph<WorkNode> = if workflow_path.is_file() {
+        let reader = OpenOptions::new().read(true).open(workflow_path)?;
+        serde_yml::from_reader(reader)?
+    } else if let Some(store) = &mut workflow_store {
+        store.load(&args.workflow.display().to_string())?
     } else {
-        rt.handle()
-            .spawn(console_output(run_ctx.outputs.receiver()))
+        anyhow::bail!("Invalid file: {workflow_path:?}");
     };
 
-    let mut exec = WorkflowRunner::builder().run_ctx(run_ctx).build();
+    for run_count in 0..=args.autoruns {
+        let run_ctx = RunContext::builder()
+            .runtime(rt.handle().clone())
+            .agent_factory(agent_factory.clone())
+            .history(session.history.clone())
+            .graph(shadow.clone())
+            .user_prompt(prompt.clone())
+            .model(settings.llm_model.clone())
+            .temperature(settings.temperature)
+            .seed(settings.seed.clone())
+            .build();
 
-    exec.init(&shadow);
-    let mut snarl = Snarl::try_from(shadow)?;
+        let saver_task = if let Some(out_dir) = &args.out_dir {
+            let out_dir = if args.autoruns > 0 {
+                out_dir.join(run_count.to_string())
+            } else {
+                out_dir.clone()
+            };
 
-    let result = loop {
-        match exec.step(&mut snarl) {
-            Ok(false) => break Ok(false),
-            err @ Err(_) => break err,
-            _ => {}
-        }
-    };
-    drop(exec);
+            rt.handle()
+                .spawn(file_output(run_ctx.outputs.receiver(), out_dir))
+        } else {
+            rt.handle()
+                .spawn(console_output(run_ctx.outputs.receiver()))
+        };
 
-    rt.block_on(async move {
-        match saver_task.await {
-            Ok(Ok(_)) => {}
-            Err(err) => {
-                tracing::warn!("{err:?}");
+        let mut exec = WorkflowRunner::builder().run_ctx(run_ctx).build();
+
+        exec.init(&shadow);
+        let mut snarl = Snarl::try_from(shadow.clone())?;
+
+        let result = loop {
+            match exec.step(&mut snarl) {
+                Ok(false) => break Ok(false),
+                err @ Err(_) => break err,
+                _ => {}
             }
-            Ok(Err(err)) => {
-                tracing::warn!("{err:?}");
+        };
+        drop(exec);
+
+        rt.block_on(async move {
+            match saver_task.await {
+                Ok(Ok(_)) => {}
+                Err(err) => {
+                    tracing::warn!("{err:?}");
+                }
+                Ok(Err(err)) => {
+                    tracing::warn!("{err:?}");
+                }
+            }
+        });
+
+        result?;
+
+        if args.update && args.session.is_some() {
+            session.save()?;
+        }
+
+        if run_count < args.autoruns {
+            if let Some(next_prompt) = next_prompt.swap(Default::default()) {
+                prompt = next_prompt.as_ref().to_owned();
+            }
+
+            if let Some(next_workflow) = next_workflow.swap(Default::default()).as_ref()
+                && let Some(store) = &mut workflow_store
+            {
+                shadow = store.load(next_workflow)?;
+            } else {
+                break;
             }
         }
-    });
-
-    result?;
-
-    if args.update && args.session.is_some() {
-        session.save()?;
     }
+
+    if args.next {
+        let next_workflow = next_workflow
+            .swap(Default::default())
+            .map(|s| s.as_ref().clone());
+        let next_prompt = next_prompt
+            .swap(Default::default())
+            .map(|s| s.as_ref().clone());
+        let blob = json!({
+            "next_workflow": next_workflow,
+            "next_prompt": next_prompt,
+        });
+
+        println!("{blob}");
+    }
+
     Ok(())
 }
 

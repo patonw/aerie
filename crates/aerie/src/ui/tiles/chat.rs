@@ -83,6 +83,7 @@ impl super::AppState {
                     if automation.is_empty() || workflows.contains(&automation) {
                         // TODO: deal with this nuking any edits in progress
                         self.workflows.switch(&automation);
+                        self.run_count = 0;
                         self.exec_workflow();
 
                         self.prompt = String::new();

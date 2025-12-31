@@ -82,7 +82,11 @@ impl UiNode for Tools {
                             let widget =
                                 egui::Checkbox::new(&mut checked, name).indeterminate(maybe);
 
-                            if ui.add(widget).clicked() {
+                            if ui
+                                .add(widget)
+                                .on_hover_text(provider.description())
+                                .clicked()
+                            {
                                 self.toolset = Arc::new(ctx.toolbox.toggle_provider(
                                     &self.toolset,
                                     name,
@@ -90,18 +94,42 @@ impl UiNode for Tools {
                                 ));
                             }
                         })
-                        .body(|ui| {
-                            let ToolProvider::MCP { tools, .. } = provider;
-                            for tool in tools {
-                                let mut active = self.toolset.apply(name, tool);
+                        .body(|ui| match provider {
+                            ToolProvider::MCP { tools, .. } => {
+                                for tool in tools {
+                                    let mut active = self.toolset.apply(name, &tool.name);
 
-                                if ui.checkbox(&mut active, tool.name.as_ref()).clicked() {
-                                    self.toolset = Arc::new(ctx.toolbox.toggle_tool(
-                                        &self.toolset,
-                                        name,
-                                        tool,
-                                        active,
-                                    ));
+                                    let desc = provider.tool_description(&tool.name);
+
+                                    let checkbox = ui
+                                        .checkbox(&mut active, tool.name.as_ref())
+                                        .on_hover_text(desc);
+                                    if checkbox.clicked() {
+                                        self.toolset = Arc::new(ctx.toolbox.toggle_tool(
+                                            &self.toolset,
+                                            name,
+                                            &tool.name,
+                                            active,
+                                        ));
+                                    }
+                                }
+                            }
+                            ToolProvider::Chainer { .. } => {
+                                for tool in provider.all_tool_names() {
+                                    let mut active = self.toolset.apply(name, &tool);
+                                    let desc = provider.tool_description(&tool);
+
+                                    let checkbox =
+                                        ui.checkbox(&mut active, tool.as_ref()).on_hover_text(desc);
+
+                                    if checkbox.clicked() {
+                                        self.toolset = Arc::new(ctx.toolbox.toggle_tool(
+                                            &self.toolset,
+                                            name,
+                                            &tool,
+                                            active,
+                                        ));
+                                    }
                                 }
                             }
                         });
@@ -602,8 +630,10 @@ impl InvokeTool {
         };
 
         let rig_tools = run_ctx.agent_factory.toolbox.get_tools(&toolset);
-        let single_tool = if let [tool] = rig_tools.get_tool_definitions().await.unwrap().as_slice()
-        {
+        let tool_defs = rig_tools.get_tool_definitions().await.unwrap_or_default();
+        tracing::debug!("Tool definitions {:?}", &tool_defs);
+
+        let single_tool = if let [tool] = tool_defs.as_slice() {
             Some(tool.name.clone())
         } else {
             None
