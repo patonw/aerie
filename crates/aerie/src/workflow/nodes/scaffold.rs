@@ -37,7 +37,7 @@ impl DynNode for Start {
     }
 
     fn outputs(&self) -> usize {
-        4
+        5
     }
 
     fn out_kind(&self, out_pin: usize) -> ValueKind {
@@ -45,7 +45,8 @@ impl DynNode for Start {
             0 => ValueKind::Model,
             1 => ValueKind::Number,
             2 => ValueKind::Chat,
-            3 => ValueKind::Text,
+            3 => ValueKind::Json,
+            4 => ValueKind::Text,
             _ => unreachable!(),
         }
     }
@@ -56,10 +57,17 @@ impl DynNode for Start {
         _node_id: egui_snarl::NodeId,
         _inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
+        let schema: serde_json::Value = if !ctx.graph.schema.is_empty() {
+            serde_json::from_str(&ctx.graph.schema)
+                .map_err(|_| WorkflowError::Conversion("Invalid input schema".into()))?
+        } else {
+            serde_json::json!({})
+        };
         Ok(vec![
             Value::Model(ctx.model.clone()),
             Value::Number(E64::assert(ctx.temperature)),
             Value::Chat(ctx.history.load().clone()),
+            Value::Json(Arc::new(schema)),
             Value::Text(ctx.user_prompt.clone()),
         ])
     }
@@ -87,7 +95,10 @@ impl UiNode for Start {
                 ui.label("conversation");
             }
             3 => {
-                ui.label("prompt");
+                ui.label("schema");
+            }
+            4 => {
+                ui.label("input");
             }
             _ => unreachable!(),
         };

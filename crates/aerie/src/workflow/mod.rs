@@ -177,6 +177,10 @@ pub struct RunContext {
     #[builder(default)]
     pub history: Arc<ArcSwap<ChatHistory>>,
 
+    /// A full copy of the current graph
+    #[builder(default)]
+    pub graph: ShadowGraph<WorkNode>,
+
     /// The user's prompt that initiated the workflow run
     #[builder(default)]
     pub user_prompt: String,
@@ -269,6 +273,9 @@ where
 
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: Arc<String>,
+
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub schema: Arc<String>,
 }
 
 impl<T: Clone + PartialEq> ShadowGraph<T> {
@@ -329,6 +336,7 @@ where
             wires: Default::default(),
             disabled: Default::default(),
             description: Default::default(),
+            schema: Default::default(),
         }
     }
 
@@ -340,6 +348,7 @@ where
             && self.wires.ptr_eq(&other.wires)
             && self.disabled.ptr_eq(&other.disabled)
             && Arc::ptr_eq(&self.description, &other.description)
+            && Arc::ptr_eq(&self.schema, &other.schema)
     }
 
     #[must_use]
@@ -462,6 +471,13 @@ where
     pub fn with_description(&self, desc: &str) -> Self {
         Self {
             description: Arc::new(desc.to_string()),
+            ..self.clone()
+        }
+    }
+
+    pub fn with_schema(&self, schema: &str) -> Self {
+        Self {
+            schema: Arc::new(schema.to_string()),
             ..self.clone()
         }
     }
