@@ -149,7 +149,7 @@ wires:
     input: 0
 - out_pin:
     node: 0
-    output: 3
+    output: 4
   in_pin:
     node: 2
     input: 2

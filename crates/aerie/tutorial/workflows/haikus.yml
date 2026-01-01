@@ -1,0 +1,260 @@
+nodes:
+  0:
+    value: !Start {}
+    pos:
+      x: -901.5784
+      'y': -1260.0525
+    open: true
+  1:
+    value: !Finish {}
+    pos:
+      x: 1847.6608
+      'y': -1182.8105
+    open: true
+  2:
+    value: !Output
+      label: haiku
+    pos:
+      x: 1406.0155
+      'y': -549.6766
+    open: true
+  3:
+    value: !Text
+      value: How does goose determine which extensions are available?
+      size:
+        x: 300.0
+        'y': 150.0
+    pos:
+      x: -907.59686
+      'y': -899.335
+    open: true
+  4:
+    value: !Tools
+      toolset:
+      - '*/*'
+      size:
+        x: 250.0
+        'y': 250.0
+    pos:
+      x: -917.4397
+      'y': -2053.6167
+    open: true
+  5:
+    value: !Output
+      label: convo
+    pos:
+      x: 1441.8335
+      'y': -823.26373
+    open: true
+  6:
+    value: !GraftChat {}
+    pos:
+      x: 1361.6821
+      'y': -1184.4845
+    open: true
+  7:
+    value: !MaskChat
+      limit: 0
+    pos:
+      x: -353.93753
+      'y': -1069.576
+    open: true
+  8:
+    value: !Preview
+      size:
+        x: 351.78125
+        'y': 308.125
+    pos:
+      x: 542.615
+      'y': -452.20386
+    open: true
+  9:
+    value: !Comment
+      comment: |-
+        Modify agent, setting tool selection to none.
+
+        Alternatively, we could create an intial agent with no tools and modify it, adding tools for the first prompt, then route the toolless agent to the second prompt.
+
+        Try attaching preview nodes to compare.
+      size:
+        x: 499.0
+        'y': 276.78125
+    pos:
+      x: 450.5209
+      'y': -1997.488
+    open: true
+  10:
+    value: !Agent
+      model: ''
+      preamble: |-
+        Answer general questions using your general knowledge, but do not hallucinate specific details you don't actually know.
+        Instead use provided tools to find relevant information if applicable. Otherwise politely decline to answer, explaining why.
+
+        Answer in plain English formatted with Markdown in with as much relevant detail as can be inferred from the results.
+      temperature: 0.5
+      size:
+        x: 424.46875
+        'y': 413.90625
+    pos:
+      x: -481.4319
+      'y': -1901.9465
+    open: true
+  11:
+    value: !Chat
+      prompt: ''
+    pos:
+      x: 156.15413
+      'y': -817.73895
+    open: true
+  12:
+    value: !Agent
+      preamble: Be creative and a little quirky
+      size:
+        x: 300.0
+        'y': 150.0
+    pos:
+      x: 455.3135
+      'y': -1591.8245
+    open: true
+  13:
+    value: !Chat
+      prompt: Turn your last response into a haiku
+      size:
+        x: 281.3125
+        'y': 123.375
+    pos:
+      x: 843.4198
+      'y': -990.78314
+    open: true
+  14:
+    value: !Tools
+      toolset: []
+      size:
+        x: 250.0
+        'y': 250.0
+    pos:
+      x: 109.469925
+      'y': -1960.493
+    open: true
+  15:
+    value: !Comment
+      comment: |-
+        You may notice that weaker models frequently ignore the tools and preamble, instead opting to hallucinate details about things it knows nothing about.
+
+        See the tutorials on structured outputs and tool invocation to find ways around this.
+      size:
+        x: 527.0
+        'y': 322.34375
+    pos:
+      x: -500.8366
+      'y': -2499.1248
+    open: true
+wires:
+- out_pin:
+    node: 0
+    output: 0
+  in_pin:
+    node: 10
+    input: 1
+- out_pin:
+    node: 0
+    output: 1
+  in_pin:
+    node: 10
+    input: 2
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 6
+    input: 0
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 7
+    input: 0
+- out_pin:
+    node: 0
+    output: 4
+  in_pin:
+    node: 11
+    input: 2
+- out_pin:
+    node: 4
+    output: 0
+  in_pin:
+    node: 10
+    input: 3
+- out_pin:
+    node: 6
+    output: 0
+  in_pin:
+    node: 1
+    input: 0
+- out_pin:
+    node: 7
+    output: 0
+  in_pin:
+    node: 11
+    input: 1
+- out_pin:
+    node: 10
+    output: 0
+  in_pin:
+    node: 11
+    input: 0
+- out_pin:
+    node: 10
+    output: 0
+  in_pin:
+    node: 12
+    input: 0
+- out_pin:
+    node: 11
+    output: 0
+  in_pin:
+    node: 8
+    input: 0
+- out_pin:
+    node: 11
+    output: 0
+  in_pin:
+    node: 13
+    input: 1
+- out_pin:
+    node: 12
+    output: 0
+  in_pin:
+    node: 13
+    input: 0
+- out_pin:
+    node: 13
+    output: 0
+  in_pin:
+    node: 5
+    input: 0
+- out_pin:
+    node: 13
+    output: 0
+  in_pin:
+    node: 6
+    input: 1
+- out_pin:
+    node: 13
+    output: 1
+  in_pin:
+    node: 2
+    input: 0
+- out_pin:
+    node: 14
+    output: 0
+  in_pin:
+    node: 12
+    input: 3
+description: |-
+  A (slightly) more practical example: Responds to a prompt with a series of haikus after using tools to gather some information. This is closer to the intended use case than the other examples.
+
+  Demonstrates grafting a side conversation onto a chat history then updating the persisted chat session.
+
+  Asides allow you to track how the final answer is produced without cluttering the branch history. Check the Lineage tab to see how branches and asides relate.

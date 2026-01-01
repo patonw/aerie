@@ -1,0 +1,523 @@
+nodes:
+  0:
+    value: !Start {}
+    pos:
+      x: -635.2909
+      'y': -309.07364
+    open: true
+  1:
+    value: !Finish {}
+    pos:
+      x: -638.1965
+      'y': -15.960735
+    open: true
+  2:
+    value: !Agent
+      preamble: "In markdown, show me how you would use available tools to find more information before answering. \n\nInclude the JSON of the tool call, but don't actually call the tool yet. Just show me the formatted call."
+      temperature: 0.3
+      size:
+        x: 294.5
+        'y': 364.0
+    pos:
+      x: 165.04259
+      'y': -430.27402
+    open: true
+  3:
+    value: !Structured
+      prompt: How does goose manage extensions?
+      retries: 3
+      extract: true
+    pos:
+      x: 651.0927
+      'y': 75.60228
+    open: true
+  4:
+    value: !Tools
+      toolset:
+      - '*/*'
+      size:
+        x: 250.0
+        'y': 250.0
+    pos:
+      x: -185.80975
+      'y': 415.76367
+    open: true
+  5:
+    value: !InvokeTool
+      tool_name: ''
+    pos:
+      x: 1208.0819
+      'y': 478.48398
+    open: true
+  6:
+    value: !Output
+      label: pretty.txt
+    pos:
+      x: 2796.3618
+      'y': 414.04236
+    open: true
+  7:
+    value: !ParseJson
+      text: ''
+    pos:
+      x: 1650.6309
+      'y': 422.0933
+    open: true
+  8:
+    value: !TransformJson
+      filter: ' .data[] | .payload.summary'
+      size:
+        x: 288.0
+        'y': 64.0
+    pos:
+      x: 2000.1088
+      'y': 1286.4978
+    open: true
+  9:
+    value: !Text
+      value: How does goose manage extensions?
+      size:
+        x: 300.0
+        'y': 150.0
+    pos:
+      x: 187.8742
+      'y': -1166.7523
+    open: true
+  10:
+    value: !Preview
+      size:
+        x: 300.0
+        'y': 150.03125
+    pos:
+      x: 2361.3303
+      'y': -714.73206
+    open: true
+  11:
+    value: !Agent {}
+    pos:
+      x: -292.1207
+      'y': -747.78766
+    open: true
+  12:
+    value: !Chat
+      prompt: Use the tool results to answer the original question
+    pos:
+      x: 1924.1335
+      'y': -383.59082
+    open: true
+  13:
+    value: !MaskChat
+      limit: 0
+    pos:
+      x: -292.8317
+      'y': 25.883204
+    open: true
+  14:
+    value: !Comment
+      comment: Whether this fails or not depends on if the MCP server responds in JSON or unstructured text.
+      size:
+        x: 300.0
+        'y': 150.0
+    pos:
+      x: 1199.7107
+      'y': 218.9234
+    open: true
+  15:
+    value: !Comment
+      comment: This workflow uses a preset prompt, unrelated to the input in the chat session of the primary UI.
+      size:
+        x: 334.0
+        'y': 206.875
+    pos:
+      x: -278.08704
+      'y': -1163.5349
+    open: true
+  16:
+    value: !Context
+      context_doc: ''
+      size:
+        x: 300.0
+        'y': 150.0
+    pos:
+      x: 1605.4902
+      'y': -543.2396
+    open: true
+  17:
+    value: !Preview
+      size:
+        x: 682.15625
+        'y': 807.0
+    pos:
+      x: 531.4066
+      'y': 922.72565
+    open: true
+  18:
+    value: !Comment
+      comment: |-
+        Expose the tool results as context instead of part of the flow of conversation.
+
+        Alternatively, you could connect the conversation from the tool call, or post-process the tool call results and extend the history.
+      size:
+        x: 379.40625
+        'y': 293.59375
+    pos:
+      x: 1402.8344
+      'y': -993.7436
+    open: true
+  19:
+    value: !Comment
+      comment: |
+        Attempt to get the model to misbehave, by instructing it to return a proper tool call in the wrong place.
+      size:
+        x: 299.0
+        'y': 198.8125
+    pos:
+      x: 197.45428
+      'y': -793.2128
+    open: true
+  20:
+    value: !Output
+      label: response.txt
+    pos:
+      x: 2293.1099
+      'y': -423.31503
+    open: true
+  21:
+    value: !TemplateNode
+      template: |-
+        {% for entry in data -%}
+        {% set item = entry.payload -%}
+        **{{ item.name }}**
+        ({{ item.path }})
+
+        {{ item.summary }}
+
+
+        {% endfor %}
+      size:
+        x: 401.0
+        'y': 282.9375
+    pos:
+      x: 2276.5967
+      'y': 208.03064
+    open: true
+  22:
+    value: !CreateMessage
+      kind: ToolResult
+      content: ''
+      size:
+        x: 300.0
+        'y': 150.0
+    pos:
+      x: 3086.8987
+      'y': 681.3905
+    open: true
+  23:
+    value: !ExtendHistory
+      count: 1
+    pos:
+      x: 3502.7249
+      'y': 298.6209
+    open: true
+  24:
+    value: !Output
+      label: descriptions.json
+    pos:
+      x: 2450.4236
+      'y': 1365.7738
+    open: true
+  25:
+    value: !Output
+      label: raw-results
+    pos:
+      x: 1625.854
+      'y': 898.8373
+    open: true
+  26:
+    value: !Output
+      label: manual-history
+    pos:
+      x: 3935.6096
+      'y': 384.16962
+    open: true
+  27:
+    value: !Comment
+      comment: 'Another option: JSON to JSON, extracting just the summaries.'
+      size:
+        x: 300.0
+        'y': 150.0
+    pos:
+      x: 2000.7994
+      'y': 1536.038
+    open: true
+  28:
+    value: !Comment
+      comment: Use a template to format the results in a human readable text document.
+      size:
+        x: 300.0
+        'y': 150.0
+    pos:
+      x: 2316.1863
+      'y': -61.338474
+    open: true
+  29:
+    value: !Comment
+      comment: |-
+        Some models are better than others at following the instructions exactly.
+
+        While others have trouble just sticking to the correct schema/language.
+      size:
+        x: 359.0
+        'y': 237.875
+    pos:
+      x: 655.3431
+      'y': -377.47485
+    open: true
+  30:
+    value: !Fallback
+      kinds:
+      - Text
+    pos:
+      x: 2260.6794
+      'y': 694.57263
+    open: true
+  31:
+    value: !Comment
+      comment: If parsing fails, just skip the templating step and push the raw results into the history.
+      size:
+        x: 300.0
+        'y': 150.0
+    pos:
+      x: 2210.3894
+      'y': 915.909
+    open: true
+  32:
+    value: !Select
+      count: 2
+      kind: Text
+    pos:
+      x: 2804.7725
+      'y': 672.55206
+    open: true
+  33:
+    value: !Comment
+      comment: Take the value from whichever path actually ran.
+      size:
+        x: 208.0
+        'y': 144.0
+    pos:
+      x: 2788.1328
+      'y': 897.9387
+    open: true
+wires:
+- out_pin:
+    node: 0
+    output: 0
+  in_pin:
+    node: 11
+    input: 1
+- out_pin:
+    node: 0
+    output: 1
+  in_pin:
+    node: 11
+    input: 2
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 13
+    input: 0
+- out_pin:
+    node: 2
+    output: 0
+  in_pin:
+    node: 3
+    input: 0
+- out_pin:
+    node: 3
+    output: 0
+  in_pin:
+    node: 5
+    input: 0
+- out_pin:
+    node: 3
+    output: 0
+  in_pin:
+    node: 23
+    input: 0
+- out_pin:
+    node: 3
+    output: 1
+  in_pin:
+    node: 17
+    input: 0
+- out_pin:
+    node: 3
+    output: 2
+  in_pin:
+    node: 5
+    input: 2
+- out_pin:
+    node: 3
+    output: 3
+  in_pin:
+    node: 5
+    input: 3
+- out_pin:
+    node: 4
+    output: 0
+  in_pin:
+    node: 2
+    input: 3
+- out_pin:
+    node: 4
+    output: 0
+  in_pin:
+    node: 5
+    input: 1
+- out_pin:
+    node: 5
+    output: 2
+  in_pin:
+    node: 7
+    input: 0
+- out_pin:
+    node: 5
+    output: 2
+  in_pin:
+    node: 16
+    input: 1
+- out_pin:
+    node: 5
+    output: 2
+  in_pin:
+    node: 25
+    input: 0
+- out_pin:
+    node: 5
+    output: 2
+  in_pin:
+    node: 30
+    input: 1
+- out_pin:
+    node: 7
+    output: 0
+  in_pin:
+    node: 8
+    input: 1
+- out_pin:
+    node: 7
+    output: 0
+  in_pin:
+    node: 21
+    input: 1
+- out_pin:
+    node: 7
+    output: 1
+  in_pin:
+    node: 30
+    input: 0
+- out_pin:
+    node: 8
+    output: 0
+  in_pin:
+    node: 24
+    input: 0
+- out_pin:
+    node: 9
+    output: 0
+  in_pin:
+    node: 3
+    input: 3
+- out_pin:
+    node: 9
+    output: 0
+  in_pin:
+    node: 12
+    input: 2
+- out_pin:
+    node: 11
+    output: 0
+  in_pin:
+    node: 2
+    input: 0
+- out_pin:
+    node: 11
+    output: 0
+  in_pin:
+    node: 16
+    input: 0
+- out_pin:
+    node: 12
+    output: 0
+  in_pin:
+    node: 10
+    input: 0
+- out_pin:
+    node: 12
+    output: 1
+  in_pin:
+    node: 20
+    input: 0
+- out_pin:
+    node: 13
+    output: 0
+  in_pin:
+    node: 3
+    input: 1
+- out_pin:
+    node: 13
+    output: 0
+  in_pin:
+    node: 12
+    input: 1
+- out_pin:
+    node: 16
+    output: 0
+  in_pin:
+    node: 12
+    input: 0
+- out_pin:
+    node: 21
+    output: 0
+  in_pin:
+    node: 6
+    input: 0
+- out_pin:
+    node: 21
+    output: 0
+  in_pin:
+    node: 32
+    input: 0
+- out_pin:
+    node: 22
+    output: 0
+  in_pin:
+    node: 23
+    input: 1
+- out_pin:
+    node: 23
+    output: 0
+  in_pin:
+    node: 26
+    input: 0
+- out_pin:
+    node: 30
+    output: 0
+  in_pin:
+    node: 32
+    input: 1
+- out_pin:
+    node: 32
+    output: 0
+  in_pin:
+    node: 22
+    input: 0
+description: |-
+  #no-prompt
+  An advanced example that demonstrates how to use structured output to get tool calls from the LLM and then manually invoking tools.
+
+  In most cases, it makes more sense to use the Chat node to automatically invoke tools and get feedback from the LLM.
+
+  Also demonstrates various ways of post-processing results.
