@@ -38,9 +38,6 @@ Options:
   -w, --workstore <WORKSTORE>
           Path to a workflow directory for chain execution
 
-  -o, --out-dir <OUT_DIR>
-          Save outputs as individual files in a directory
-
   -s, --session <SESSION>
           A session to use in the workflow. Updates are discarded unless `--update` is also used
 
@@ -59,13 +56,21 @@ Options:
   -t, --temperature <TEMPERATURE>
 
 
-  -p, --prompt <PROMPT>
+  -i, --input <INPUT>
           Initial user prompt if required by the workflow
+
+          [aliases: --prompt]
+
+  -o, --out-dir <OUT_DIR>
+          Save outputs as individual files in a directory
 
   -a, --autoruns <AUTORUNS>
           Number of extra turns to run chained workflows
 
           [default: 0]
+
+  -n, --next
+          Prints an additional object containing the next workflow after the last run
 ```
 
 ```console
