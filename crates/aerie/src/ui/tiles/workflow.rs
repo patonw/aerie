@@ -626,23 +626,44 @@ impl super::AppState {
                 .default_size(egui::vec2(200.0, 100.0))
                 .movable(true)
                 .show(ui.ctx(), |ui| {
-                    let mut description = Cow::Borrowed(self.workflows.shadow.description.as_str());
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.selectable_value(&mut self.workflows.meta_edit, 0, "Description");
+                        ui.selectable_value(&mut self.workflows.meta_edit, 1, "Schema");
+                    });
 
-                    // ui.take_available_space();
                     let size = ui.available_size();
 
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.add_sized(
-                            size,
-                            egui::TextEdit::multiline(&mut description)
-                                .hint_text("Add a description for this workflow"),
-                        );
-                    });
+                        if self.workflows.meta_edit == 0 {
+                            let mut description =
+                                Cow::Borrowed(self.workflows.shadow.description.as_str());
 
-                    if let Cow::Owned(desc) = description {
-                        self.workflows
-                            .cast_shadow(self.workflows.shadow.with_description(&desc));
-                    }
+                            ui.add_sized(
+                                size,
+                                egui::TextEdit::multiline(&mut description)
+                                    .hint_text("Add a description for this workflow"),
+                            );
+
+                            if let Cow::Owned(desc) = description {
+                                self.workflows
+                                    .cast_shadow(self.workflows.shadow.with_description(&desc));
+                            }
+                        } else {
+                            let mut schema = Cow::Borrowed(self.workflows.shadow.schema.as_str());
+
+                            ui.add_sized(
+                                size,
+                                egui::TextEdit::multiline(&mut schema)
+                                    .hint_text("Add a schema for this workflow"),
+                            );
+
+                            if let Cow::Owned(schema) = schema {
+                                self.workflows
+                                    .cast_shadow(self.workflows.shadow.with_schema(&schema));
+                            }
+                        }
+                    });
                 })
         });
     }
@@ -909,6 +930,7 @@ impl super::AppState {
                 .transmuter(self.transmuter.clone())
                 .interrupt(self.workflows.interrupt.clone())
                 .history(self.session.history.clone())
+                .graph(self.workflows.shadow.clone())
                 .user_prompt(self.prompt.clone())
                 .model(self.settings.view(|s| s.llm_model.clone()))
                 .temperature(self.settings.view(|s| s.temperature))

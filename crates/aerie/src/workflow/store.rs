@@ -21,6 +21,7 @@ pub trait WorkflowStore {
     fn names(&self) -> impl Iterator<Item = Cow<'_, str>>;
     fn exists(&self, key: &str) -> bool;
     fn description(&'_ self, key: &str) -> Cow<'_, str>;
+    fn schema(&'_ self, key: &str) -> Cow<'_, str>;
 
     fn remove(&mut self, key: &str) -> anyhow::Result<()>;
     fn rename(&mut self, old_name: &str, new_name: &str) -> anyhow::Result<()>;
@@ -113,6 +114,12 @@ impl WorkflowStore for WorkflowStoreFile {
     fn description(&self, key: &str) -> Cow<'_, str> {
         self.get(key)
             .map(|g| Cow::Owned(g.description.to_string()))
+            .unwrap_or(Cow::Owned(String::new()))
+    }
+
+    fn schema(&self, key: &str) -> Cow<'_, str> {
+        self.get(key)
+            .map(|g| Cow::Owned(g.schema.to_string()))
             .unwrap_or(Cow::Owned(String::new()))
     }
 
@@ -296,6 +303,12 @@ impl WorkflowStore for WorkflowStoreDir {
     fn description(&self, key: &str) -> Cow<'_, str> {
         self.get(key)
             .map(|g| Cow::Owned(g.description.to_string()))
+            .unwrap_or(Cow::Owned(String::new()))
+    }
+
+    fn schema(&self, key: &str) -> Cow<'_, str> {
+        self.get(key)
+            .map(|g| Cow::Owned(g.schema.to_string()))
             .unwrap_or(Cow::Owned(String::new()))
     }
 
