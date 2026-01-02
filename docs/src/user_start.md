@@ -13,8 +13,9 @@
 - Temporary git:
   - `nix-shell -p git`
 - Get parent repo sources:
-  - `git clone <repo-url>`
-  - Has related tools in various levels of usability
+  - `git clone --recurse-submodules https://github.com/patonw/refoliate`
+  - `cd refoliate`
+  - `git submodule update --init --recursive` (only needed for updates)
 - Install using nix-env:
   - `nix-env --install -f . -A aerie.app`
   - this takes a while the first time: must create a build environment

@@ -27,6 +27,7 @@ let
   aerie = naersk.buildPackage {
     # Command line launchers
     name = "aerie-bin";
+    gitSubmodules = true;
     src = gitignoreSource ./.;
     cargoBuildOptions = opts: opts ++ [ "--package aerie" ];
 
