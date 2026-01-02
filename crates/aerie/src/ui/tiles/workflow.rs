@@ -1,12 +1,15 @@
 use std::{
     borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, atomic::Ordering},
     thread,
     time::{Duration, SystemTime},
 };
 
 use arc_swap::ArcSwap;
-use egui::{Align2, Color32, ComboBox, Hyperlink, KeyboardShortcut, RichText, Ui};
+use egui::{
+    Align2, Color32, ComboBox, Hyperlink, KeyboardShortcut, RichText, Ui, emath::TSTransform,
+};
 use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular::{
     ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, CHECK_CIRCLE, DOWNLOAD_SIMPLE, HAND_PALM,
@@ -14,7 +17,7 @@ use egui_phosphor::regular::{
     WARNING,
 };
 use egui_snarl::{
-    NodeId, Snarl,
+    InPinId, NodeId, OutPinId, Snarl,
     ui::{SnarlViewer, SnarlWidget, get_selected_nodes},
 };
 use itertools::Itertools;
@@ -23,8 +26,8 @@ use crate::{
     config::ConfigExt as _,
     utils::ErrorDistiller as _,
     workflow::{
-        EditContext, RunContext, ShadowGraph, WorkNode,
-        nodes::CommentNode,
+        EditContext, MetaNode, RunContext, ShadowGraph, WorkNode,
+        nodes::{CommentNode, is_protected},
         runner::{ExecState, WorkflowRun, WorkflowRunner},
         store::WorkflowStore as _,
     },
@@ -37,6 +40,8 @@ const SHORTCUT_RUN: KeyboardShortcut = KeyboardShortcut {
 
 struct WorkflowViewer {
     view_id: egui::Id,
+
+    transform: TSTransform,
 
     edit_ctx: EditContext,
 
@@ -506,7 +511,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
     }
 
     fn has_node_menu(&mut self, node: &WorkNode) -> bool {
-        self.can_edit() && !matches!(node, WorkNode::Start(_) | WorkNode::Finish(_))
+        self.can_edit() && !is_protected(node)
     }
 
     fn show_node_menu(
@@ -539,24 +544,114 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                 }
             } else if ui.button("Disable").clicked() {
                 for node in &targets {
-                    self.shadow = self.shadow.disable_node(*node);
+                    if !is_protected(&snarl[*node]) {
+                        self.shadow = self.shadow.disable_node(*node);
+                    }
                 }
                 ui.close();
             }
         }
 
-        // Alleviate accidental clicks
-        ui.menu_button("Remove", |ui| {
-            if ui.button("OK").clicked() {
-                for node in &targets {
+        if ui.button("Remove").clicked() {
+            for node in &targets {
+                if !is_protected(&snarl[*node]) {
                     snarl.remove_node(*node);
                     self.shadow = self.shadow.enable_node(*node).without_node(node);
                 }
-
-                ui.close();
             }
-        });
+
+            ui.close();
+        }
     }
+
+    fn current_transform(
+        &mut self,
+        to_global: &mut egui::emath::TSTransform,
+        _snarl: &mut Snarl<WorkNode>,
+    ) {
+        self.transform = *to_global;
+    }
+}
+
+#[must_use]
+pub fn filter_graph(
+    graph: ShadowGraph<WorkNode>,
+    offset: egui::Vec2,
+    keep_nodes: impl AsRef<[NodeId]>,
+) -> ShadowGraph<WorkNode> {
+    let ShadowGraph { nodes, wires, .. } = graph;
+    let keep = keep_nodes.as_ref().iter().collect::<BTreeSet<_>>();
+    let nodes = nodes
+        .into_iter()
+        .filter(|n| keep.contains(&n.0))
+        .map(|(id, meta)| {
+            let meta = MetaNode {
+                pos: meta.pos - offset,
+                ..meta
+            };
+            (id, meta)
+        })
+        .collect();
+    let wires = wires
+        .into_iter()
+        .filter(|w| keep.contains(&w.out_pin.node) && keep.contains(&w.in_pin.node))
+        .collect();
+
+    ShadowGraph {
+        nodes,
+        wires,
+        ..ShadowGraph::empty()
+    }
+}
+
+pub fn merge_graphs(
+    snarl: &mut Snarl<WorkNode>,
+    target: &mut ShadowGraph<WorkNode>,
+    offset: egui::Vec2,
+    source: ShadowGraph<WorkNode>,
+) -> Vec<NodeId> {
+    let ShadowGraph { nodes, wires, .. } = source;
+    let mut node_map: BTreeMap<NodeId, NodeId> = Default::default();
+    let start_id = snarl
+        .nodes_ids_data()
+        .find(|(_, n)| matches!(n.value, WorkNode::Start(_)))
+        .map(|(new_id, _)| new_id);
+
+    for (id, node) in nodes.into_iter() {
+        // If the start node was part of the selection, preserve connections without duplicating
+        if let Some(new_id) = start_id
+            && matches!(node.value, WorkNode::Start(_))
+        {
+            node_map.insert(id, new_id);
+        } else if !is_protected(&node.value) {
+            let new_id = snarl.insert_node(node.pos + offset, node.value);
+            *target = target.with_node(&new_id, snarl.get_node_info(new_id));
+            node_map.insert(id, new_id);
+        }
+    }
+
+    for wire in wires {
+        if let Some(from_node) = node_map.get(&wire.out_pin.node)
+            && let Some(to_node) = node_map.get(&wire.in_pin.node)
+        {
+            let src = OutPinId {
+                node: *from_node,
+                output: wire.out_pin.output,
+            };
+            let dest = InPinId {
+                node: *to_node,
+                input: wire.in_pin.input,
+            };
+
+            *target = target.with_wire(src, dest);
+            snarl.connect(src, dest);
+        }
+    }
+
+    node_map
+        .into_values()
+        .filter(|id| start_id != Some(*id))
+        .collect()
 }
 
 impl super::AppState {
@@ -582,6 +677,7 @@ impl super::AppState {
                     "{} viewer #{}",
                     self.workflows.editing, self.workflows.switch_count
                 )),
+                transform: Default::default(),
                 edit_ctx,
                 shadow,
                 running,
@@ -598,7 +694,52 @@ impl super::AppState {
                     .style(self.workflows.style);
                 widget.show(&mut snarl, &mut viewer, ui);
 
-                // tracing::debug!("Selection: {:?}", widget.get_selected_nodes(ui));
+                // TODO: only when inside canvas
+                if ui.ctx().input_mut(|input| {
+                    input
+                        .events
+                        .iter()
+                        .any(|ev| matches!(ev, egui::Event::Copy))
+                }) {
+                    let pos = viewer.transform.inverse()
+                        * ui.ctx()
+                            .input(|i| i.pointer.interact_pos())
+                            .unwrap_or_default();
+
+                    let selection = widget.get_selected_nodes(ui);
+                    if !selection.is_empty() {
+                        let copied =
+                            filter_graph(self.workflows.shadow.clone(), pos.to_vec2(), &selection);
+                        if let Ok(text) = serde_yml::to_string(&copied) {
+                            ui.ctx().copy_text(text);
+                        }
+                    }
+                }
+
+                if !self.workflows.frozen
+                    && let Some(text) = ui.ctx().input_mut(|input| {
+                        input.events.iter().find_map(|ev| {
+                            if let egui::Event::Paste(text) = ev {
+                                Some(text.clone())
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                {
+                    let pos = viewer.transform.inverse()
+                        * ui.ctx()
+                            .input(|i| i.pointer.interact_pos())
+                            .unwrap_or_default();
+
+                    if let Ok(shadow) = serde_yml::from_str(&text) {
+                        let inserted =
+                            merge_graphs(&mut snarl, &mut viewer.shadow, pos.to_vec2(), shadow);
+                        widget.update_selected_nodes(ui, |nodes| {
+                            *nodes = inserted;
+                        });
+                    }
+                }
             });
 
             self.workflows.cast_shadow(viewer.shadow);

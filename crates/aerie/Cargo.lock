@@ -120,7 +120,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "aerie"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1627,8 +1627,7 @@ dependencies = [
 [[package]]
 name = "egui-snarl"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6358986338c35fe268c0647b410725babd5de772010e8e739e88cb11f5665da"
+source = "git+https://github.com/patonw/egui-snarl?branch=update-selection#30f182db3ea84aa6b8e923a00a72dd0062ff3c91"
 dependencies = [
  "egui",
  "egui-scale",
