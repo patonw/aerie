@@ -48,7 +48,7 @@ wires:
     input: 1
 - out_pin:
     node: 0
-    output: 3
+    output: 4
   in_pin:
     node: 3
     input: 2

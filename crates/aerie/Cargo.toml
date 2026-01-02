@@ -1,10 +1,12 @@
 [package]
 name = "aerie"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 default-run = "aerie"
 
 [patch.crates-io]
+# egui-snarl = { path = "/code/upstream/rust/egui-snarl/" }
+egui-snarl = { git = "https://github.com/patonw/egui-snarl", branch = "update-selection" }
 rig-core = { path = "upstream/rig/rig-core" }
 # rig-core = { git = "https://github.com/patonw/rig", branch = "fix-tool_choice" }
 

@@ -116,3 +116,8 @@ impl WorkNode {
         }
     }
 }
+
+#[inline]
+pub fn is_protected(node: &WorkNode) -> bool {
+    matches!(node, WorkNode::Start(_) | WorkNode::Finish(_))
+}
