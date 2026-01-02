@@ -5,8 +5,8 @@ edition = "2024"
 default-run = "aerie"
 
 [patch.crates-io]
-# rig-core = { path = "../../../upstream/rust/rig/rig-core" }
-rig-core = { git = "https://github.com/patonw/rig", branch = "fix-tool_choice" }
+rig-core = { path = "upstream/rig/rig-core" }
+# rig-core = { git = "https://github.com/patonw/rig", branch = "fix-tool_choice" }
 
 [dependencies]
 anyhow = "1.0.100"

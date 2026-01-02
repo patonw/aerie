@@ -4852,7 +4852,6 @@ checksum = "0c6a884d2998352bb4daf0183589aec883f16a6da1f4dde84d8e2e9a5409a1ce"
 [[package]]
 name = "rig-core"
 version = "0.24.0"
-source = "git+https://github.com/patonw/rig?branch=fix-tool_choice#da13b13d7a8b50cb9e62dbacf7a6291dec64da8a"
 dependencies = [
  "as-any",
  "async-stream",
@@ -4882,7 +4881,6 @@ dependencies = [
 [[package]]
 name = "rig-derive"
 version = "0.1.8"
-source = "git+https://github.com/patonw/rig?branch=fix-tool_choice#da13b13d7a8b50cb9e62dbacf7a6291dec64da8a"
 dependencies = [
  "convert_case 0.8.0",
  "deluxe",
