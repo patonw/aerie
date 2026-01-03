@@ -1,35 +1,27 @@
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, BTreeSet},
     sync::{Arc, atomic::Ordering},
     thread,
     time::{Duration, SystemTime},
 };
 
 use arc_swap::ArcSwap;
-use egui::{
-    Align2, Color32, ComboBox, Hyperlink, KeyboardShortcut, RichText, Ui, emath::TSTransform,
-};
+use egui::{Align2, ComboBox, KeyboardShortcut, RichText};
 use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular::{
-    ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, CHECK_CIRCLE, DOWNLOAD_SIMPLE, HAND_PALM,
-    HOURGLASS_MEDIUM, INFO, MAGIC_WAND, PENCIL, PLAY, PLAY_CIRCLE, STOP, TRASH, UPLOAD_SIMPLE,
-    WARNING,
+    ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, DOWNLOAD_SIMPLE, INFO, MAGIC_WAND, PENCIL, PLAY,
+    STOP, TRASH, UPLOAD_SIMPLE,
 };
-use egui_snarl::{
-    InPinId, NodeId, OutPinId, Snarl,
-    ui::{SnarlViewer, SnarlWidget, get_selected_nodes},
-};
+use egui_snarl::ui::SnarlWidget;
 use itertools::Itertools;
 
 use crate::{
     config::ConfigExt as _,
+    ui::workflow::{WorkflowViewer, filter_graph, get_snarl_style, merge_graphs},
     utils::ErrorDistiller as _,
     workflow::{
-        EditContext, MetaNode, RunContext, ShadowGraph, WorkNode,
-        nodes::{CommentNode, is_protected},
-        runner::{ExecState, WorkflowRun, WorkflowRunner},
-        store::WorkflowStore as _,
+        EditContext, RunContext,
+        runner::{WorkflowRun, WorkflowRunner},
     },
 };
 
@@ -37,622 +29,6 @@ const SHORTCUT_RUN: KeyboardShortcut = KeyboardShortcut {
     modifiers: egui::Modifiers::CTRL,
     logical_key: egui::Key::Enter,
 };
-
-struct WorkflowViewer {
-    view_id: egui::Id,
-
-    transform: TSTransform,
-
-    edit_ctx: EditContext,
-
-    // TODO: store this in the app state so it isn't clobbered every frame
-    shadow: ShadowGraph<WorkNode>,
-
-    pub node_state: Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>>,
-
-    running: bool,
-
-    frozen: bool,
-}
-
-impl WorkflowViewer {
-    fn frozen(&self) -> bool {
-        self.running || self.frozen
-    }
-
-    fn can_edit(&self) -> bool {
-        !self.frozen()
-    }
-}
-
-// TODO maintain a shadow graph that uses immutables
-// TODO: button to reset input pins
-impl SnarlViewer<WorkNode> for WorkflowViewer {
-    fn title(&mut self, node: &WorkNode) -> String {
-        node.as_ui().title().to_string()
-    }
-
-    fn node_frame(
-        &mut self,
-        default: egui::Frame,
-        node: NodeId,
-        _inputs: &[egui_snarl::InPin],
-        _outputs: &[egui_snarl::OutPin],
-        snarl: &Snarl<WorkNode>,
-    ) -> egui::Frame {
-        if matches!(snarl[node], WorkNode::Comment(_)) {
-            default.fill(CommentNode::bg_color())
-        } else {
-            default
-        }
-    }
-
-    fn header_frame(
-        &mut self,
-        default: egui::Frame,
-        node: NodeId,
-        _inputs: &[egui_snarl::InPin],
-        _outputs: &[egui_snarl::OutPin],
-        snarl: &Snarl<WorkNode>,
-    ) -> egui::Frame {
-        if matches!(snarl[node], WorkNode::Comment(_)) {
-            let node_info = snarl.get_node_info(node).unwrap();
-            if node_info.open {
-                default.fill(CommentNode::bg_color())
-            } else {
-                default.fill(Color32::from_rgb(0x88, 0x88, 0))
-            }
-        } else {
-            default
-        }
-    }
-
-    fn show_header(
-        &mut self,
-        node: NodeId,
-        _inputs: &[egui_snarl::InPin],
-        _outputs: &[egui_snarl::OutPin],
-        ui: &mut Ui,
-        snarl: &mut Snarl<WorkNode>,
-    ) {
-        let title = self.title(&snarl[node]);
-        let node_state = self.node_state.load();
-
-        if matches!(snarl[node], WorkNode::Comment(_)) {
-            return;
-        }
-
-        egui::Sides::new().show(
-            ui,
-            |ui| {
-                ui.label(title);
-            },
-            |ui| match node_state.get(&node) {
-                Some(ExecState::Waiting(_)) => {
-                    ui.label(RichText::new(HOURGLASS_MEDIUM).color(Color32::ORANGE))
-                        .on_hover_text("Waiting");
-                }
-                Some(ExecState::Ready) => {
-                    ui.label(RichText::new(PLAY_CIRCLE).color(Color32::BLUE))
-                        .on_hover_text("Ready");
-                }
-                Some(ExecState::Running) => {
-                    ui.add(egui::Spinner::new().color(Color32::LIGHT_GREEN))
-                        .on_hover_text("Running");
-                }
-                Some(ExecState::Done(_)) => {
-                    ui.label(RichText::new(CHECK_CIRCLE).color(Color32::GREEN))
-                        .on_hover_text("Done");
-                }
-                Some(ExecState::Disabled) => {
-                    ui.label(HAND_PALM).on_hover_text("Disabled");
-                }
-                Some(ExecState::Failed(err)) => {
-                    if ui
-                        .label(RichText::new(WARNING).color(Color32::RED))
-                        .on_hover_text(format!("{err:?}"))
-                        .interact(egui::Sense::click())
-                        .clicked()
-                    {
-                        let error = err.clone();
-                        self.edit_ctx.errors.push(error.into());
-                    }
-                }
-                None => {}
-            },
-        );
-    }
-
-    fn final_node_rect(
-        &mut self,
-        node: NodeId,
-        rect: egui::Rect,
-        ui: &mut Ui,
-        snarl: &mut Snarl<WorkNode>,
-    ) {
-        if self.shadow.is_disabled(node) {
-            let painter = ui.painter();
-            painter.rect_filled(
-                rect,
-                16.0,
-                egui::Color32::from_rgb(0x42, 0, 0).gamma_multiply(0.5),
-            );
-        }
-
-        // A bit hacky
-        let output_swap = self.edit_ctx.output_swap.swap(None);
-        if let Some(pins) = output_swap {
-            let (first, second) = pins.as_ref();
-            tracing::debug!("Swapping pins {first:?} and {second:?}");
-
-            let first_pin = snarl.out_pin(*first);
-            let first_remotes = first_pin.remotes.clone();
-            let second_pin = snarl.out_pin(*second);
-            for in_pin_id in &second_pin.remotes {
-                let in_pin = snarl.in_pin(*in_pin_id);
-                tracing::trace!("Moving pin {in_pin:?} from {second_pin:?} to {first_pin:?}");
-                self.disconnect(&second_pin, &in_pin, snarl);
-                self.connect(&first_pin, &in_pin, snarl);
-            }
-
-            for in_pin_id in &first_remotes {
-                let in_pin = snarl.in_pin(*in_pin_id);
-                tracing::trace!("Moving pin {in_pin:?} from {first_pin:?} to {second_pin:?}");
-                self.disconnect(&first_pin, &in_pin, snarl);
-                self.connect(&second_pin, &in_pin, snarl);
-            }
-        }
-        let output_drop = self.edit_ctx.output_drop.swap(Arc::new(Default::default()));
-        for out_pin_id in output_drop.iter() {
-            let out_pin = snarl.out_pin(*out_pin_id);
-            self.drop_outputs(&out_pin, snarl);
-        }
-
-        let output_reset = self
-            .edit_ctx
-            .output_reset
-            .swap(Arc::new(Default::default()));
-        for out_pin_id in output_reset.iter() {
-            let out_pin = snarl.out_pin(*out_pin_id);
-            for in_pin_id in &out_pin.remotes {
-                let in_pin = snarl.in_pin(*in_pin_id);
-                self.disconnect(&out_pin, &in_pin, snarl);
-                self.connect(&out_pin, &in_pin, snarl);
-            }
-        }
-    }
-
-    fn has_on_hover_popup(&mut self, node: &WorkNode) -> bool {
-        !node.as_ui().tooltip().is_empty()
-    }
-
-    fn show_on_hover_popup(
-        &mut self,
-        node: NodeId,
-        _inputs: &[egui_snarl::InPin],
-        _outputs: &[egui_snarl::OutPin],
-        ui: &mut Ui,
-        snarl: &mut Snarl<WorkNode>,
-    ) {
-        if self.shadow.is_disabled(node) {
-            ui.label("Node has been disabled.\n\nThis and downstream nodes will not be executed.");
-        } else {
-            let tooltip = snarl[node].as_ui().tooltip();
-            ui.label(tooltip);
-        }
-    }
-
-    fn inputs(&mut self, node: &WorkNode) -> usize {
-        node.as_ui().inputs()
-    }
-
-    fn show_input(
-        &mut self,
-        pin: &egui_snarl::InPin,
-        ui: &mut egui::Ui,
-        snarl: &mut egui_snarl::Snarl<WorkNode>,
-    ) -> impl egui_snarl::ui::SnarlPin + 'static {
-        ui.add_enabled_ui(self.can_edit(), |ui| {
-            let value = match &*pin.remotes {
-                [] => None,
-                [remote, ..] => {
-                    let other = snarl[remote.node].as_ui();
-                    Some(other.preview(remote.output))
-                }
-            };
-
-            let node_id = pin.id.node;
-            self.edit_ctx.current_node = node_id;
-            let node = &mut snarl[node_id];
-            let pin = node
-                .as_ui_mut()
-                .show_input(ui, &self.edit_ctx, pin.id.input, value);
-
-            self.shadow = self
-                .shadow
-                .with_node(&node_id, snarl.get_node_info(node_id));
-
-            pin
-        })
-        .inner
-    }
-
-    fn outputs(&mut self, node: &WorkNode) -> usize {
-        node.as_ui().outputs()
-    }
-
-    fn show_output(
-        &mut self,
-        pin: &egui_snarl::OutPin,
-        ui: &mut egui::Ui,
-        snarl: &mut egui_snarl::Snarl<WorkNode>,
-    ) -> impl egui_snarl::ui::SnarlPin + 'static {
-        ui.add_enabled_ui(self.can_edit(), |ui| {
-            let node_id = pin.id.node;
-            self.edit_ctx.current_node = node_id;
-            let node = &mut snarl[node_id];
-            let pin = node
-                .as_ui_mut()
-                .show_output(ui, &self.edit_ctx, pin.id.output);
-
-            self.shadow = self
-                .shadow
-                .with_node(&node_id, snarl.get_node_info(node_id));
-            pin
-        })
-        .inner
-    }
-
-    fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<WorkNode>) -> bool {
-        self.can_edit()
-    }
-
-    fn show_graph_menu(&mut self, pos: egui::Pos2, ui: &mut Ui, snarl: &mut Snarl<WorkNode>) {
-        ui.menu_button("Control", |ui| {
-            if ui.button("Fallback").clicked() {
-                snarl.insert_node(pos, WorkNode::Fallback(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Matcher").clicked() {
-                snarl.insert_node(pos, WorkNode::Matcher(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Select").clicked() {
-                snarl.insert_node(pos, WorkNode::Select(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Demote").clicked() {
-                snarl.insert_node(pos, WorkNode::Demote(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Panic").clicked() {
-                snarl.insert_node(pos, WorkNode::Panic(Default::default()));
-                ui.close();
-            }
-        });
-
-        ui.menu_button("Value", |ui| {
-            if ui.button("Number").clicked() {
-                snarl.insert_node(pos, WorkNode::Number(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Plain Text").clicked() {
-                snarl.insert_node(pos, WorkNode::Text(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Template").clicked() {
-                snarl.insert_node(pos, WorkNode::TemplateNode(Default::default()));
-                ui.close();
-            }
-        });
-
-        ui.menu_button("LLM", |ui| {
-            if ui.button("Agent").clicked() {
-                snarl.insert_node(pos, WorkNode::Agent(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Context").clicked() {
-                snarl.insert_node(pos, WorkNode::Context(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Chat").clicked() {
-                snarl.insert_node(pos, WorkNode::Chat(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Structured").clicked() {
-                snarl.insert_node(pos, WorkNode::Structured(Default::default()));
-                ui.close();
-            }
-        });
-
-        ui.menu_button("Tools", |ui| {
-            if ui.button("Select Tools").clicked() {
-                snarl.insert_node(pos, WorkNode::Tools(Default::default()));
-                ui.close();
-            }
-            if ui.button("Invoke Tools").clicked() {
-                snarl.insert_node(pos, WorkNode::InvokeTool(Default::default()));
-                ui.close();
-            }
-        });
-
-        ui.menu_button("History", |ui| {
-            if ui.button("Create Message").clicked() {
-                snarl.insert_node(pos, WorkNode::CreateMessage(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Mask History").clicked() {
-                snarl.insert_node(pos, WorkNode::MaskChat(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Extend History").clicked() {
-                snarl.insert_node(pos, WorkNode::ExtendHistory(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Side Chat").clicked() {
-                snarl.insert_node(pos, WorkNode::GraftChat(Default::default()));
-                ui.close();
-            }
-        });
-
-        ui.menu_button("JSON", |ui| {
-            if ui.button("Parse JSON").clicked() {
-                snarl.insert_node(pos, WorkNode::ParseJson(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Gather JSON").clicked() {
-                snarl.insert_node(pos, WorkNode::GatherJson(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Validate JSON").clicked() {
-                snarl.insert_node(pos, WorkNode::ValidateJson(Default::default()));
-                ui.close();
-            }
-
-            if ui.button("Transform JSON").clicked() {
-                snarl.insert_node(pos, WorkNode::TransformJson(Default::default()));
-                ui.close();
-            }
-        });
-
-        if ui.button("Preview").clicked() {
-            snarl.insert_node(pos, WorkNode::Preview(Default::default()));
-            ui.close();
-        }
-
-        if ui.button("Output").clicked() {
-            snarl.insert_node(pos, WorkNode::Output(Default::default()));
-            ui.close();
-        }
-
-        if ui.button("Comment").clicked() {
-            snarl.insert_node(pos, WorkNode::Comment(Default::default()));
-            ui.close();
-        }
-    }
-
-    fn has_body(&mut self, node: &WorkNode) -> bool {
-        node.as_ui().has_body()
-    }
-
-    fn show_body(
-        &mut self,
-        node: egui_snarl::NodeId,
-        _inputs: &[egui_snarl::InPin],
-        _outputs: &[egui_snarl::OutPin],
-        ui: &mut Ui,
-        snarl: &mut Snarl<WorkNode>,
-    ) {
-        self.edit_ctx.current_node = node;
-        ui.add_enabled_ui(self.can_edit(), |ui| {
-            snarl[node].as_ui_mut().show_body(ui, &self.edit_ctx);
-            self.shadow = self.shadow.with_node(&node, snarl.get_node_info(node));
-        })
-        .inner
-    }
-
-    fn connect(
-        &mut self,
-        from: &egui_snarl::OutPin,
-        to: &egui_snarl::InPin,
-        snarl: &mut Snarl<WorkNode>,
-    ) {
-        // TODO: cycle check
-        if self.can_edit() {
-            let remote = &snarl[from.id.node];
-            let wire_kind = remote.as_dyn().out_kind(from.id.output);
-            let recipient = &snarl[to.id.node];
-            if recipient.as_dyn().connect(to.id.input, wire_kind).is_ok() {
-                self.drop_inputs(to, snarl);
-                snarl.connect(from.id, to.id);
-                self.shadow = self.shadow.with_wire(from.id, to.id);
-            }
-        }
-    }
-
-    fn disconnect(
-        &mut self,
-        from: &egui_snarl::OutPin,
-        to: &egui_snarl::InPin,
-        snarl: &mut Snarl<WorkNode>,
-    ) {
-        if self.can_edit() {
-            snarl.disconnect(from.id, to.id);
-            self.shadow = self.shadow.without_wire(from.id, to.id);
-        }
-    }
-
-    fn drop_inputs(&mut self, pin: &egui_snarl::InPin, snarl: &mut Snarl<WorkNode>) {
-        if self.can_edit() {
-            self.shadow = self.shadow.drop_inputs(pin);
-            snarl.drop_inputs(pin.id);
-        }
-    }
-
-    fn drop_outputs(&mut self, pin: &egui_snarl::OutPin, snarl: &mut Snarl<WorkNode>) {
-        if self.can_edit() {
-            self.shadow = self.shadow.drop_outputs(pin);
-            snarl.drop_outputs(pin.id);
-        }
-    }
-
-    fn has_node_menu(&mut self, node: &WorkNode) -> bool {
-        self.can_edit() && !is_protected(node)
-    }
-
-    fn show_node_menu(
-        &mut self,
-        node: NodeId,
-        _inputs: &[egui_snarl::InPin],
-        _outputs: &[egui_snarl::OutPin],
-        ui: &mut Ui,
-        snarl: &mut Snarl<WorkNode>,
-    ) {
-        let selection = get_selected_nodes(self.view_id, ui.ctx());
-        let targets = if selection.contains(&node) {
-            selection
-        } else {
-            vec![node]
-        };
-
-        let help_link = snarl[node].as_ui().help_link();
-        if !help_link.is_empty() {
-            ui.add(Hyperlink::from_label_and_url("Help", help_link).open_in_new_tab(true));
-        }
-
-        if !matches!(snarl[node], WorkNode::Comment(_)) {
-            if self.shadow.is_disabled(node) {
-                if ui.button("Enable").clicked() {
-                    for node in &targets {
-                        self.shadow = self.shadow.enable_node(*node);
-                    }
-                    ui.close();
-                }
-            } else if ui.button("Disable").clicked() {
-                for node in &targets {
-                    if !is_protected(&snarl[*node]) {
-                        self.shadow = self.shadow.disable_node(*node);
-                    }
-                }
-                ui.close();
-            }
-        }
-
-        if ui.button("Remove").clicked() {
-            for node in &targets {
-                if !is_protected(&snarl[*node]) {
-                    snarl.remove_node(*node);
-                    self.shadow = self.shadow.enable_node(*node).without_node(node);
-                }
-            }
-
-            ui.close();
-        }
-    }
-
-    fn current_transform(
-        &mut self,
-        to_global: &mut egui::emath::TSTransform,
-        _snarl: &mut Snarl<WorkNode>,
-    ) {
-        self.transform = *to_global;
-    }
-}
-
-#[must_use]
-pub fn filter_graph(
-    graph: ShadowGraph<WorkNode>,
-    offset: egui::Vec2,
-    keep_nodes: impl AsRef<[NodeId]>,
-) -> ShadowGraph<WorkNode> {
-    let ShadowGraph { nodes, wires, .. } = graph;
-    let keep = keep_nodes.as_ref().iter().collect::<BTreeSet<_>>();
-    let nodes = nodes
-        .into_iter()
-        .filter(|n| keep.contains(&n.0))
-        .map(|(id, meta)| {
-            let meta = MetaNode {
-                pos: meta.pos - offset,
-                ..meta
-            };
-            (id, meta)
-        })
-        .collect();
-    let wires = wires
-        .into_iter()
-        .filter(|w| keep.contains(&w.out_pin.node) && keep.contains(&w.in_pin.node))
-        .collect();
-
-    ShadowGraph {
-        nodes,
-        wires,
-        ..ShadowGraph::empty()
-    }
-}
-
-pub fn merge_graphs(
-    snarl: &mut Snarl<WorkNode>,
-    target: &mut ShadowGraph<WorkNode>,
-    offset: egui::Vec2,
-    source: ShadowGraph<WorkNode>,
-) -> Vec<NodeId> {
-    let ShadowGraph { nodes, wires, .. } = source;
-    let mut node_map: BTreeMap<NodeId, NodeId> = Default::default();
-    let start_id = snarl
-        .nodes_ids_data()
-        .find(|(_, n)| matches!(n.value, WorkNode::Start(_)))
-        .map(|(new_id, _)| new_id);
-
-    for (id, node) in nodes.into_iter() {
-        // If the start node was part of the selection, preserve connections without duplicating
-        if let Some(new_id) = start_id
-            && matches!(node.value, WorkNode::Start(_))
-        {
-            node_map.insert(id, new_id);
-        } else if !is_protected(&node.value) {
-            let new_id = snarl.insert_node(node.pos + offset, node.value);
-            *target = target.with_node(&new_id, snarl.get_node_info(new_id));
-            node_map.insert(id, new_id);
-        }
-    }
-
-    for wire in wires {
-        if let Some(from_node) = node_map.get(&wire.out_pin.node)
-            && let Some(to_node) = node_map.get(&wire.in_pin.node)
-        {
-            let src = OutPinId {
-                node: *from_node,
-                output: wire.out_pin.output,
-            };
-            let dest = InPinId {
-                node: *to_node,
-                input: wire.in_pin.input,
-            };
-
-            *target = target.with_wire(src, dest);
-            snarl.connect(src, dest);
-        }
-    }
-
-    node_map
-        .into_values()
-        .filter(|id| start_id != Some(*id))
-        .collect()
-}
 
 impl super::AppState {
     pub fn workflow_ui(&mut self, ui: &mut egui::Ui) {
@@ -666,24 +42,29 @@ impl super::AppState {
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            let edit_ctx = EditContext::builder()
-                .toolbox(self.agent_factory.toolbox.clone())
-                .errors(self.errors.clone())
-                .build();
-
             let shadow = self.workflows.shadow.clone();
-            let mut viewer = WorkflowViewer {
-                view_id: egui::Id::new(format!(
-                    "{} viewer #{}",
-                    self.workflows.editing, self.workflows.switch_count
-                )),
-                transform: Default::default(),
-                edit_ctx,
-                shadow,
-                running,
-                frozen: self.workflows.frozen,
-                node_state: self.workflows.node_state.clone(),
+            if self.workflows.viewer.is_none() {
+                let edit_ctx = EditContext::builder()
+                    .toolbox(self.agent_factory.toolbox.clone())
+                    .errors(self.errors.clone())
+                    .build();
+
+                self.workflows.viewer = Some(WorkflowViewer::builder().edit_ctx(edit_ctx).build());
+            }
+
+            let Some(viewer) = &mut self.workflows.viewer else {
+                unreachable!()
             };
+
+            // TODO: which of these actually needs updating every frame?
+            viewer.view_id = egui::Id::new(format!(
+                "{} viewer #{}",
+                self.workflows.editing, self.workflows.switch_count
+            ));
+            viewer.shadow = shadow;
+            viewer.running = running;
+            viewer.frozen = self.workflows.frozen;
+            viewer.node_state = self.workflows.node_state.clone();
 
             // Forces new widget state in children after switching or undos so that
             // Snarl will draw our persisted positions and sizes.
@@ -691,8 +72,8 @@ impl super::AppState {
                 let mut snarl = self.workflows.snarl.blocking_write();
                 let widget = SnarlWidget::new()
                     .id(viewer.view_id)
-                    .style(self.workflows.style);
-                widget.show(&mut snarl, &mut viewer, ui);
+                    .style(get_snarl_style());
+                widget.show(&mut snarl, viewer, ui);
 
                 // TODO: only when inside canvas
                 if ui.ctx().input_mut(|input| {
@@ -742,7 +123,9 @@ impl super::AppState {
                 }
             });
 
-            self.workflows.cast_shadow(viewer.shadow);
+            let shadow = viewer.shadow.clone();
+
+            self.workflows.cast_shadow(shadow);
 
             egui::Area::new(egui::Id::new("workflow controls"))
                 .default_pos(egui::pos2(16.0, 32.0))
@@ -983,7 +366,7 @@ impl super::AppState {
             if !settings.view(|s| s.autosave) {
                 ui.add_enabled_ui(self.workflows.has_changes(), |ui| {
                     if ui.button("Save").clicked() {
-                        self.save_workflows();
+                        self.workflows.save();
                     }
                 });
             } else if !self.workflows.frozen
@@ -991,8 +374,7 @@ impl super::AppState {
                 && self.workflows.modtime.elapsed().unwrap_or(Duration::ZERO)
                     > Duration::from_secs(2)
             {
-                // TODO: move preview data to run_state
-                self.save_workflows();
+                self.workflows.save();
             }
 
             ui.separator();
@@ -1031,27 +413,6 @@ impl super::AppState {
 
             // TODO: pause and cancel buttons
         });
-    }
-
-    fn save_workflows(&mut self) {
-        tracing::info!(
-            "Saving {} to workflows...changed? {}",
-            &self.workflows.editing,
-            !self.workflows.shadow.fast_eq(&self.workflows.baseline)
-        );
-
-        // self.workflows
-        //     .store
-        //     .put(&self.workflows.editing, self.workflows.shadow.clone());
-        // self.workflows.store.save_all().unwrap();
-        self.workflows
-            .store
-            .save(&self.workflows.editing, self.workflows.shadow.clone())
-            .unwrap();
-
-        // let mut snarl = self.workflows.snarl.blocking_write();
-        // *snarl = Snarl::try_from(self.workflows.shadow.clone()).unwrap();
-        self.workflows.baseline = self.workflows.shadow.clone();
     }
 
     // TODO: decouple editing and execution workflows

@@ -420,8 +420,8 @@ impl WorkflowRunner {
                             .filter(|v| *v != node_id)
                             .collect::<OrdSet<NodeId>>();
 
-                        let is_select = matches!(snarl[*successor], WorkNode::Select(_));
-                        let next_state = if deps.is_empty() || is_select {
+                        let is_eager = snarl[*successor].is_eager();
+                        let next_state = if deps.is_empty() || is_eager {
                             if self.graph.is_disabled(*successor) {
                                 tracing::info!("Node {successor:?} is disabled. Skipping.");
                                 ExecState::Disabled

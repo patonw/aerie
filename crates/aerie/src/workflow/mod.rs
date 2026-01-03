@@ -19,6 +19,7 @@ use std::{
 };
 use thiserror::Error;
 use typed_builder::TypedBuilder;
+use uuid::Uuid;
 
 use crate::{
     AgentFactory, ChatHistory, ToolSelector, Toolbox,
@@ -92,7 +93,7 @@ impl ValueKind {
     }
 }
 
-#[derive(TypedBuilder)]
+#[derive(Clone, TypedBuilder)]
 pub struct EditContext {
     pub toolbox: Arc<Toolbox>,
 
@@ -255,16 +256,40 @@ impl From<(OutPinId, InPinId)> for Wire {
     }
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphId(pub Uuid);
+
+impl Default for GraphId {
+    fn default() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl GraphId {
+    fn new() -> Self {
+        Default::default()
+    }
+}
+
+impl AsRef<Uuid> for GraphId {
+    fn as_ref(&self) -> &Uuid {
+        &self.0
+    }
+}
+
 /// The shadow graph is incrementally updated when edits are made through the viewer.
 /// Each change creates a new generation. The underlying collections use structure sharing
 /// to make cloning-on-write cheap. This allows shadow graphs to be quickly compared using
 /// top-level pointer comparison. We could also use this to support undo/redo operations,
 /// though the shadow doesn't currently track positions.
-#[derive(Debug, Clone, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowGraph<T>
 where
     T: Clone + PartialEq,
 {
+    #[serde(default)]
+    pub uuid: GraphId,
+
     pub nodes: im::OrdMap<NodeId, MetaNode<T>>,
     pub wires: im::OrdSet<Wire>,
 
@@ -295,20 +320,10 @@ impl<T: Clone + PartialEq> ShadowGraph<T> {
     }
 }
 
-// Strange the derive macro doesn't work for this
 impl Default for ShadowGraph<WorkNode> {
     fn default() -> Self {
         let bytes = include_bytes!("../../tutorial/workflows/__default__.yml");
         serde_yml::from_slice::<Self>(bytes).expect("Cannot load the default graph")
-    }
-}
-
-impl<T> From<&Snarl<T>> for ShadowGraph<T>
-where
-    T: Clone + PartialEq,
-{
-    fn from(value: &Snarl<T>) -> Self {
-        ShadowGraph::from_snarl(value)
     }
 }
 
@@ -332,6 +347,7 @@ where
 {
     pub fn empty() -> Self {
         Self {
+            uuid: Default::default(),
             nodes: Default::default(),
             wires: Default::default(),
             disabled: Default::default(),
@@ -484,10 +500,6 @@ where
 }
 
 pub trait DynNode {
-    /// Clear values set by the connected pin so we can leave widget connected values alone.
-    #[expect(unused_variables)]
-    fn reset(&mut self, in_pin: usize) {}
-
     fn priority(&self) -> usize {
         5000
     }
@@ -578,9 +590,16 @@ pub trait DynNode {
 }
 
 pub trait UiNode: DynNode {
+    /// Callback to enforce uniqueness after a node is duplicated using copy/paste
+    fn on_paste(&mut self) {}
+
     /// Supply placeholder values to display in UI outside of executions
     fn preview(&self, out_pin: usize) -> Value {
         self.value(out_pin)
+    }
+
+    fn title_mut(&mut self) -> Option<&mut String> {
+        None
     }
 
     fn title(&self) -> &str {

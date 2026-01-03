@@ -28,6 +28,9 @@ use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ChatNode {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+
     pub prompt: String,
 
     pub size: Option<crate::utils::EVec2>,
@@ -74,7 +77,15 @@ impl DynNode for ChatNode {
 
 impl UiNode for ChatNode {
     fn title(&self) -> &str {
-        "Chat"
+        if self.name.is_empty() {
+            "Chat"
+        } else {
+            &self.name
+        }
+    }
+
+    fn title_mut(&mut self) -> Option<&mut String> {
+        Some(&mut self.name)
     }
 
     fn tooltip(&self) -> &str {
@@ -225,6 +236,9 @@ impl ChatNode {
 #[skip_serializing_none]
 #[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
 pub struct StructuredChat {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+
     pub prompt: String,
 
     pub size: Option<crate::utils::EVec2>,
@@ -281,7 +295,15 @@ impl DynNode for StructuredChat {
 
 impl UiNode for StructuredChat {
     fn title(&self) -> &str {
-        "Structured Output"
+        if self.name.is_empty() {
+            "Structured Output"
+        } else {
+            &self.name
+        }
+    }
+
+    fn title_mut(&mut self) -> Option<&mut String> {
+        Some(&mut self.name)
     }
 
     fn tooltip(&self) -> &str {

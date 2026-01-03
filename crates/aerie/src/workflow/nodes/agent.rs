@@ -153,6 +153,9 @@ impl Tools {
 #[skip_serializing_none]
 #[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
 pub struct AgentNode {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+
     pub model: Option<String>,
 
     pub preamble: Option<String>,
@@ -260,7 +263,15 @@ impl DynNode for AgentNode {
 
 impl UiNode for AgentNode {
     fn title(&self) -> &str {
-        "Agent"
+        if self.name.is_empty() {
+            "Agent"
+        } else {
+            &self.name
+        }
+    }
+
+    fn title_mut(&mut self) -> Option<&mut String> {
+        Some(&mut self.name)
     }
 
     fn tooltip(&self) -> &str {
