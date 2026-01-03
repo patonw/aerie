@@ -115,9 +115,16 @@ impl WorkNode {
             pub fn execute( &mut self, ctx: &RunContext, node_id: NodeId, inputs: Vec<Option<Value>>,) -> Result<Vec<Value>, WorkflowError>;
         }
     }
-}
 
-#[inline]
-pub fn is_protected(node: &WorkNode) -> bool {
-    matches!(node, WorkNode::Start(_) | WorkNode::Finish(_))
+    /// Nodes that cannot be removed or disabled
+    #[inline]
+    pub fn is_protected(&self) -> bool {
+        matches!(self, WorkNode::Start(_) | WorkNode::Finish(_))
+    }
+
+    /// Nodes that execute as soon as any input is available
+    #[inline]
+    pub fn is_eager(&self) -> bool {
+        matches!(self, WorkNode::Select(_))
+    }
 }

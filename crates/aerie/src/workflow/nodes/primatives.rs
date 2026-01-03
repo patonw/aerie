@@ -170,10 +170,6 @@ impl DynNode for Preview {
         9999
     }
 
-    fn reset(&mut self, _in_pin: usize) {
-        self.value = Default::default();
-    }
-
     fn outputs(&self) -> usize {
         0
     }

@@ -2,7 +2,7 @@ use arc_swap::ArcSwap;
 use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
-use egui_snarl::{NodeId, Snarl, ui::SnarlStyle};
+use egui_snarl::{NodeId, Snarl};
 use egui_tiles::SimplificationOptions;
 use itertools::Itertools;
 use rmcp::model::Tool;
@@ -158,6 +158,7 @@ impl egui_tiles::Behavior<Pane> for AppState {
 
 /// Portion of the UI state dealing with workflows.
 pub struct WorkflowState<W: WorkflowStore> {
+    pub viewer: Option<super::workflow::WorkflowViewer>,
     pub frozen: bool,
     pub running: Arc<AtomicBool>,
     pub interrupt: Arc<AtomicBool>,
@@ -172,7 +173,6 @@ pub struct WorkflowState<W: WorkflowStore> {
 
     /// Data for the graph editor widget
     pub snarl: Arc<tokio::sync::RwLock<Snarl<WorkNode>>>,
-    pub style: SnarlStyle,
 
     /// The version of the current shadow graph saved to disk
     pub baseline: ShadowGraph<WorkNode>,
@@ -192,7 +192,6 @@ pub struct WorkflowState<W: WorkflowStore> {
 
 impl<W: WorkflowStore> WorkflowState<W> {
     pub fn new(store: W, current: Option<String>) -> Self {
-        use egui_snarl::ui::{BackgroundPattern, Grid, NodeLayout, PinPlacement, SnarlStyle};
         let edit_workflow = current
             .filter(|n| store.exists(n))
             .unwrap_or("basic".to_string());
@@ -204,6 +203,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         let snarl = Arc::new(tokio::sync::RwLock::new(snarl));
 
         Self {
+            viewer: None,
             frozen: false,
             running: Arc::new(AtomicBool::new(false)),
             interrupt: Arc::new(AtomicBool::new(false)),
@@ -212,19 +212,6 @@ impl<W: WorkflowStore> WorkflowState<W> {
             renaming: None,
             store,
             snarl: snarl.clone(),
-            style: SnarlStyle {
-                crisp_magnified_text: Some(true),
-                bg_pattern: Some(BackgroundPattern::Grid(Grid::new(
-                    egui::Vec2::new(100.0, 100.0),
-                    0.0,
-                ))),
-                node_frame: SnarlStyle::default()
-                    .node_frame
-                    .map(|frame| frame.inner_margin(16.0)),
-                node_layout: Some(NodeLayout::sandwich()),
-                pin_placement: Some(PinPlacement::Edge),
-                ..Default::default()
-            },
             baseline: baseline.clone(),
             shadow: baseline.clone(),
             modtime: SystemTime::now(),
@@ -488,5 +475,17 @@ impl<W: WorkflowStore> WorkflowState<W> {
         self.baseline = Default::default();
 
         Ok(())
+    }
+
+    pub fn save(&mut self) {
+        tracing::info!(
+            "Saving {} to workflows...changed? {}",
+            &self.editing,
+            !self.shadow.fast_eq(&self.baseline)
+        );
+
+        self.store.save(&self.editing, self.shadow.clone()).unwrap();
+
+        self.baseline = self.shadow.clone();
     }
 }

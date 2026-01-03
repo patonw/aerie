@@ -3,6 +3,7 @@ use egui::WidgetText;
 
 pub mod state;
 pub mod tiles;
+pub mod workflow;
 
 pub use state::AppState;
 
