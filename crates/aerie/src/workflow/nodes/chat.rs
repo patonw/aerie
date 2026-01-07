@@ -45,13 +45,13 @@ impl DynNode for ChatNode {
         3
     }
 
-    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
-        match in_pin {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Agent],
             1 => &[ValueKind::Chat],
             2 => &[ValueKind::Text, ValueKind::Message],
             _ => ValueKind::all(),
-        }
+        })
     }
 
     fn out_kind(&self, out_pin: usize) -> ValueKind {
@@ -256,14 +256,14 @@ impl DynNode for StructuredChat {
         4
     }
 
-    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
-        match in_pin {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Agent],
             1 => &[ValueKind::Chat],
             2 => &[ValueKind::Json],
             3 => &[ValueKind::Text, ValueKind::Message],
             _ => ValueKind::all(),
-        }
+        })
     }
 
     fn outputs(&self) -> usize {

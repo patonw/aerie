@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -28,11 +28,11 @@ pub struct ParseJson {
 }
 
 impl DynNode for ParseJson {
-    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
-        match in_pin {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Text],
             _ => unreachable!(),
-        }
+        })
     }
 
     fn outputs(&self) -> usize {
@@ -173,12 +173,12 @@ impl DynNode for ValidateJson {
         2
     }
 
-    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
-        match in_pin {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Json],
             1 => &[ValueKind::Json, ValueKind::Text, ValueKind::Message],
             _ => unreachable!(),
-        }
+        })
     }
 
     fn outputs(&self) -> usize {
@@ -312,8 +312,8 @@ impl DynNode for TransformJson {
         2
     }
 
-    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
-        match in_pin {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Text],
             1 => &[
                 ValueKind::Json,
@@ -323,7 +323,7 @@ impl DynNode for TransformJson {
                 ValueKind::Message,
             ],
             _ => unreachable!(),
-        }
+        })
     }
 
     fn out_kind(&self, _out_pin: usize) -> ValueKind {
@@ -420,14 +420,14 @@ impl DynNode for GatherJson {
         self.count + 1 // Extra slot to add another document
     }
 
-    fn in_kinds(&self, _in_pin: usize) -> &'static [ValueKind] {
-        &[
+    fn in_kinds(&'_ self, _in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(&[
             ValueKind::Json,
             ValueKind::Text,
             ValueKind::Number,
             ValueKind::Integer,
             ValueKind::Message,
-        ]
+        ])
     }
 
     fn out_kind(&self, _out_pin: usize) -> ValueKind {

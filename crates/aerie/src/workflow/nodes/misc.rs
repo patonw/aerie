@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
@@ -72,8 +74,8 @@ impl DynNode for TemplateNode {
         2
     }
 
-    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
-        match in_pin {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Text],
             1 => &[
                 ValueKind::Json,
@@ -83,7 +85,7 @@ impl DynNode for TemplateNode {
                 ValueKind::Message,
             ],
             _ => unreachable!(),
-        }
+        })
     }
 
     fn out_kind(&self, out_pin: usize) -> ValueKind {

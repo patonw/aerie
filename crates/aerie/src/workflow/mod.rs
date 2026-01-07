@@ -14,6 +14,7 @@ use rig::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     hash::Hash,
     sync::{Arc, atomic::AtomicBool},
 };
@@ -523,8 +524,8 @@ pub trait DynNode {
 
     #[expect(unused_variables)]
     // We're more concerned about type validation here than updating UI visuals
-    fn in_kinds(&self, in_pin: usize) -> &[ValueKind] {
-        ValueKind::all()
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(ValueKind::all())
     }
 
     fn validate(&self, inputs: &[Option<Value>]) -> Result<(), WorkflowError> {

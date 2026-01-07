@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use itertools::Itertools as _;
 use rig::{
@@ -20,8 +20,8 @@ impl DynNode for GraftHistory {
         2
     }
 
-    fn in_kinds(&self, _in_pin: usize) -> &'static [ValueKind] {
-        &[ValueKind::Chat]
+    fn in_kinds(&'_ self, _in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(&[ValueKind::Chat])
     }
 
     fn out_kind(&self, _out_pin: usize) -> ValueKind {
@@ -95,12 +95,12 @@ impl DynNode for MaskHistory {
         2
     }
 
-    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
-        match in_pin {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Chat],
             1 => &[ValueKind::Integer],
             _ => unreachable!(),
-        }
+        })
     }
 
     fn out_kind(&self, _out_pin: usize) -> ValueKind {
@@ -219,8 +219,8 @@ pub struct CreateMessage {
 }
 
 impl DynNode for CreateMessage {
-    fn in_kinds(&self, _in_pin: usize) -> &'static [ValueKind] {
-        &[ValueKind::Text, ValueKind::Json]
+    fn in_kinds(&'_ self, _in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(&[ValueKind::Text, ValueKind::Json])
     }
 
     fn out_kind(&self, _out_pin: usize) -> ValueKind {
@@ -374,11 +374,11 @@ impl DynNode for ExtendHistory {
         self.count + 2 // Slot for history plus empty to add new msg
     }
 
-    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
-        match in_pin {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Chat],
             _ => &[ValueKind::Message],
-        }
+        })
     }
 
     fn out_kind(&self, _out_pin: usize) -> ValueKind {

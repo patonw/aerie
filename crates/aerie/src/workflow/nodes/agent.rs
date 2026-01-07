@@ -3,7 +3,7 @@ use egui::TextEdit;
 use rig::message::Message;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use std::{sync::Arc, time::Duration};
+use std::{borrow::Cow, sync::Arc, time::Duration};
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 use crate::{
@@ -174,15 +174,15 @@ impl DynNode for AgentNode {
         1
     }
 
-    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
-        match in_pin {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Agent],
             1 => &[ValueKind::Model],
             2 => &[ValueKind::Number],
             3 => &[ValueKind::Tools],
             4 => &[ValueKind::Text],
             _ => ValueKind::all(),
-        }
+        })
     }
 
     fn out_kind(&self, out_pin: usize) -> ValueKind {
@@ -399,12 +399,12 @@ impl DynNode for ChatContext {
         1
     }
 
-    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
-        match in_pin {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Agent],
             1 => &[ValueKind::Text],
             _ => ValueKind::all(),
-        }
+        })
     }
 
     fn out_kind(&self, out_pin: usize) -> ValueKind {
@@ -522,14 +522,14 @@ impl DynNode for InvokeTool {
         4
     }
 
-    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
-        match in_pin {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Chat],
             1 => &[ValueKind::Tools],
             2 => &[ValueKind::Text],
             3 => &[ValueKind::Json],
             _ => ValueKind::all(),
-        }
+        })
     }
 
     fn outputs(&self) -> usize {
