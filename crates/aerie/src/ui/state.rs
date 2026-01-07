@@ -2,7 +2,6 @@ use arc_swap::ArcSwap;
 use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
-use egui_snarl::NodeId;
 use egui_tiles::SimplificationOptions;
 use itertools::Itertools;
 use rmcp::model::Tool;
@@ -29,7 +28,7 @@ use crate::{
     utils::ErrorList,
     workflow::{
         EditContext, PreviewData, ShadowGraph, WorkNode,
-        runner::{ExecState, WorkflowRun},
+        runner::{NodeStateMap, WorkflowRun},
         store::{WorkflowStore, WorkflowStoreDir},
     },
 };
@@ -102,28 +101,43 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn workflow_viewer(&self, stack: ViewStack) -> WorkflowViewer {
-        let shadow = stack.leaf().clone();
-        let running = self
+    pub fn workflow_viewer(&mut self) -> &mut WorkflowViewer {
+        if self.workflows.viewer.is_none() {
+            let stack = &self.workflows.view_stack;
+            let shadow = stack.leaf().clone();
+
+            let edit_ctx = EditContext::builder()
+                .toolbox(self.agent_factory.toolbox.clone())
+                .events(self.events.clone())
+                .errors(self.errors.clone())
+                .previews(self.workflows.previews.clone())
+                .build();
+
+            let viewer = WorkflowViewer::builder()
+                .edit_ctx(edit_ctx)
+                .shadow(shadow)
+                .node_state(self.workflows.node_state.clone())
+                .view_id(stack.view_id().with(self.workflows.switch_count))
+                .events(self.events.clone())
+                .build();
+
+            tracing::info!(
+                "Changing view to node {:?}: {:?}",
+                &viewer.shadow.uuid,
+                &viewer.node_state
+            );
+
+            self.workflows.viewer = Some(viewer);
+        }
+
+        let viewer = self.workflows.viewer.as_mut().unwrap();
+        viewer.frozen = self.workflows.frozen;
+        viewer.running = self
             .workflows
             .running
             .load(std::sync::atomic::Ordering::Relaxed);
 
-        let edit_ctx = EditContext::builder()
-            .toolbox(self.agent_factory.toolbox.clone())
-            .errors(self.errors.clone())
-            .previews(self.workflows.previews.clone())
-            .build();
-
-        WorkflowViewer::builder()
-            .edit_ctx(edit_ctx)
-            .shadow(shadow)
-            .running(running)
-            .frozen(self.workflows.frozen)
-            .node_state(self.workflows.node_state.clone())
-            .view_id(stack.view_id().with(self.workflows.switch_count))
-            .events(self.events.clone())
-            .build()
+        viewer
     }
 
     pub fn handle_events(&mut self) {
@@ -204,6 +218,8 @@ impl egui_tiles::Behavior<Pane> for AppState {
 /// Portion of the UI state dealing with workflows.
 pub struct WorkflowState<W: WorkflowStore> {
     pub view_stack: ViewStack,
+    pub viewer: Option<WorkflowViewer>,
+
     pub frozen: bool,
     pub running: Arc<AtomicBool>,
     pub interrupt: Arc<AtomicBool>,
@@ -223,7 +239,7 @@ pub struct WorkflowState<W: WorkflowStore> {
     pub shadow: ShadowGraph<WorkNode>,
 
     /// Snapshot of graph runner's state
-    pub node_state: Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>>,
+    pub node_state: NodeStateMap,
 
     /// Undo/redo support
     pub undo_stack: im::OrdMap<String, VecDeque<(SystemTime, ShadowGraph<WorkNode>)>>,
@@ -245,6 +261,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
 
         Self {
             view_stack,
+            viewer: None,
             frozen: false,
             running: Arc::new(AtomicBool::new(false)),
             interrupt: Arc::new(AtomicBool::new(false)),
@@ -527,11 +544,12 @@ impl<W: WorkflowStore> WorkflowState<W> {
         match event {
             AppEvent::EnterSubgraph(node_id) => {
                 self.view_stack.enter(*node_id).unwrap();
-
+                self.viewer = None;
                 true
             }
             AppEvent::LeaveSubgraph => {
                 self.view_stack.exit().unwrap();
+                self.viewer = None;
                 true
             }
         }

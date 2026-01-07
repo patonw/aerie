@@ -1,5 +1,7 @@
 use std::{borrow::Cow, sync::atomic::Ordering};
 
+use egui::{Sense, UiBuilder};
+use egui_phosphor::regular::GRAPH;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -72,6 +74,7 @@ impl DynNode for Subgraph {
             .unwrap_or_default()
     }
 
+    // TODO: always include failure node last
     fn out_kind(&self, out_pin: usize) -> ValueKind {
         let Some(finish) = self.graph.finish_node() else {
             return ValueKind::Placeholder;
@@ -93,10 +96,11 @@ impl DynNode for Subgraph {
         let mut exec = WorkflowRunner::builder()
             .inputs(inputs)
             .run_ctx(ctx.clone())
+            .state_view(ctx.node_state.view(&self.graph.uuid))
             .build();
 
         // TODO: keep global node states keyed by graph uuid
-        let node_state = exec.init(&self.graph);
+        exec.init(&self.graph);
         let interrupt = ctx.interrupt.clone();
         let errors = ctx.errors.clone();
 
@@ -120,8 +124,6 @@ impl DynNode for Subgraph {
                     break;
                 }
             }
-
-            tracing::info!("Executed subgraph. Final state: {node_state:?}");
         }
 
         let results = exec
@@ -129,6 +131,8 @@ impl DynNode for Subgraph {
             .iter()
             .map(|it| it.clone().unwrap_or_default())
             .collect_vec();
+
+        tracing::info!("Executed subgraph. results {results:?}");
 
         Ok(results)
     }
@@ -164,10 +168,13 @@ impl UiNode for Subgraph {
         Some(&mut self.title)
     }
 
-    fn has_body(&self) -> bool {
-        true
+    fn tooltip(&self) -> &str {
+        "Contains a workflow that executes independently when this node is run.\n\
+            Double click the icon to edit the internal graph.\n\
+            Customize the in/out pins by editing the Start/Finish nodes inside."
     }
 
+    // TODO: allow adding/remove pins. Removal should drop connections inside graph.
     fn show_input(
         &mut self,
         ui: &mut egui::Ui,
@@ -193,5 +200,30 @@ impl UiNode for Subgraph {
         };
 
         self.out_kind(pin_id).default_pin()
+    }
+
+    fn has_body(&self) -> bool {
+        true
+    }
+
+    fn show_body(&mut self, ui: &mut egui::Ui, ctx: &super::EditContext) {
+        let resp = ui.scope_builder(
+            UiBuilder::new()
+                .id_salt(ctx.current_node)
+                .sense(Sense::click()),
+            |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.style_mut().interaction.selectable_labels = false;
+                    ui.label(egui::RichText::new(GRAPH).size(128.0))
+                        .interact(egui::Sense::click())
+                })
+                .inner
+            },
+        );
+
+        if resp.response.double_clicked() || resp.inner.double_clicked() {
+            ctx.events
+                .insert(crate::ui::AppEvent::EnterSubgraph(ctx.current_node));
+        }
     }
 }

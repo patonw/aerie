@@ -11,17 +11,17 @@ use crate::ui::workflow::get_snarl_style;
 impl super::AppState {
     pub fn subgraph_ui(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            let mut viewer = self.workflow_viewer(self.workflows.view_stack.clone());
-
             // Forces new widget state in children after switching or undos so that
             // Snarl will draw our persisted positions and sizes.
             let mut snarl = self.workflows.view_stack.leaf_snarl().unwrap();
+            let frozen = self.workflows.frozen;
 
+            let viewer = self.workflow_viewer();
             let widget = SnarlWidget::new()
                 .id(viewer.view_id)
                 .style(get_snarl_style());
 
-            widget.show(&mut snarl, &mut viewer, ui);
+            widget.show(&mut snarl, viewer, ui);
 
             // Unfortunately, there's no event for node movement so we have to
             // iterate through the whole collection to find moved nodes.
@@ -30,7 +30,7 @@ impl super::AppState {
             // TODO: only when inside canvas
             viewer.handle_copy(ui, widget);
 
-            if !self.workflows.frozen {
+            if !frozen {
                 viewer.handle_paste(&mut snarl, ui, widget);
             }
 
