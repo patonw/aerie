@@ -42,17 +42,17 @@ impl super::AppState {
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            let mut viewer = self.workflow_viewer(self.workflows.view_stack.clone());
-
             // Forces new widget state in children after switching or undos so that
             // Snarl will draw our persisted positions and sizes.
-            ui.push_id(self.workflows.view_stack.view_id(), |ui| {
-                let mut snarl = self.workflows.view_stack.root_snarl().unwrap();
+            let mut snarl = self.workflows.view_stack.root_snarl().unwrap();
+            let frozen = self.workflows.frozen;
 
+            {
+                let viewer = self.workflow_viewer();
                 let widget = SnarlWidget::new()
                     .id(viewer.view_id)
                     .style(get_snarl_style());
-                widget.show(&mut snarl, &mut viewer, ui);
+                widget.show(&mut snarl, viewer, ui);
 
                 // Unfortunately, there's no event for node movement so we have to
                 // iterate through the whole collection to find moved nodes.
@@ -61,10 +61,10 @@ impl super::AppState {
                 // TODO: only when inside canvas
                 viewer.handle_copy(ui, widget);
 
-                if !self.workflows.frozen {
+                if !frozen {
                     viewer.handle_paste(&mut snarl, ui, widget);
                 }
-            });
+            }
 
             egui::Window::new(INFO)
                 .title_bar(false)
@@ -94,6 +94,7 @@ impl super::AppState {
                             );
 
                             if let Cow::Owned(desc) = description {
+                                let viewer = self.workflow_viewer();
                                 viewer.shadow = viewer.shadow.with_description(&desc);
                             }
                         } else {
@@ -106,16 +107,20 @@ impl super::AppState {
                             );
 
                             if let Cow::Owned(schema) = schema {
+                                let viewer = self.workflow_viewer();
                                 viewer.shadow = viewer.shadow.with_schema(&schema);
                             }
                         }
                     });
                 });
 
-            let shadow = viewer.shadow.clone();
-            self.workflows.view_stack.propagate(shadow).unwrap();
-            let shadow = self.workflows.view_stack.root();
-            self.workflows.cast_shadow(shadow);
+            {
+                let viewer = self.workflow_viewer();
+                let shadow = viewer.shadow.clone();
+                self.workflows.view_stack.propagate(shadow).unwrap();
+                let shadow = self.workflows.view_stack.root();
+                self.workflows.cast_shadow(shadow);
+            }
 
             egui::Area::new(egui::Id::new("workflow controls"))
                 .default_pos(egui::pos2(16.0, 32.0))
@@ -375,6 +380,7 @@ impl super::AppState {
             let run_ctx = RunContext::builder()
                 .runtime(self.rt.clone())
                 .agent_factory(self.agent_factory.clone())
+                .node_state(self.workflows.node_state.clone())
                 .previews(self.workflows.previews.clone())
                 .transmuter(self.transmuter.clone())
                 .interrupt(self.workflows.interrupt.clone())
@@ -400,9 +406,10 @@ impl super::AppState {
             let mut exec = WorkflowRunner::builder()
                 .inputs(inputs)
                 .run_ctx(run_ctx)
+                .state_view(self.workflows.node_state.view(&self.workflows.shadow.uuid))
                 .build();
 
-            self.workflows.node_state = exec.init(&self.workflows.shadow);
+            exec.init(&self.workflows.shadow);
 
             exec
         };

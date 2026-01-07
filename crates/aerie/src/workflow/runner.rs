@@ -1,6 +1,5 @@
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Local};
-use decorum::E64;
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use im::OrdSet;
 use itertools::{EitherOrBoth, Itertools};
@@ -14,7 +13,7 @@ use typed_builder::TypedBuilder;
 
 use crate::workflow::{ShadowGraph, ValueKind, Wire, WorkflowError, nodes::WorkNodeKind};
 
-use super::{RunContext, Value, WorkNode};
+use super::{GraphId, RunContext, Value, WorkNode};
 
 pub type RunOutput = Arc<ArcSwap<im::OrdMap<String, crate::workflow::Value>>>;
 
@@ -56,6 +55,52 @@ impl std::fmt::Debug for ExecState {
             Self::Disabled => write!(f, "Disabled"),
             Self::Failed(arg0) => f.debug_tuple("Failed").field(arg0).finish(),
         }
+    }
+}
+
+/// A global cache of node execution states across all graphs and subgraphs
+#[derive(Default, Clone, Debug)]
+pub struct NodeStateMap(pub Arc<ArcSwap<im::OrdMap<(GraphId, NodeId), ExecState>>>);
+
+impl NodeStateMap {
+    pub fn view(&self, graph_id: &GraphId) -> NodeStateView {
+        let data = self.clone();
+        NodeStateView {
+            data,
+            graph_id: *graph_id,
+        }
+    }
+}
+
+/// A slice of the node state for a single graph
+#[derive(Default, Clone, Debug)]
+pub struct NodeStateView {
+    pub data: NodeStateMap,
+    pub graph_id: GraphId,
+}
+
+impl NodeStateView {
+    pub fn clear(&self) {
+        self.data.0.rcu(|states| {
+            // TODO: a more effecient way to do this
+            im::OrdMap::from_iter(
+                states
+                    .as_ref()
+                    .clone()
+                    .into_iter()
+                    .filter(|it| it.0.0 != self.graph_id),
+            )
+        });
+    }
+
+    pub fn insert(&self, node: NodeId, value: ExecState) {
+        self.data
+            .0
+            .rcu(|states| states.update((self.graph_id, node), value.clone()));
+    }
+
+    pub fn get(&self, node: &NodeId) -> Option<ExecState> {
+        self.data.0.load().get(&(self.graph_id, *node)).cloned()
     }
 }
 
@@ -116,7 +161,7 @@ pub struct WorkflowRunner {
     pub dependencies: BTreeMap<NodeId, BTreeMap<usize, OutPinId>>,
 
     #[builder(default)]
-    pub node_state: Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>>,
+    pub state_view: NodeStateView,
 
     #[builder(default)]
     pub ready_nodes: BinaryHeap<Prioritized<NodeId>>,
@@ -130,13 +175,9 @@ pub struct WorkflowRunner {
 
 // TODO methods to alter status when node controls or connections changed
 impl WorkflowRunner {
-    pub fn init(
-        &mut self,
-        graph: &ShadowGraph<WorkNode>,
-    ) -> Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>> {
+    pub fn init(&mut self, graph: &ShadowGraph<WorkNode>) {
         self.graph = graph.repair();
-
-        let mut node_state: im::OrdMap<NodeId, ExecState> = Default::default();
+        self.state_view.clear();
 
         for Wire { out_pin, in_pin } in &graph.wires {
             // ignore orphaned inputs/outputs... ideally remove them before saving
@@ -169,7 +210,7 @@ impl WorkflowRunner {
 
         for (key, value) in &self.dependencies {
             let deps = value.values().map(|it| it.node).collect::<im::OrdSet<_>>();
-            node_state.insert(*key, ExecState::Waiting(deps));
+            self.state_view.insert(*key, ExecState::Waiting(deps));
         }
 
         for ready_node in graph
@@ -184,34 +225,25 @@ impl WorkflowRunner {
                 .get(&ready_node)
                 .map(|n| n.value.as_dyn().priority())
                 .unwrap_or_default();
-            node_state.insert(ready_node, ExecState::Ready);
+            self.state_view.insert(ready_node, ExecState::Ready);
             self.ready_nodes
                 .push(Prioritized::new(ready_node).priority(priority));
         }
-
-        self.node_state.store(Arc::new(node_state));
-        self.node_state.clone()
     }
 
     // TODO: fully convert this to shadow graph
     pub fn step(&mut self, snarl: &mut Snarl<WorkNode>) -> Result<bool, Arc<WorkflowError>> {
-        let node_state = self.node_state.load_full();
         tracing::trace!("Priority queue: {:?}", &self.ready_nodes);
 
         let Some(ready_node) = self.ready_nodes.pop() else {
             // Nothing ready to run, halt
-            tracing::info!(
-                "No more nodes ready. Final execution state: {:?}",
-                self.node_state
-            );
+            tracing::info!("No more nodes ready.",);
             return Ok(false);
         };
 
         let node_id = ready_node.payload;
 
-        let mut node_state = node_state.deref().clone();
-        node_state.insert(node_id, ExecState::Running);
-        self.node_state.store(Arc::new(node_state.clone()));
+        self.state_view.insert(node_id, ExecState::Running);
 
         tracing::debug!(
             "Preparing to execute node {node_id:?}: {}",
@@ -268,6 +300,7 @@ impl WorkflowRunner {
         let mut blacklist: BTreeSet<NodeId> = Default::default();
 
         if Some(node_id) == self.graph.finish {
+            tracing::info!("Setting graph {:?} outputs to {inputs:?}", self.graph.uuid);
             self.outputs = inputs.clone();
         }
 
@@ -289,15 +322,14 @@ impl WorkflowRunner {
                 }
 
                 tracing::trace!("Values: {values:?}");
-                node_state.insert(node_id, ExecState::Done(values));
-                self.node_state.store(Arc::new(node_state.clone()));
+                self.state_view.insert(node_id, ExecState::Done(values));
                 true
             }
             Err(err) => {
                 tracing::debug!("Got a failure {err:?} handlers: {fail_handlers:?}");
                 let err = Arc::new(err);
-                node_state.insert(node_id, ExecState::Failed(err.clone()));
-                self.node_state.store(Arc::new(node_state.clone()));
+                self.state_view
+                    .insert(node_id, ExecState::Failed(err.clone()));
 
                 // Input errors from mis-wired graphs -- non-recoverable
                 // Nothing to catch errors, abort run
@@ -348,7 +380,7 @@ impl WorkflowRunner {
         // Update state of successors
         for successor in successors {
             tracing::debug!("Updating successor {successor:?}");
-            if let Some(state) = node_state.get(successor).cloned() {
+            if let Some(state) = self.state_view.get(successor) {
                 match state {
                     ExecState::Waiting(deps) => {
                         let deps = deps
@@ -382,7 +414,7 @@ impl WorkflowRunner {
                             ExecState::Waiting(deps)
                         };
 
-                        node_state.insert(*successor, next_state);
+                        self.state_view.insert(*successor, next_state);
                     }
                     ExecState::Disabled => {}
                     ExecState::Done(_) => {}
@@ -393,8 +425,6 @@ impl WorkflowRunner {
                 }
             }
         }
-
-        self.node_state.store(Arc::new(node_state));
 
         Ok(true)
     }
@@ -408,7 +438,6 @@ impl WorkflowRunner {
             return Ok(self.inputs.clone());
         }
 
-        let node_state = self.node_state.load();
         let dyn_node = (snarl[node_id]).as_dyn();
         // Gather inputs
         let mut inputs = (0..dyn_node.inputs())
@@ -420,7 +449,7 @@ impl WorkflowRunner {
             .get(&node_id)
             .unwrap_or(&Default::default())
         {
-            if let Some(ExecState::Done(outputs)) = node_state.get(&remote.node)
+            if let Some(ExecState::Done(outputs)) = self.state_view.get(&remote.node)
                 && remote.output < outputs.len()
             {
                 let value = &outputs[remote.output];
@@ -462,7 +491,6 @@ impl WorkflowRunner {
         node_id: NodeId,
         mut inputs: Vec<Option<Value>>,
     ) -> Vec<Option<Value>> {
-        let node_state = self.node_state.load();
         let dyn_node = (snarl[node_id]).as_dyn();
         // The input pin on this node that takes the failure with its remote output
         let in_fail = (0..dyn_node.inputs()).find_map(|pin| {
@@ -486,7 +514,7 @@ impl WorkflowRunner {
         });
 
         if let Some((in_pin, remote)) = in_fail
-            && let Some(ExecState::Failed(err)) = node_state.get(&remote.node)
+            && let Some(ExecState::Failed(err)) = self.state_view.get(&remote.node)
         {
             tracing::info!(
                 "Setting failure node {:?} input on {}: {:?}",

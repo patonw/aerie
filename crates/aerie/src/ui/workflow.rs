@@ -5,9 +5,8 @@ use std::{
 };
 
 use anyhow::Context as _;
-use arc_swap::ArcSwap;
 use cached::proc_macro::cached;
-use egui::{Color32, Hyperlink, RichText, Sense, Ui, emath::TSTransform};
+use egui::{Color32, Hyperlink, RichText, Ui, emath::TSTransform};
 use egui_phosphor::regular::{CHECK_CIRCLE, HAND_PALM, HOURGLASS_MEDIUM, PLAY_CIRCLE, WARNING};
 use egui_snarl::{
     InPinId, NodeId, OutPinId, Snarl,
@@ -21,7 +20,7 @@ use crate::{
     workflow::{
         EditContext, MetaNode, ShadowGraph, WorkNode,
         nodes::{CommentNode, Subgraph},
-        runner::ExecState,
+        runner::{ExecState, NodeStateMap},
     },
 };
 
@@ -45,7 +44,7 @@ pub fn get_snarl_style() -> SnarlStyle {
     }
 }
 
-#[derive(Debug, Clone, TypedBuilder)]
+#[derive(Clone, TypedBuilder)]
 pub struct ViewStack {
     pub root_id: egui::Id,
 
@@ -57,7 +56,7 @@ pub struct ViewStack {
 impl ViewStack {
     pub fn new(root_graph: ShadowGraph<WorkNode>, path: impl Iterator<Item = NodeId>) -> Self {
         let mut me = Self {
-            root_id: egui::Id::new(&root_graph.uuid),
+            root_id: egui::Id::new(root_graph.uuid),
             path: Default::default(),
             levels: vector![root_graph],
         };
@@ -230,7 +229,7 @@ pub struct WorkflowViewer {
     pub shadow: ShadowGraph<WorkNode>,
 
     #[builder(default)]
-    pub node_state: Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>>,
+    pub node_state: NodeStateMap,
 
     #[builder(default)]
     pub running: bool,
@@ -243,11 +242,6 @@ pub struct WorkflowViewer {
 }
 
 impl WorkflowViewer {
-    pub fn with_node_state(mut self, state: Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>>) -> Self {
-        self.node_state = state;
-        self
-    }
-
     pub fn frozen(&self) -> bool {
         self.running || self.frozen
     }
@@ -380,7 +374,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui: &mut Ui,
         snarl: &mut Snarl<WorkNode>,
     ) {
-        let node_state = self.node_state.load();
+        let node_state = self.node_state.view(&self.shadow.uuid);
 
         if matches!(snarl[node], WorkNode::Comment(_)) {
             return;
@@ -757,20 +751,12 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
     ) {
         self.edit_ctx.current_node = node;
 
-        if snarl[node].is_subgraph() {
-            if ui
-                .heading("subgraph")
-                .interact(Sense::click())
-                .double_clicked()
-            {
-                self.events.insert(crate::ui::AppEvent::EnterSubgraph(node));
-            }
-        } else {
-            ui.add_enabled_ui(self.can_edit(), |ui| {
-                snarl[node].as_ui_mut().show_body(ui, &self.edit_ctx);
-                self.shadow = self.shadow.with_node(&node, snarl.get_node_info(node));
-            });
-        }
+        let enabled = self.can_edit() || matches!(snarl[node], WorkNode::Subgraph(_));
+
+        ui.add_enabled_ui(enabled, |ui| {
+            snarl[node].as_ui_mut().show_body(ui, &self.edit_ctx);
+            self.shadow = self.shadow.with_node(&node, snarl.get_node_info(node));
+        });
     }
 
     fn connect(

@@ -147,6 +147,7 @@ impl UiNode for Text {
 pub struct Preview {
     size: Option<crate::utils::EVec2>,
 
+    // TODO: regenerate after paste
     #[serde(default)]
     pub uuid: GraphId,
 }

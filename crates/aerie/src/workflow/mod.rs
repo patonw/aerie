@@ -29,8 +29,12 @@ use crate::{
     agent::AgentSpec,
     config::SeedConfig,
     transmute::Transmuter,
+    ui::AppEvents,
     utils::{AtomicBuffer, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
-    workflow::nodes::{Finish, Start},
+    workflow::{
+        nodes::{Finish, Start},
+        runner::NodeStateMap,
+    },
 };
 
 pub mod nodes;
@@ -114,6 +118,8 @@ impl PreviewData {
 pub struct EditContext {
     pub toolbox: Arc<Toolbox>,
 
+    pub events: Arc<AppEvents>,
+
     #[builder(default)]
     pub previews: PreviewData,
 
@@ -185,6 +191,9 @@ pub struct RunContext {
 
     #[builder(default)]
     pub streaming: bool,
+
+    #[builder(default)]
+    pub node_state: NodeStateMap,
 
     #[builder(default)]
     pub previews: PreviewData,
@@ -308,7 +317,7 @@ impl From<(OutPinId, InPinId)> for Wire {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct GraphId(pub Uuid);
 
 impl Default for GraphId {
