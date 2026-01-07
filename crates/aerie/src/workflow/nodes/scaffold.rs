@@ -1,4 +1,4 @@
-use std::{convert::identity, sync::Arc};
+use std::{borrow::Cow, convert::identity, sync::Arc};
 
 use decorum::E64;
 use egui::RichText;
@@ -119,9 +119,9 @@ impl DynNode for Finish {
         0
     }
 
-    fn in_kinds(&self, in_pin: usize) -> &'static [ValueKind] {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
         match in_pin {
-            0 => &[ValueKind::Chat],
+            0 => Cow::Borrowed(&[ValueKind::Chat]),
             _ => unreachable!(),
         }
     }
@@ -197,15 +197,15 @@ impl DynNode for Fallback {
         self.kinds.len() + 1 // Slot for history plus empty to add new msg
     }
 
-    fn in_kinds(&self, in_pin: usize) -> &[ValueKind] {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
         let is_var_pin = in_pin > 0 && in_pin < self.kinds.len() + 1;
-        match in_pin {
+        Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Failure],
             _ if is_var_pin && self.kinds[in_pin - 1] != ValueKind::Placeholder => {
                 std::slice::from_ref(&self.kinds[in_pin - 1])
             }
             _ => ValueKind::all(),
-        }
+        })
     }
 
     fn outputs(&self) -> usize {
@@ -339,8 +339,8 @@ impl DynNode for Matcher {
         2
     }
 
-    fn in_kinds(&self, in_pin: usize) -> &[ValueKind] {
-        match in_pin {
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
             0 => &[
                 ValueKind::Text,
                 ValueKind::Message,
@@ -350,7 +350,7 @@ impl DynNode for Matcher {
             ],
             _ if self.kind == ValueKind::Placeholder => ValueKind::all(),
             _ => std::slice::from_ref(&self.kind),
-        }
+        })
     }
 
     fn outputs(&self) -> usize {
@@ -683,12 +683,12 @@ impl DynNode for Select {
 
     // Allows anything for the first value, but all other inputs
     // must be of the same kind.
-    fn in_kinds(&self, _in_pin: usize) -> &[ValueKind] {
-        if self.count == 0 {
+    fn in_kinds(&'_ self, _in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(if self.count == 0 {
             ValueKind::all()
         } else {
             std::slice::from_ref(&self.kind)
-        }
+        })
     }
 
     fn out_kind(&self, _out_pin: usize) -> ValueKind {
@@ -804,12 +804,12 @@ impl DynNode for Demote {
         self.priority
     }
 
-    fn in_kinds(&self, _in_pin: usize) -> &[ValueKind] {
-        if matches!(self.kind, ValueKind::Placeholder) {
+    fn in_kinds(&'_ self, _in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(if matches!(self.kind, ValueKind::Placeholder) {
             ValueKind::all()
         } else {
             std::slice::from_ref(&self.kind)
-        }
+        })
     }
 
     fn out_kind(&self, _out_pin: usize) -> ValueKind {
