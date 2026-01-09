@@ -3,15 +3,28 @@ use egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE;
 use egui_snarl::ui::SnarlWidget;
 use itertools::Itertools as _;
 use std::convert::identity;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use egui_extras::{Size, StripBuilder};
 
 use crate::config::ConfigExt;
+use crate::ui::AppEvent;
+use crate::ui::runner::play_button;
+use crate::ui::runner::stop_button;
+use crate::ui::shortcuts::SHORTCUT_RUN;
 use crate::ui::workflow::get_snarl_style;
 
 impl super::AppState {
     pub fn subgraph_ui(&mut self, ui: &mut egui::Ui) {
+        let running = self
+            .workflows
+            .running
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        if !running && ui.ctx().input_mut(|i| i.consume_shortcut(&SHORTCUT_RUN)) {
+            self.events.insert(AppEvent::UserRunWorkflow);
+        }
         egui::CentralPanel::default().show_inside(ui, |ui| {
             // Forces new widget state in children after switching or undos so that
             // Snarl will draw our persisted positions and sizes.
@@ -153,6 +166,22 @@ impl super::AppState {
 
                 ui.toggle_value(&mut self.workflows.frozen, frozen_label)
                     .on_hover_text(frozen_hint);
+            });
+
+            ui.separator();
+            ui.scope(|ui| {
+                // Bigger button
+                ui.style_mut().spacing.button_padding.y = 16.0;
+                if running {
+                    let interrupting = self.workflows.interrupt.load(Ordering::Relaxed);
+                    ui.add_enabled_ui(!interrupting, |ui| {
+                        if ui.add(stop_button(interrupting)).clicked() {
+                            self.workflows.interrupt.store(true, Ordering::Relaxed);
+                        }
+                    });
+                } else if ui.add(play_button()).clicked() {
+                    self.events.insert(AppEvent::UserRunWorkflow);
+                }
             });
         });
     }

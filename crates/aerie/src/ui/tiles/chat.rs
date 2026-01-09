@@ -8,7 +8,7 @@ use std::{borrow::Cow, sync::atomic::Ordering};
 use crate::{
     ChatContent,
     config::ConfigExt,
-    ui::{agent_bubble, error_bubble, user_bubble},
+    ui::{AppEvent, agent_bubble, error_bubble, user_bubble},
     utils::{ErrorDistiller as _, FormatOpts},
 };
 
@@ -83,10 +83,8 @@ impl super::AppState {
                     if automation.is_empty() || workflows.contains(&automation) {
                         // TODO: deal with this nuking any edits in progress
                         self.workflows.switch(&automation);
-                        self.run_count = 0;
-                        self.exec_workflow();
-
-                        self.prompt = String::new();
+                        self.events.insert(AppEvent::UserRunWorkflow);
+                        self.events.insert(AppEvent::SetPrompt(String::new()));
                     } else {
                         errors.push(anyhow::anyhow!("Workflow {automation} does not exist."));
                     }

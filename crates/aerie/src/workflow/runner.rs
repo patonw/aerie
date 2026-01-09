@@ -63,6 +63,10 @@ impl std::fmt::Debug for ExecState {
 pub struct NodeStateMap(pub Arc<ArcSwap<im::OrdMap<(GraphId, NodeId), ExecState>>>);
 
 impl NodeStateMap {
+    pub fn clear(&self) {
+        self.0.store(Default::default());
+    }
+
     pub fn view(&self, graph_id: &GraphId) -> NodeStateView {
         let data = self.clone();
         NodeStateView {

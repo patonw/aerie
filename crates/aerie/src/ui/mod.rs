@@ -1,6 +1,8 @@
 use eframe::egui;
 use egui::WidgetText;
 
+pub mod runner;
+pub mod shortcuts;
 pub mod state;
 pub mod tiles;
 pub mod workflow;
@@ -39,6 +41,11 @@ pub enum AppEvent {
     /// Pins must both be inputs or outputs.
     SwapInputs(GraphId, InPinId, InPinId),
     SwapOutputs(GraphId, OutPinId, OutPinId),
+
+    // User requested to run the current workflow
+    UserRunWorkflow,
+
+    SetPrompt(String),
 }
 
 impl AppEvent {
@@ -46,6 +53,7 @@ impl AppEvent {
         use AppEvent::*;
         match self {
             EnterSubgraph(_) | LeaveSubgraph(_) => -100,
+            UserRunWorkflow | SetPrompt(_) => -200,
             _ => 0,
         }
     }

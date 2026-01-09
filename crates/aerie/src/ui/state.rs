@@ -143,10 +143,31 @@ impl AppState {
     }
 
     pub fn handle_events(&mut self) {
+        use AppEvent::*;
+
+        // Only allow one run request per frame
+        let mut executed = false;
+
         while let Some(event) = self.events.pop() {
             let mut handled = false;
 
             handled = handled || self.workflows.handle_event(&event);
+
+            handled = handled
+                || match &event {
+                    UserRunWorkflow if !executed => {
+                        self.run_count = 0;
+                        self.workflows.node_state.clear();
+                        self.exec_workflow();
+                        executed = true;
+                        true
+                    }
+                    SetPrompt(prompt) => {
+                        self.prompt = prompt.clone();
+                        true
+                    }
+                    _ => false,
+                };
 
             if !handled {
                 tracing::warn!("Unhandled event {event:?}");
@@ -606,6 +627,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
                 });
                 true
             }
+            _ => false,
         }
     }
 }
