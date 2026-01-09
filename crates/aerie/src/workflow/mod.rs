@@ -33,7 +33,7 @@ use crate::{
     utils::{AtomicBuffer, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
     workflow::{
         nodes::{Finish, Start},
-        runner::NodeStateMap,
+        runner::{ExecState, NodeStateMap},
     },
 };
 
@@ -826,6 +826,12 @@ pub enum WorkflowError {
 
     #[error("timed out")]
     Timeout,
+
+    #[error("Graph execution halted before finishing: {0:?}")]
+    Unfinished(ExecState),
+
+    #[error("Error while executing subgraph")]
+    Subgraph(#[source] Arc<WorkflowError>),
 
     #[error("{0}")]
     Unknown(String),

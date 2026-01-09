@@ -237,7 +237,18 @@ impl WorkflowRunner {
 
         let Some(ready_node) = self.ready_nodes.pop() else {
             // Nothing ready to run, halt
-            tracing::info!("No more nodes ready.",);
+            tracing::info!("No more nodes ready.");
+
+            if self.outputs.is_empty() {
+                let finish_state = self
+                    .graph
+                    .finish
+                    .as_ref()
+                    .and_then(|f| self.state_view.get(f))
+                    .unwrap_or(ExecState::Waiting(Default::default()));
+
+                Err(WorkflowError::Unfinished(finish_state))?;
+            }
             return Ok(false);
         };
 
