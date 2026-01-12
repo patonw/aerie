@@ -6,9 +6,8 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-use crate::{
-    utils::ErrorDistiller as _,
-    workflow::{DynNode, ShadowGraph, UiNode, ValueKind, WorkNode, runner::WorkflowRunner},
+use crate::workflow::{
+    DynNode, ShadowGraph, UiNode, Value, ValueKind, WorkNode, WorkflowError, runner::WorkflowRunner,
 };
 
 // "serializing nested enums in YAML is not supported yet"
@@ -72,6 +71,7 @@ impl DynNode for Subgraph {
             .finish_node()
             .map(|n| n.inputs())
             .unwrap_or_default()
+            + 1
     }
 
     // TODO: always include failure node last
@@ -80,7 +80,11 @@ impl DynNode for Subgraph {
             return ValueKind::Placeholder;
         };
 
-        finish.in_kinds(out_pin)[0]
+        if out_pin == finish.inputs() {
+            ValueKind::Failure
+        } else {
+            finish.in_kinds(out_pin)[0]
+        }
     }
 
     fn execute(
@@ -99,10 +103,8 @@ impl DynNode for Subgraph {
             .state_view(ctx.node_state.view(&self.graph.uuid))
             .build();
 
-        // TODO: keep global node states keyed by graph uuid
         exec.init(&self.graph);
         let interrupt = ctx.interrupt.clone();
-        let errors = ctx.errors.clone();
 
         let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
         tracing::info!("About to execute subgraph");
@@ -117,20 +119,19 @@ impl DynNode for Subgraph {
                     break;
                 }
                 Ok(true) => {
-                    tracing::info!("Stepped subgraph");
+                    tracing::trace!("Stepped subgraph");
                 }
-                Err(err) => {
-                    errors.push(err.into());
-                    break;
-                }
+                Err(err) => Err(WorkflowError::Subgraph(err))?,
             }
         }
 
-        let results = exec
+        let mut results = exec
             .outputs
             .iter()
             .map(|it| it.clone().unwrap_or_default())
             .collect_vec();
+
+        results.push(Value::Placeholder(ValueKind::Failure));
 
         tracing::info!("Executed subgraph. results {results:?}");
 
@@ -183,7 +184,8 @@ impl UiNode for Subgraph {
         _remote: Option<super::Value>,
     ) -> egui_snarl::ui::PinInfo {
         if let Some(start) = self.graph.start_node() {
-            ui.label(&start.fields[pin_id].0);
+            let text = start.fields.get(pin_id).map(|x| x.0.as_str()).unwrap_or("");
+            ui.label(text);
         };
 
         self.in_kinds(pin_id).first().unwrap().default_pin()
@@ -195,8 +197,15 @@ impl UiNode for Subgraph {
         _ctx: &super::EditContext,
         pin_id: usize,
     ) -> egui_snarl::ui::PinInfo {
-        if let Some(finish) = self.graph.finish_node() {
-            ui.label(&finish.fields[pin_id].0);
+        if pin_id == self.outputs() - 1 {
+            ui.label("failure");
+        } else if let Some(finish) = self.graph.finish_node() {
+            let text = finish
+                .fields
+                .get(pin_id)
+                .map(|x| x.0.as_str())
+                .unwrap_or("");
+            ui.label(text);
         };
 
         self.out_kind(pin_id).default_pin()
@@ -213,6 +222,8 @@ impl UiNode for Subgraph {
                 .sense(Sense::click()),
             |ui| {
                 ui.vertical_centered(|ui| {
+                    ui.set_min_width(250.0);
+
                     ui.style_mut().interaction.selectable_labels = false;
                     ui.label(egui::RichText::new(GRAPH).size(128.0))
                         .interact(egui::Sense::click())

@@ -1,6 +1,8 @@
 use egui_phosphor::regular::ARROW_CLOCKWISE;
 use egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE;
 use egui_snarl::ui::SnarlWidget;
+use itertools::Itertools as _;
+use std::convert::identity;
 use std::time::Duration;
 
 use egui_extras::{Size, StripBuilder};
@@ -16,7 +18,14 @@ impl super::AppState {
             let mut snarl = self.workflows.view_stack.leaf_snarl().unwrap();
             let frozen = self.workflows.frozen;
 
+            let shadow = self.workflows.view_stack.leaf();
             let viewer = self.workflow_viewer();
+
+            // Needed for preserving changes by events, but is there a better way?
+            // Maybe we can make changes directly to the stack?
+            // But then we'd need shared ownership of the stack.
+            viewer.shadow = shadow;
+
             let widget = SnarlWidget::new()
                 .id(viewer.view_id)
                 .style(get_snarl_style());
@@ -35,9 +44,10 @@ impl super::AppState {
             }
 
             let shadow = viewer.shadow.clone();
-            self.workflows.view_stack.propagate(shadow).unwrap();
-            let shadow = self.workflows.view_stack.root();
-            self.workflows.cast_shadow(shadow);
+            self.workflows
+                .view_stack
+                .propagate(shadow, identity)
+                .unwrap();
 
             egui::Area::new(egui::Id::new("subgraph controls"))
                 .default_pos(egui::pos2(16.0, 32.0))
@@ -65,9 +75,18 @@ impl super::AppState {
 
         ui.set_max_width(150.0);
         ui.vertical_centered_justified(|ui| {
-            if ui.button("Back").clicked() {
-                self.events.insert(crate::ui::AppEvent::LeaveSubgraph);
+            ui.label("subgraph:");
+
+            let names = self.workflows.view_stack.names().collect_vec();
+            for (i, name) in names.iter().enumerate().rev() {
+                if i == 0 {
+                    ui.add_enabled(false, egui::Button::new(name));
+                } else if ui.button(name).clicked() {
+                    self.events.insert(crate::ui::AppEvent::LeaveSubgraph(i));
+                }
             }
+
+            ui.separator();
 
             StripBuilder::new(ui)
                 .size(Size::exact(16.0))

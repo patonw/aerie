@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    convert::identity,
     sync::{Arc, atomic::Ordering},
     thread,
     time::{Duration, SystemTime},
@@ -47,8 +48,12 @@ impl super::AppState {
             let mut snarl = self.workflows.view_stack.root_snarl().unwrap();
             let frozen = self.workflows.frozen;
 
-            {
+            let mut shadow = {
+                let shadow = self.workflows.view_stack.leaf();
                 let viewer = self.workflow_viewer();
+                // Needed for preserving changes by events, but is there a better way?
+                viewer.shadow = shadow;
+
                 let widget = SnarlWidget::new()
                     .id(viewer.view_id)
                     .style(get_snarl_style());
@@ -64,7 +69,9 @@ impl super::AppState {
                 if !frozen {
                     viewer.handle_paste(&mut snarl, ui, widget);
                 }
-            }
+
+                viewer.shadow.clone()
+            };
 
             egui::Window::new(INFO)
                 .title_bar(false)
@@ -94,8 +101,7 @@ impl super::AppState {
                             );
 
                             if let Cow::Owned(desc) = description {
-                                let viewer = self.workflow_viewer();
-                                viewer.shadow = viewer.shadow.with_description(&desc);
+                                shadow = shadow.with_description(&desc);
                             }
                         } else {
                             let mut schema = Cow::Borrowed(self.workflows.shadow.schema.as_str());
@@ -107,20 +113,16 @@ impl super::AppState {
                             );
 
                             if let Cow::Owned(schema) = schema {
-                                let viewer = self.workflow_viewer();
-                                viewer.shadow = viewer.shadow.with_schema(&schema);
+                                shadow = shadow.with_schema(&schema);
                             }
                         }
                     });
                 });
 
-            {
-                let viewer = self.workflow_viewer();
-                let shadow = viewer.shadow.clone();
-                self.workflows.view_stack.propagate(shadow).unwrap();
-                let shadow = self.workflows.view_stack.root();
-                self.workflows.cast_shadow(shadow);
-            }
+            self.workflows
+                .view_stack
+                .propagate(shadow, identity)
+                .unwrap();
 
             egui::Area::new(egui::Id::new("workflow controls"))
                 .default_pos(egui::pos2(16.0, 32.0))
