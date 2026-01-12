@@ -1,364 +1,388 @@
+---
 nodes:
   0:
-    value: !Start {}
+    value:
+      Start: {}
     pos:
       x: -290.69305
-      'y': -121.99352
+      y: -121.99352
     open: true
   1:
-    value: !Finish {}
+    value:
+      Finish: {}
     pos:
       x: 3363.695
-      'y': -0.017204165
+      y: -0.017204165
     open: true
   2:
-    value: !Agent
-      preamble: |-
-        In one sentence create a search query to find information relevant to the user's prompt that can be used in a dedicated search index.
-
-        Do not preface your answer with things like "Sure, here's your query" etc. Do not explain why you've chosen this query. Just print the query and stop.
-      size:
-        x: 401.25
-        'y': 355.6875
+    value:
+      AgentNode:
+        preamble: |-
+          In one sentence create a search query to find information relevant to the user's prompt that can be used in a dedicated search index.
+          
+          Do not preface your answer with things like "Sure, here's your query" etc. Do not explain why you've chosen this query. Just print the query and stop.
+        size:
+          x: 401.25
+          y: 355.6875
     pos:
       x: 130.66914
-      'y': -447.37073
+      y: -447.37073
     open: true
   3:
-    value: !Chat
-      prompt: ''
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      ChatNode:
+        prompt: ""
+        size:
+          x: 300
+          y: 150
     pos:
       x: 765.6301
-      'y': 647.2964
+      y: 647.2964
     open: true
   4:
-    value: !MaskChat
-      limit: 0
+    value:
+      MaskHistory:
+        limit: 0
     pos:
       x: 234.95703
-      'y': 269.10938
+      y: 269.10938
     open: true
   5:
-    value: !Comment
-      comment: |-
-        Convert the query text into JSON.
-
-        The Gather JSON node only takes one value in this instance, but is capable of converting multiple items into a single JSON document.
-      size:
-        x: 325.0
-        'y': 310.3125
+    value:
+      CommentNode:
+        comment: |-
+          Convert the query text into JSON.
+          
+          The Gather JSON node only takes one value in this instance, but is capable of converting multiple items into a single JSON document.
+        size:
+          x: 325
+          y: 310.3125
     pos:
       x: 1041.3798
-      'y': 1050.0612
+      y: 1050.0612
     open: true
   6:
-    value: !Text
-      value: How does goose find extensions?
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Text:
+        value: How does goose find extensions?
+        size:
+          x: 300
+          y: 150
     pos:
       x: -198.76572
-      'y': 505.27048
+      y: 505.27048
     open: true
   7:
-    value: !GatherJson
-      count: 1
+    value:
+      GatherJson:
+        count: 1
     pos:
       x: 1061.4155
-      'y': 829.88696
+      y: 829.88696
     open: true
   8:
-    value: !TransformJson
-      filter: |-
-        {
-          "text": .[0]
-        }
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      TransformJson:
+        filter: |-
+          {
+            "text": .[0]
+          }
+        size:
+          x: 300
+          y: 150
     pos:
       x: 1488.3414
-      'y': 565.87256
+      y: 565.87256
     open: true
   9:
-    value: !Tools
-      toolset:
-      - embcp-goose/search_repo
+    value:
+      Tools:
+        toolset:
+          - embcp-goose/search_repo
     pos:
       x: 1538.3572
-      'y': -42.03032
+      y: -42.03032
     open: true
   10:
-    value: !InvokeTool
-      tool_name: search_repo
+    value:
+      InvokeTool:
+        tool_name: search_repo
     pos:
       x: 1934.593
-      'y': 399.129
+      y: 399.129
     open: true
   11:
-    value: !Preview
-      size:
-        x: 1120.0
-        'y': 438.71875
+    value:
+      Preview:
+        size:
+          x: 1120
+          y: 438.71875
     pos:
       x: 2435.274
-      'y': 810.96826
+      y: 810.96826
     open: true
   12:
-    value: !Chat
-      prompt: ''
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      ChatNode:
+        prompt: ""
+        size:
+          x: 300
+          y: 150
     pos:
       x: 2848.0818
-      'y': 16.90733
+      y: 16.90733
     open: true
   13:
-    value: !Agent
-      preamble: ''
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      AgentNode:
+        preamble: ""
+        size:
+          x: 300
+          y: 150
     pos:
       x: 1869.2515
-      'y': -487.59662
+      y: -487.59662
     open: true
   14:
-    value: !Context
-      context_doc: ''
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      ChatContext:
+        context_doc: ""
+        size:
+          x: 300
+          y: 150
     pos:
       x: 2379.8267
-      'y': -177.23001
+      y: -177.23001
     open: true
   15:
-    value: !Output
-      label: response.txt
+    value:
+      OutputNode:
+        label: response.txt
     pos:
       x: 3352.6301
-      'y': 222.96008
+      y: 222.96008
     open: true
   16:
-    value: !Comment
-      comment: |-
-        Gather JSON always produces an array. We need a more specific format for calling the tool which the Transform JSON node can produce.
-
-        The actual structure of the arguments will vary by tool. Refer to the tool documentation or schema.
-      size:
-        x: 363.0
-        'y': 366.625
+    value:
+      CommentNode:
+        comment: |-
+          Gather JSON always produces an array. We need a more specific format for calling the tool which the Transform JSON node can produce.
+          
+          The actual structure of the arguments will vary by tool. Refer to the tool documentation or schema.
+        size:
+          x: 363
+          y: 366.625
     pos:
       x: 1465.8795
-      'y': 955.74884
+      y: 955.74884
     open: true
   17:
-    value: !Comment
-      comment: Enabling the system message but leaving it blank erases it from the previous agent.
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CommentNode:
+        comment: Enabling the system message but leaving it blank erases it from the previous agent.
+        size:
+          x: 300
+          y: 150
     pos:
       x: 1885.153
-      'y': -797.32715
+      y: -797.32715
     open: true
   18:
-    value: !Comment
-      comment: |-
-        Provide the search results as context.
-
-        There are other ways to do this. See the `toolhead` example for more ideas.
-      size:
-        x: 328.0
-        'y': 235.1875
+    value:
+      CommentNode:
+        comment: |-
+          Provide the search results as context.
+          
+          There are other ways to do this. See the `toolhead` example for more ideas.
+        size:
+          x: 328
+          y: 235.1875
     pos:
       x: 2365.1125
-      'y': -583.27234
+      y: -583.27234
     open: true
   19:
-    value: !Output
-      label: query.txt
+    value:
+      OutputNode:
+        label: query.txt
     pos:
       x: 1098.1543
-      'y': 604.3442
+      y: 604.3442
     open: true
   20:
-    value: !Output
-      label: results.json
+    value:
+      OutputNode:
+        label: results.json
     pos:
       x: 2441.9268
-      'y': 587.18317
+      y: 587.18317
     open: true
   21:
-    value: !Comment
-      comment: |2-
-
-        Even though agents are capable of calling tools directly or generating tool calls, the control and specificity of this method can give faster and more sensible results in many circumstances.
-
-        The trade-off is that it requires more design by the workflow author and does not generalize well.
-      size:
-        x: 552.0
-        'y': 355.78125
+    value:
+      CommentNode:
+        comment: |-
+          
+          Even though agents are capable of calling tools directly or generating tool calls, the control and specificity of this method can give faster and more sensible results in many circumstances.
+          
+          The trade-off is that it requires more design by the workflow author and does not generalize well.
+        size:
+          x: 552
+          y: 355.78125
     pos:
       x: 795.0218
-      'y': -784.3087
+      y: -784.3087
     open: true
   22:
-    value: !Comment
-      comment: |-
-        This workflow does not use the global prompt.
-
-        You should notify users in the description when doing something similar.
-      size:
-        x: 316.0
-        'y': 218.84375
+    value:
+      CommentNode:
+        comment: |-
+          This workflow does not use the global prompt.
+          
+          You should notify users in the description when doing something similar.
+        size:
+          x: 316
+          y: 218.84375
     pos:
       x: -353.02386
-      'y': 126.45344
+      y: 126.45344
     open: true
 wires:
-- out_pin:
-    node: 0
-    output: 0
-  in_pin:
-    node: 2
-    input: 1
-- out_pin:
-    node: 0
-    output: 1
-  in_pin:
-    node: 2
-    input: 2
-- out_pin:
-    node: 0
-    output: 2
-  in_pin:
-    node: 4
-    input: 0
-- out_pin:
-    node: 2
-    output: 0
-  in_pin:
-    node: 3
-    input: 0
-- out_pin:
-    node: 2
-    output: 0
-  in_pin:
-    node: 13
-    input: 0
-- out_pin:
-    node: 3
-    output: 1
-  in_pin:
-    node: 7
-    input: 0
-- out_pin:
-    node: 3
-    output: 1
-  in_pin:
-    node: 19
-    input: 0
-- out_pin:
-    node: 4
-    output: 0
-  in_pin:
-    node: 3
-    input: 1
-- out_pin:
-    node: 4
-    output: 0
-  in_pin:
-    node: 10
-    input: 0
-- out_pin:
-    node: 4
-    output: 0
-  in_pin:
-    node: 12
-    input: 1
-- out_pin:
-    node: 6
-    output: 0
-  in_pin:
-    node: 3
-    input: 2
-- out_pin:
-    node: 6
-    output: 0
-  in_pin:
-    node: 12
-    input: 2
-- out_pin:
-    node: 7
-    output: 0
-  in_pin:
-    node: 8
-    input: 1
-- out_pin:
-    node: 8
-    output: 0
-  in_pin:
-    node: 10
-    input: 3
-- out_pin:
-    node: 9
-    output: 0
-  in_pin:
-    node: 10
-    input: 1
-- out_pin:
-    node: 10
-    output: 2
-  in_pin:
-    node: 11
-    input: 0
-- out_pin:
-    node: 10
-    output: 2
-  in_pin:
-    node: 14
-    input: 1
-- out_pin:
-    node: 10
-    output: 2
-  in_pin:
-    node: 20
-    input: 0
-- out_pin:
-    node: 12
-    output: 0
-  in_pin:
-    node: 1
-    input: 0
-- out_pin:
-    node: 12
-    output: 1
-  in_pin:
-    node: 15
-    input: 0
-- out_pin:
-    node: 13
-    output: 0
-  in_pin:
-    node: 14
-    input: 0
-- out_pin:
-    node: 14
-    output: 0
-  in_pin:
-    node: 12
-    input: 0
+  - out_pin:
+      node: 0
+      output: 0
+    in_pin:
+      node: 2
+      input: 1
+  - out_pin:
+      node: 0
+      output: 1
+    in_pin:
+      node: 2
+      input: 2
+  - out_pin:
+      node: 0
+      output: 2
+    in_pin:
+      node: 4
+      input: 0
+  - out_pin:
+      node: 2
+      output: 0
+    in_pin:
+      node: 3
+      input: 0
+  - out_pin:
+      node: 2
+      output: 0
+    in_pin:
+      node: 13
+      input: 0
+  - out_pin:
+      node: 3
+      output: 1
+    in_pin:
+      node: 7
+      input: 0
+  - out_pin:
+      node: 3
+      output: 1
+    in_pin:
+      node: 19
+      input: 0
+  - out_pin:
+      node: 4
+      output: 0
+    in_pin:
+      node: 3
+      input: 1
+  - out_pin:
+      node: 4
+      output: 0
+    in_pin:
+      node: 10
+      input: 0
+  - out_pin:
+      node: 4
+      output: 0
+    in_pin:
+      node: 12
+      input: 1
+  - out_pin:
+      node: 6
+      output: 0
+    in_pin:
+      node: 3
+      input: 2
+  - out_pin:
+      node: 6
+      output: 0
+    in_pin:
+      node: 12
+      input: 2
+  - out_pin:
+      node: 7
+      output: 0
+    in_pin:
+      node: 8
+      input: 1
+  - out_pin:
+      node: 8
+      output: 0
+    in_pin:
+      node: 10
+      input: 3
+  - out_pin:
+      node: 9
+      output: 0
+    in_pin:
+      node: 10
+      input: 1
+  - out_pin:
+      node: 10
+      output: 2
+    in_pin:
+      node: 11
+      input: 0
+  - out_pin:
+      node: 10
+      output: 2
+    in_pin:
+      node: 14
+      input: 1
+  - out_pin:
+      node: 10
+      output: 2
+    in_pin:
+      node: 20
+      input: 0
+  - out_pin:
+      node: 12
+      output: 0
+    in_pin:
+      node: 1
+      input: 0
+  - out_pin:
+      node: 12
+      output: 1
+    in_pin:
+      node: 15
+      input: 0
+  - out_pin:
+      node: 13
+      output: 0
+    in_pin:
+      node: 14
+      input: 0
+  - out_pin:
+      node: 14
+      output: 0
+    in_pin:
+      node: 12
+      input: 0
 description: |-
   #no-prompt
   Example of uses multiple agents in a chain.
-
+  
   Uses one simple agent to create a query for a search tool.
-
+  
   Then feeds the search results to another agent to perform retrieval augmented generation (RAG).

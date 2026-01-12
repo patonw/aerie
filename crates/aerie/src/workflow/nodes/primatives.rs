@@ -11,7 +11,7 @@ use crate::{
     ChatContent,
     ui::{AppEvent, resizable_frame, shortcuts::squelch, tiles::chat::render_message_width},
     utils::{message_party, message_text},
-    workflow::{GraphId, WorkflowError},
+    workflow::{FlexNode, GraphId, WorkflowError},
 };
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
@@ -24,6 +24,9 @@ pub struct Number {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     integer: bool,
 }
+
+#[typetag::serde]
+impl FlexNode for Number {}
 
 impl DynNode for Number {
     fn out_kind(&self, _out_pin: usize) -> ValueKind {
@@ -89,6 +92,9 @@ pub struct Text {
     pub size: Option<crate::utils::EVec2>,
 }
 
+#[typetag::serde]
+impl FlexNode for Text {}
+
 impl DynNode for Text {
     fn value(&self, _out_pin: usize) -> Value {
         Value::Text(self.value.clone())
@@ -152,6 +158,9 @@ pub struct Preview {
     #[serde(default)]
     pub uuid: GraphId,
 }
+
+#[typetag::serde]
+impl FlexNode for Preview {}
 
 impl std::hash::Hash for Preview {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -257,6 +266,9 @@ pub struct OutputNode {
     label: String,
 }
 
+#[typetag::serde]
+impl FlexNode for OutputNode {}
+
 impl DynNode for OutputNode {
     fn priority(&self) -> usize {
         9999
@@ -322,6 +334,9 @@ impl UiNode for OutputNode {
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Panic {}
+
+#[typetag::serde]
+impl FlexNode for Panic {}
 
 impl DynNode for Panic {
     fn priority(&self) -> usize {

@@ -19,7 +19,7 @@ use crate::{
     ChatContent, ToolSelector,
     ui::{resizable_frame, shortcuts::squelch},
     utils::{CowExt as _, extract_json, message_text},
-    workflow::WorkflowError,
+    workflow::{FlexNode, WorkflowError},
 };
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
@@ -35,6 +35,9 @@ pub struct ChatNode {
 
     pub size: Option<crate::utils::EVec2>,
 }
+
+#[typetag::serde]
+impl FlexNode for ChatNode {}
 
 impl DynNode for ChatNode {
     fn inputs(&self) -> usize {
@@ -251,6 +254,9 @@ pub struct StructuredChat {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub extract: bool,
 }
+
+#[typetag::serde]
+impl FlexNode for StructuredChat {}
 
 // outputs: chat, message, structured data
 impl DynNode for StructuredChat {

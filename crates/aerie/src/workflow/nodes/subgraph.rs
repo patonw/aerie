@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
 use crate::workflow::{
-    DynNode, ShadowGraph, UiNode, Value, ValueKind, WorkNode, WorkflowError, runner::WorkflowRunner,
+    DynNode, FlexNode, ShadowGraph, UiNode, Value, ValueKind, WorkNode, WorkflowError,
+    runner::WorkflowRunner,
 };
 
 // "serializing nested enums in YAML is not supported yet"
@@ -36,6 +37,9 @@ pub struct Subgraph {
 
     pub graph: ShadowGraph<WorkNode>,
 }
+
+#[typetag::serde]
+impl FlexNode for Subgraph {}
 
 impl Default for Subgraph {
     fn default() -> Self {

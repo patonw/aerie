@@ -10,7 +10,7 @@ use crate::{
     ChatContent, ToolProvider, ToolSelector,
     config::Ternary,
     ui::{resizable_frame, resizable_frame_opt, shortcuts::squelch},
-    workflow::WorkflowError,
+    workflow::{FlexNode, WorkflowError},
 };
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +22,9 @@ pub struct Tools {
 
     pub size: Option<crate::utils::EVec2>,
 }
+
+#[typetag::serde]
+impl FlexNode for Tools {}
 
 impl DynNode for Tools {
     fn inputs(&self) -> usize {
@@ -175,6 +178,9 @@ pub struct AgentNode {
 
     pub size: Option<crate::utils::EVec2>,
 }
+
+#[typetag::serde]
+impl FlexNode for AgentNode {}
 
 impl DynNode for AgentNode {
     fn inputs(&self) -> usize {
@@ -405,6 +411,9 @@ pub struct ChatContext {
     pub size: Option<crate::utils::EVec2>,
 }
 
+#[typetag::serde]
+impl FlexNode for ChatContext {}
+
 impl DynNode for ChatContext {
     fn inputs(&self) -> usize {
         2
@@ -534,6 +543,9 @@ impl UiNode for ChatContext {
 pub struct InvokeTool {
     pub tool_name: String,
 }
+
+#[typetag::serde]
+impl FlexNode for InvokeTool {}
 
 impl DynNode for InvokeTool {
     fn inputs(&self) -> usize {

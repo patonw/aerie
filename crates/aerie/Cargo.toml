@@ -83,3 +83,13 @@ dotenvy = { version = "0.15.7", features = ["clap"] }
 humantime = "2.3.0"
 enum-assoc = "1.3.0"
 enum-iterator = "2.3.0"
+typetag = "0.2.21"
+downcast-rs = "2.0.2"
+dyn-eq = "0.1.3"
+saphyr = { version = "0.0.6", optional = true }
+dyn-clone = "1.0.20"
+dyn-hash = "1.0.0"
+
+[features]
+default = []
+migration = ["dep:saphyr"]

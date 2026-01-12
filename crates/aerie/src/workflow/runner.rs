@@ -11,7 +11,10 @@ use std::{
 };
 use typed_builder::TypedBuilder;
 
-use crate::workflow::{ShadowGraph, ValueKind, Wire, WorkflowError, nodes::WorkNodeKind};
+use crate::workflow::{
+    ShadowGraph, ValueKind, Wire, WorkflowError,
+    nodes::{Fallback, Select},
+};
 
 use super::{GraphId, RunContext, Value, WorkNode};
 
@@ -262,7 +265,7 @@ impl WorkflowRunner {
 
         tracing::debug!(
             "Preparing to execute node {node_id:?}: {}",
-            &snarl[node_id].kind()
+            snarl[node_id].kind(),
         );
 
         let single_out = snarl[node_id].as_dyn().outputs() == 1;
@@ -475,25 +478,22 @@ impl WorkflowRunner {
                 };
             } else {
                 // Unnecessary sanity checking
-                match snarl[node_id].kind() {
-                    WorkNodeKind::Fallback if *in_pin == 0 => {
-                        tracing::debug!("Fallback node fail pin {in_pin:?}");
-                    }
-                    WorkNodeKind::Select => {
-                        tracing::debug!("Select node empty pin {in_pin:?}");
-                    }
-                    _ => {
-                        tracing::warn!(
-                            "Falling back on legacy input value for {:?} pin #{:?}",
-                            snarl[node_id].kind(),
-                            in_pin
-                        );
+                let snode = &snarl[node_id];
+                if snode.as_node::<Fallback>().is_some() {
+                    tracing::debug!("Fallback node fail pin {in_pin:?}");
+                } else if snode.as_node::<Select>().is_some() {
+                    tracing::debug!("Select node empty pin {in_pin:?}");
+                } else {
+                    tracing::warn!(
+                        "Falling back on legacy input value for {:?} pin #{:?}",
+                        snarl[node_id].kind(),
+                        in_pin
+                    );
 
-                        let other = snarl[remote.node].as_dyn();
-                        let value = other.value(remote.output);
+                    let other = snarl[remote.node].as_dyn();
+                    let value = other.value(remote.output);
 
-                        inputs[*in_pin] = Some(value);
-                    }
+                    inputs[*in_pin] = Some(value);
                 }
             }
         }

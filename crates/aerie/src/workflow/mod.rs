@@ -1,5 +1,9 @@
 use arc_swap::ArcSwap;
 use decorum::{E32, E64};
+use downcast_rs::{Downcast, impl_downcast};
+use dyn_clone::DynClone;
+use dyn_eq::DynEq;
+use dyn_hash::DynHash;
 use egui::{Color32, Stroke};
 use egui_snarl::{
     InPinId, Node as SnarlNode, NodeId, OutPinId, Snarl,
@@ -357,7 +361,7 @@ impl AsRef<Uuid> for GraphId {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowGraph<T>
 where
-    T: Clone + PartialEq + Debug,
+    T: Clone + Hash + PartialEq + Debug,
 {
     #[serde(default)]
     pub uuid: GraphId,
@@ -379,7 +383,7 @@ where
     pub finish: Option<NodeId>,
 }
 
-impl<T: Clone + PartialEq + Debug> ShadowGraph<T> {
+impl<T: Clone + Hash + PartialEq + Debug> ShadowGraph<T> {
     pub fn from_snarl(snarl: &Snarl<T>) -> Self {
         let mut baseline = Self::empty();
 
@@ -425,7 +429,7 @@ impl TryFrom<ShadowGraph<WorkNode>> for Snarl<WorkNode> {
 
 impl<T> ShadowGraph<T>
 where
-    T: PartialEq + Clone + std::fmt::Debug,
+    T: PartialEq + Clone + Hash + std::fmt::Debug,
 {
     pub fn empty() -> Self {
         Self {
@@ -703,17 +707,19 @@ where
 impl ShadowGraph<WorkNode> {
     pub fn repair(&self) -> Self {
         let mut target = self.clone();
-        if let Some(id) = self.nodes.iter().find_map(|(id, n)| match &n.value {
-            WorkNode::Start(_) => Some(id),
-            _ => None,
-        }) {
+        if let Some(id) = self
+            .nodes
+            .iter()
+            .find_map(|(id, n)| if n.value.is_start() { Some(id) } else { None })
+        {
             target.start = Some(*id);
         }
 
-        if let Some(id) = self.nodes.iter().find_map(|(id, n)| match &n.value {
-            WorkNode::Finish(_) => Some(id),
-            _ => None,
-        }) {
+        if let Some(id) = self
+            .nodes
+            .iter()
+            .find_map(|(id, n)| if n.value.is_finish() { Some(id) } else { None })
+        {
             target.finish = Some(*id);
         }
 
@@ -729,13 +735,13 @@ impl ShadowGraph<WorkNode> {
 
     pub fn start_node(&self) -> Option<&Start> {
         if let Some(node_id) = &self.start
-            && let Some(WorkNode::Start(node)) = self.nodes.get(node_id).map(|n| &n.value)
+            && let Some(node) = self
+                .nodes
+                .get(node_id)
+                .and_then(|n| n.value.as_node::<Start>())
         {
             Some(node)
-        } else if let Some(node) = self.nodes.values().find_map(|n| match &n.value {
-            WorkNode::Start(node) => Some(node),
-            _ => None,
-        }) {
+        } else if let Some(node) = self.nodes.values().find_map(|n| n.value.as_node::<Start>()) {
             Some(node)
         } else {
             None
@@ -744,13 +750,17 @@ impl ShadowGraph<WorkNode> {
 
     pub fn finish_node(&self) -> Option<&Finish> {
         if let Some(node_id) = &self.finish
-            && let Some(WorkNode::Finish(node)) = self.nodes.get(node_id).map(|n| &n.value)
+            && let Some(node) = self
+                .nodes
+                .get(node_id)
+                .and_then(|n| n.value.as_node::<Finish>())
         {
             Some(node)
-        } else if let Some(node) = self.nodes.values().find_map(|n| match &n.value {
-            WorkNode::Finish(node) => Some(node),
-            _ => None,
-        }) {
+        } else if let Some(node) = self
+            .nodes
+            .values()
+            .find_map(|n| n.value.as_node::<Finish>())
+        {
             Some(node)
         } else {
             None
@@ -927,6 +937,16 @@ pub trait UiNode: DynNode {
     }
 }
 
+#[typetag::serde]
+pub trait FlexNode:
+    Downcast + DynNode + UiNode + Debug + DynHash + DynEq + DynClone + Send + Sync
+{
+}
+impl_downcast!(FlexNode);
+dyn_eq::eq_trait_object!(FlexNode);
+dyn_clone::clone_trait_object!(FlexNode);
+dyn_hash::hash_trait_object!(FlexNode);
+
 #[derive(Debug, Error, Kinded)]
 #[kinded(derive(Hash, Serialize, Deserialize))]
 pub enum WorkflowError {
@@ -1001,17 +1021,14 @@ impl From<anyhow::Error> for WorkflowError {
 pub fn fixup_workflow(mut snarl: Snarl<WorkNode>) -> Snarl<WorkNode> {
     tracing::debug!("Examining graph {snarl:?}");
 
-    if snarl.nodes().count() < 1 || !snarl.nodes().any(|n| matches!(n, WorkNode::Start(_))) {
+    if snarl.nodes().count() < 1 || !snarl.nodes().any(|n| n.is_start()) {
         tracing::info!("Inserting missing start node");
-        snarl.insert_node(egui::pos2(0.0, 0.0), WorkNode::Start(Default::default()));
+        snarl.insert_node(egui::pos2(0.0, 0.0), Start::default().into());
     }
 
-    if !snarl.nodes().any(|n| matches!(n, WorkNode::Finish(_))) {
+    if !snarl.nodes().any(|n| n.is_finish()) {
         tracing::info!("Inserting missing finish node");
-        snarl.insert_node(
-            egui::pos2(1000.0, 0.0),
-            WorkNode::Finish(Default::default()),
-        );
+        snarl.insert_node(egui::pos2(1000.0, 0.0), Finish::default().into());
     }
 
     snarl

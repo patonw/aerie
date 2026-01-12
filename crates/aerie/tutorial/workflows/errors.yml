@@ -1,286 +1,306 @@
+---
 nodes:
   0:
-    value: !Start {}
+    value:
+      Start: {}
     pos:
       x: -507.2104
-      'y': 222.65314
+      y: 222.65314
     open: true
   1:
-    value: !Finish {}
+    value:
+      Finish: {}
     pos:
       x: 1672.7484
-      'y': -653.3558
+      y: -653.3558
     open: true
   2:
-    value: !ParseJson
-      text: ''
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      ParseJson:
+        text: ""
+        size:
+          x: 300
+          y: 150
     pos:
       x: -970.4092
-      'y': -102.7009
+      y: -102.7009
     open: true
   3:
-    value: !Fallback
-      kinds:
-      - Chat
+    value:
+      Fallback:
+        kinds:
+          - Chat
     pos:
       x: 147.17049
-      'y': 23.102354
+      y: 23.102354
     open: true
   4:
-    value: !Chat
-      prompt: Hello, how are you?
-      size:
-        x: 286.8125
-        'y': 123.375
+    value:
+      ChatNode:
+        prompt: "Hello, how are you?"
+        size:
+          x: 286.8125
+          y: 123.375
     pos:
       x: 657.3336
-      'y': -10.301141
+      y: -10.301141
     open: true
   5:
-    value: !Comment
-      comment: |-
-        Fallback branch finishes first (since the main branch never will).
-
-        It's value is passed through to the Preview
-      size:
-        x: 363.0
-        'y': 225.59375
+    value:
+      CommentNode:
+        comment: |-
+          Fallback branch finishes first (since the main branch never will).
+          
+          It's value is passed through to the Preview
+        size:
+          x: 363
+          y: 225.59375
     pos:
       x: 1216.2687
-      'y': -24.122234
+      y: -24.122234
     open: true
   6:
-    value: !Select
-      count: 2
-      kind: Chat
+    value:
+      Select:
+        count: 2
+        kind: Chat
     pos:
       x: 1255.3458
-      'y': -417.47318
+      y: -417.47318
     open: true
   7:
-    value: !Comment
-      comment: |-
-        This never runs because the schema fails to parse.
-
-        Otherwise it would panic on the disconnected agent pin.
-      size:
-        x: 343.0
-        'y': 209.71875
+    value:
+      CommentNode:
+        comment: |-
+          This never runs because the schema fails to parse.
+          
+          Otherwise it would panic on the disconnected agent pin.
+        size:
+          x: 343
+          y: 209.71875
     pos:
       x: 607.94116
-      'y': -1149.1646
+      y: -1149.1646
     open: true
   8:
-    value: !Structured
-      prompt: Tell me a an interesting fact about eaglets.
-      size:
-        x: 300.0
-        'y': 150.0
-      retries: 1
+    value:
+      StructuredChat:
+        prompt: Tell me a an interesting fact about eaglets.
+        size:
+          x: 300
+          y: 150
+        retries: 1
     pos:
       x: 608.3228
-      'y': -772.028
+      y: -772.028
     open: true
   9:
-    value: !Comment
-      comment: After running, try clicking on the error icon on the node to see more details.
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CommentNode:
+        comment: "After running, try clicking on the error icon on the node to see more details."
+        size:
+          x: 300
+          y: 150
     pos:
       x: -983.6636
-      'y': 183.16895
+      y: 183.16895
     open: true
   10:
-    value: !Demote
-      priority: 4000
-      kind: Failure
+    value:
+      Demote:
+        priority: 4000
+        kind: Failure
     pos:
       x: -393.71295
-      'y': 656.45026
+      y: 656.45026
     open: true
   11:
-    value: !Comment
-      comment: The fallback node mirrors its inputs downstream, when it receives a failure from upstream.
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CommentNode:
+        comment: "The fallback node mirrors its inputs downstream, when it receives a failure from upstream."
+        size:
+          x: 300
+          y: 150
     pos:
       x: 143.11205
-      'y': 288.91705
+      y: 288.91705
     open: true
   12:
-    value: !Preview
-      size:
-        x: 507.375
-        'y': 379.09375
+    value:
+      Preview:
+        size:
+          x: 507.375
+          y: 379.09375
     pos:
       x: 1672.7096
-      'y': -231.50035
+      y: -231.50035
     open: true
   13:
-    value: !MaskChat
-      limit: 2
+    value:
+      MaskHistory:
+        limit: 2
     pos:
       x: 1681.4609
-      'y': -454.2721
+      y: -454.2721
     open: true
   14:
-    value: !Comment
-      comment: |-
-        Even though a user can manually enter JSON into the node, we typically expect JSON input come from external sources like an LLM.
-
-        As such, it is convenient to allow failures to be caught.
-
-        Future versions will have syntax highlighting in the input field to help end-users see errors during editing.
-      size:
-        x: 389.0
-        'y': 411.34375
+    value:
+      CommentNode:
+        comment: |-
+          Even though a user can manually enter JSON into the node, we typically expect JSON input come from external sources like an LLM.
+          
+          As such, it is convenient to allow failures to be caught.
+          
+          Future versions will have syntax highlighting in the input field to help end-users see errors during editing.
+        size:
+          x: 389
+          y: 411.34375
     pos:
       x: -1026.4948
-      'y': -661.4541
+      y: -661.4541
     open: true
   15:
-    value: !Text
-      value: |-
-        abc 123
-
-        {This is invalid: "JSON", }
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Text:
+        value: |-
+          abc 123
+          
+          {This is invalid: "JSON", }
+        size:
+          x: 300
+          y: 150
     pos:
       x: -1459.394
-      'y': -270.8635
+      y: -270.8635
     open: true
   16:
-    value: !Panic {}
+    value:
+      Panic: {}
     pos:
       x: 125.027985
-      'y': 713.0884
+      y: 713.0884
     open: true
   17:
-    value: !Comment
-      comment: |-
-        Try enabling this node and running with different priority levels.
-
-        Compare how they affect which nodes are left un-executed.
-      size:
-        x: 314.0625
-        'y': 230.9375
+    value:
+      CommentNode:
+        comment: |-
+          Try enabling this node and running with different priority levels.
+          
+          Compare how they affect which nodes are left un-executed.
+        size:
+          x: 314.0625
+          y: 230.9375
     pos:
       x: -349.92783
-      'y': 897.3373
+      y: 897.3373
     open: true
   18:
-    value: !Agent {}
+    value:
+      AgentNode: {}
     pos:
       x: 86.91185
-      'y': -347.55154
+      y: -347.55154
     open: true
 wires:
-- out_pin:
-    node: 0
-    output: 0
-  in_pin:
-    node: 18
-    input: 1
-- out_pin:
-    node: 0
-    output: 1
-  in_pin:
-    node: 18
-    input: 2
-- out_pin:
-    node: 0
-    output: 2
-  in_pin:
-    node: 3
-    input: 1
-- out_pin:
-    node: 0
-    output: 2
-  in_pin:
-    node: 8
-    input: 1
-- out_pin:
-    node: 2
-    output: 0
-  in_pin:
-    node: 8
-    input: 2
-- out_pin:
-    node: 2
-    output: 1
-  in_pin:
-    node: 3
-    input: 0
-- out_pin:
-    node: 2
-    output: 1
-  in_pin:
-    node: 10
-    input: 0
-- out_pin:
-    node: 3
-    output: 0
-  in_pin:
-    node: 4
-    input: 1
-- out_pin:
-    node: 4
-    output: 0
-  in_pin:
-    node: 6
-    input: 1
-- out_pin:
-    node: 6
-    output: 0
-  in_pin:
-    node: 1
-    input: 0
-- out_pin:
-    node: 6
-    output: 0
-  in_pin:
-    node: 13
-    input: 0
-- out_pin:
-    node: 8
-    output: 0
-  in_pin:
-    node: 6
-    input: 0
-- out_pin:
-    node: 10
-    output: 0
-  in_pin:
-    node: 16
-    input: 0
-- out_pin:
-    node: 13
-    output: 0
-  in_pin:
-    node: 12
-    input: 0
-- out_pin:
-    node: 15
-    output: 0
-  in_pin:
-    node: 2
-    input: 0
-- out_pin:
-    node: 18
-    output: 0
-  in_pin:
-    node: 4
-    input: 0
+  - out_pin:
+      node: 0
+      output: 0
+    in_pin:
+      node: 18
+      input: 1
+  - out_pin:
+      node: 0
+      output: 1
+    in_pin:
+      node: 18
+      input: 2
+  - out_pin:
+      node: 0
+      output: 2
+    in_pin:
+      node: 3
+      input: 1
+  - out_pin:
+      node: 0
+      output: 2
+    in_pin:
+      node: 8
+      input: 1
+  - out_pin:
+      node: 2
+      output: 0
+    in_pin:
+      node: 8
+      input: 2
+  - out_pin:
+      node: 2
+      output: 1
+    in_pin:
+      node: 3
+      input: 0
+  - out_pin:
+      node: 2
+      output: 1
+    in_pin:
+      node: 10
+      input: 0
+  - out_pin:
+      node: 3
+      output: 0
+    in_pin:
+      node: 4
+      input: 1
+  - out_pin:
+      node: 4
+      output: 0
+    in_pin:
+      node: 6
+      input: 1
+  - out_pin:
+      node: 6
+      output: 0
+    in_pin:
+      node: 1
+      input: 0
+  - out_pin:
+      node: 6
+      output: 0
+    in_pin:
+      node: 13
+      input: 0
+  - out_pin:
+      node: 8
+      output: 0
+    in_pin:
+      node: 6
+      input: 0
+  - out_pin:
+      node: 10
+      output: 0
+    in_pin:
+      node: 16
+      input: 0
+  - out_pin:
+      node: 13
+      output: 0
+    in_pin:
+      node: 12
+      input: 0
+  - out_pin:
+      node: 15
+      output: 0
+    in_pin:
+      node: 2
+      input: 0
+  - out_pin:
+      node: 18
+      output: 0
+    in_pin:
+      node: 4
+      input: 0
 disabled:
-- 10
+  - 10
 description: |-
   Demonstrates error handling using Fallback and Select nodes.
-
+  
   Try disconnecting the failure pin from Parse JSON and running. The entire workflow should halt on the error.

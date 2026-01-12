@@ -12,13 +12,16 @@ use crate::{
     ChatContent,
     ui::{resizable_frame, shortcuts::squelch},
     utils::EVec2,
-    workflow::WorkflowError,
+    workflow::{FlexNode, WorkflowError},
 };
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
 pub struct GraftHistory {}
+
+#[typetag::serde]
+impl FlexNode for GraftHistory {}
 
 impl DynNode for GraftHistory {
     fn inputs(&self) -> usize {
@@ -94,6 +97,9 @@ impl UiNode for GraftHistory {
 pub struct MaskHistory {
     pub limit: usize,
 }
+
+#[typetag::serde]
+impl FlexNode for MaskHistory {}
 
 impl DynNode for MaskHistory {
     fn inputs(&self) -> usize {
@@ -222,6 +228,9 @@ pub struct CreateMessage {
     content: String,
     size: Option<EVec2>,
 }
+
+#[typetag::serde]
+impl FlexNode for CreateMessage {}
 
 impl DynNode for CreateMessage {
     fn in_kinds(&'_ self, _in_pin: usize) -> Cow<'_, [ValueKind]> {
@@ -379,6 +388,9 @@ impl UiNode for CreateMessage {
 pub struct ExtendHistory {
     pub count: usize,
 }
+
+#[typetag::serde]
+impl FlexNode for ExtendHistory {}
 
 impl DynNode for ExtendHistory {
     fn inputs(&self) -> usize {

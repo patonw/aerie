@@ -20,7 +20,12 @@ use crate::{
     utils::ErrorDistiller as _,
     workflow::{
         EditContext, GraphId, MetaNode, ShadowGraph, WorkNode,
-        nodes::{CommentNode, Subgraph},
+        nodes::{
+            AgentNode, ChatContext, ChatNode, CommentNode, CreateMessage, Demote, ExtendHistory,
+            Fallback, GatherJson, GraftHistory, InvokeTool, MaskHistory, Matcher, Number,
+            OutputNode, Panic, ParseJson, Preview, Select, StructuredChat, Subgraph, TemplateNode,
+            Text, Tools, TransformJson, ValidateJson,
+        },
         runner::{ExecState, NodeStateMap},
     },
 };
@@ -156,7 +161,7 @@ impl ViewStack {
             anyhow::bail!("Not a subgraph");
         }
 
-        let WorkNode::Subgraph(subgraph) = graph else {
+        let Some(subgraph) = graph.0.downcast_ref::<Subgraph>() else {
             anyhow::bail!("Could not extract subgraph");
         };
 
@@ -203,8 +208,8 @@ impl ViewStack {
                     "Child node {child_id:?} of {:?} is not a subgraph",
                     parent_graph.uuid
                 ),
-                Some(meta) => match &meta.value {
-                    WorkNode::Subgraph(node) => {
+                Some(meta) => {
+                    if let Some(node) = meta.value.as_node::<Subgraph>() {
                         if !node.graph.fast_eq(&child_graph) {
                             // Replace the subgraph in the parent's node
                             let node = Subgraph {
@@ -213,7 +218,7 @@ impl ViewStack {
                             };
 
                             let meta = MetaNode {
-                                value: WorkNode::Subgraph(node),
+                                value: node.into(),
                                 ..meta.clone()
                             };
 
@@ -226,9 +231,10 @@ impl ViewStack {
                             *parent_graph = target.clone();
                         }
                         child_graph = target;
+                    } else {
+                        unreachable!()
                     }
-                    _ => unreachable!(),
-                },
+                }
                 None => anyhow::bail!(
                     "No such subgraph {child_id:?} in parent graph {:?}",
                     parent_graph.uuid
@@ -398,8 +404,8 @@ impl WorkflowViewer {
             }
         } else {
             for node in &targets {
-                let can_disable =
-                    !matches!(snarl[*node], WorkNode::Comment(_)) && !snarl[*node].is_protected();
+                let can_disable = snarl[*node].0.downcast_ref::<CommentNode>().is_none()
+                    && !snarl[*node].is_protected();
                 if can_disable {
                     self.shadow = self.shadow.disable_node(*node);
                 }
@@ -421,7 +427,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         _outputs: &[egui_snarl::OutPin],
         snarl: &Snarl<WorkNode>,
     ) -> egui::Frame {
-        if matches!(snarl[node], WorkNode::Comment(_)) {
+        if snarl[node].0.downcast_ref::<CommentNode>().is_some() {
             default.fill(CommentNode::bg_color())
         } else {
             default
@@ -436,7 +442,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         _outputs: &[egui_snarl::OutPin],
         snarl: &Snarl<WorkNode>,
     ) -> egui::Frame {
-        if matches!(snarl[node], WorkNode::Comment(_)) {
+        if snarl[node].0.downcast_ref::<CommentNode>().is_some() {
             let node_info = snarl.get_node_info(node).unwrap();
             if node_info.open {
                 default.fill(CommentNode::bg_color())
@@ -458,7 +464,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
     ) {
         let node_state = self.node_state.view(&self.shadow.uuid);
 
-        if matches!(snarl[node], WorkNode::Comment(_)) {
+        if snarl[node].0.downcast_ref::<CommentNode>().is_some() {
             return;
         }
 
@@ -657,142 +663,142 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
     fn show_graph_menu(&mut self, pos: egui::Pos2, ui: &mut Ui, snarl: &mut Snarl<WorkNode>) {
         ui.menu_button("Control", |ui| {
             if ui.button("Fallback").clicked() {
-                snarl.insert_node(pos, WorkNode::Fallback(Default::default()));
+                snarl.insert_node(pos, Fallback::default().into());
                 ui.close();
             }
 
             if ui.button("Matcher").clicked() {
-                snarl.insert_node(pos, WorkNode::Matcher(Default::default()));
+                snarl.insert_node(pos, Matcher::default().into());
                 ui.close();
             }
 
             if ui.button("Select").clicked() {
-                snarl.insert_node(pos, WorkNode::Select(Default::default()));
+                snarl.insert_node(pos, Select::default().into());
                 ui.close();
             }
 
             if ui.button("Demote").clicked() {
-                snarl.insert_node(pos, WorkNode::Demote(Default::default()));
+                snarl.insert_node(pos, Demote::default().into());
                 ui.close();
             }
 
             if ui.button("Panic").clicked() {
-                snarl.insert_node(pos, WorkNode::Panic(Default::default()));
+                snarl.insert_node(pos, Panic::default().into());
                 ui.close();
             }
         });
 
         ui.menu_button("Value", |ui| {
             if ui.button("Number").clicked() {
-                snarl.insert_node(pos, WorkNode::Number(Default::default()));
+                snarl.insert_node(pos, Number::default().into());
                 ui.close();
             }
 
             if ui.button("Plain Text").clicked() {
-                snarl.insert_node(pos, WorkNode::Text(Default::default()));
+                snarl.insert_node(pos, Text::default().into());
                 ui.close();
             }
 
             if ui.button("Template").clicked() {
-                snarl.insert_node(pos, WorkNode::TemplateNode(Default::default()));
+                snarl.insert_node(pos, TemplateNode::default().into());
                 ui.close();
             }
         });
 
         ui.menu_button("LLM", |ui| {
             if ui.button("Agent").clicked() {
-                snarl.insert_node(pos, WorkNode::Agent(Default::default()));
+                snarl.insert_node(pos, AgentNode::default().into());
                 ui.close();
             }
 
             if ui.button("Context").clicked() {
-                snarl.insert_node(pos, WorkNode::Context(Default::default()));
+                snarl.insert_node(pos, ChatContext::default().into());
                 ui.close();
             }
 
             if ui.button("Chat").clicked() {
-                snarl.insert_node(pos, WorkNode::Chat(Default::default()));
+                snarl.insert_node(pos, ChatNode::default().into());
                 ui.close();
             }
 
             if ui.button("Structured").clicked() {
-                snarl.insert_node(pos, WorkNode::Structured(Default::default()));
+                snarl.insert_node(pos, StructuredChat::default().into());
                 ui.close();
             }
         });
 
         ui.menu_button("Tools", |ui| {
             if ui.button("Select Tools").clicked() {
-                snarl.insert_node(pos, WorkNode::Tools(Default::default()));
+                snarl.insert_node(pos, Tools::default().into());
                 ui.close();
             }
             if ui.button("Invoke Tools").clicked() {
-                snarl.insert_node(pos, WorkNode::InvokeTool(Default::default()));
+                snarl.insert_node(pos, InvokeTool::default().into());
                 ui.close();
             }
         });
 
         ui.menu_button("History", |ui| {
             if ui.button("Create Message").clicked() {
-                snarl.insert_node(pos, WorkNode::CreateMessage(Default::default()));
+                snarl.insert_node(pos, CreateMessage::default().into());
                 ui.close();
             }
 
             if ui.button("Mask History").clicked() {
-                snarl.insert_node(pos, WorkNode::MaskChat(Default::default()));
+                snarl.insert_node(pos, MaskHistory::default().into());
                 ui.close();
             }
 
             if ui.button("Extend History").clicked() {
-                snarl.insert_node(pos, WorkNode::ExtendHistory(Default::default()));
+                snarl.insert_node(pos, ExtendHistory::default().into());
                 ui.close();
             }
 
             if ui.button("Side Chat").clicked() {
-                snarl.insert_node(pos, WorkNode::GraftChat(Default::default()));
+                snarl.insert_node(pos, GraftHistory::default().into());
                 ui.close();
             }
         });
 
         ui.menu_button("JSON", |ui| {
             if ui.button("Parse JSON").clicked() {
-                snarl.insert_node(pos, WorkNode::ParseJson(Default::default()));
+                snarl.insert_node(pos, ParseJson::default().into());
                 ui.close();
             }
 
             if ui.button("Gather JSON").clicked() {
-                snarl.insert_node(pos, WorkNode::GatherJson(Default::default()));
+                snarl.insert_node(pos, GatherJson::default().into());
                 ui.close();
             }
 
             if ui.button("Validate JSON").clicked() {
-                snarl.insert_node(pos, WorkNode::ValidateJson(Default::default()));
+                snarl.insert_node(pos, ValidateJson::default().into());
                 ui.close();
             }
 
             if ui.button("Transform JSON").clicked() {
-                snarl.insert_node(pos, WorkNode::TransformJson(Default::default()));
+                snarl.insert_node(pos, TransformJson::default().into());
                 ui.close();
             }
         });
 
         if ui.button("Subgraph").clicked() {
-            snarl.insert_node(pos, WorkNode::Subgraph(Default::default()));
+            snarl.insert_node(pos, Subgraph::default().into());
             ui.close();
         }
 
         if ui.button("Preview").clicked() {
-            snarl.insert_node(pos, WorkNode::Preview(Default::default()));
+            snarl.insert_node(pos, Preview::default().into());
             ui.close();
         }
 
         if ui.button("Output").clicked() {
-            snarl.insert_node(pos, WorkNode::Output(Default::default()));
+            snarl.insert_node(pos, OutputNode::default().into());
             ui.close();
         }
 
         if ui.button("Comment").clicked() {
-            let node_id = snarl.insert_node(pos, WorkNode::Comment(Default::default()));
+            let node_id = snarl.insert_node(pos, CommentNode::default().into());
 
             self.shadow = self
                 .shadow
@@ -816,7 +822,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         self.edit_ctx.current_node = node;
         self.edit_ctx.disabled = self.shadow.is_disabled(node);
 
-        let enabled = self.can_edit() || matches!(snarl[node], WorkNode::Subgraph(_));
+        let enabled = self.can_edit() || snarl[node].is_subgraph();
 
         ui.add_enabled_ui(enabled, |ui| {
             snarl[node].as_ui_mut().show_body(ui, &self.edit_ctx);
@@ -914,7 +920,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             ui.add(Hyperlink::from_label_and_url("Help", help_link).open_in_new_tab(true));
         }
 
-        if !matches!(snarl[node], WorkNode::Comment(_)) {
+        if !snarl[node].is_comment() {
             if self.shadow.is_disabled(node) {
                 if ui.button("Enable").clicked() {
                     for node in &targets {
@@ -996,7 +1002,7 @@ pub fn merge_graphs(
     let mut node_map: BTreeMap<NodeId, NodeId> = Default::default();
     let start_id = snarl
         .nodes_ids_data()
-        .find(|(_, n)| matches!(n.value, WorkNode::Start(_)))
+        .find(|(_, n)| n.value.is_start())
         .map(|(new_id, _)| new_id);
 
     for (
@@ -1010,7 +1016,7 @@ pub fn merge_graphs(
     {
         // If the start node was part of the selection, preserve connections without duplicating
         if let Some(new_id) = start_id
-            && matches!(value, WorkNode::Start(_))
+            && value.is_start()
         {
             node_map.insert(id, new_id);
         } else if !value.is_protected() {
