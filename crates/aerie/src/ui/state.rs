@@ -2,7 +2,7 @@ use arc_swap::ArcSwap;
 use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
-use egui_snarl::{NodeId, Snarl};
+use egui_snarl::NodeId;
 use egui_tiles::SimplificationOptions;
 use itertools::Itertools;
 use rmcp::model::Tool;
@@ -20,15 +20,15 @@ use std::{
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-use super::Pane;
+use super::{Pane, workflow::ViewStack};
 use crate::{
     AgentFactory, LogEntry, Settings, ToolSpec,
     chat::ChatSession,
     transmute::Transmuter,
-    ui::tiles::messages::MessageGraph,
+    ui::{AppEvent, tiles::messages::MessageGraph, workflow::WorkflowViewer},
     utils::ErrorList,
     workflow::{
-        ShadowGraph, WorkNode, fixup_workflow,
+        EditContext, PreviewData, ShadowGraph, WorkNode,
         runner::{ExecState, WorkflowRun},
         store::{WorkflowStore, WorkflowStoreDir},
     },
@@ -49,6 +49,9 @@ pub enum ToolEditorState {
 #[derive(TypedBuilder)]
 pub struct AppState {
     pub rt: tokio::runtime::Handle,
+
+    #[builder(default)]
+    pub events: Arc<super::AppEvents>,
 
     #[builder(default)]
     pub errors: ErrorList<anyhow::Error>,
@@ -98,6 +101,44 @@ pub struct AppState {
     pub transmuter: Transmuter,
 }
 
+impl AppState {
+    pub fn workflow_viewer(&self, stack: ViewStack) -> WorkflowViewer {
+        let shadow = stack.leaf().clone();
+        let running = self
+            .workflows
+            .running
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        let edit_ctx = EditContext::builder()
+            .toolbox(self.agent_factory.toolbox.clone())
+            .errors(self.errors.clone())
+            .previews(self.workflows.previews.clone())
+            .build();
+
+        WorkflowViewer::builder()
+            .edit_ctx(edit_ctx)
+            .shadow(shadow)
+            .running(running)
+            .frozen(self.workflows.frozen)
+            .node_state(self.workflows.node_state.clone())
+            .view_id(stack.view_id().with(self.workflows.switch_count))
+            .events(self.events.clone())
+            .build()
+    }
+
+    pub fn handle_events(&mut self) {
+        while let Some(event) = self.events.pop() {
+            let mut handled = false;
+
+            handled = handled || self.workflows.handle_event(&event);
+
+            if !handled {
+                tracing::warn!("Unhandled event {event:?}");
+            }
+        }
+    }
+}
+
 impl egui_tiles::Behavior<Pane> for AppState {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> WidgetText {
         match pane {
@@ -135,7 +176,11 @@ impl egui_tiles::Behavior<Pane> for AppState {
                 self.toolset_ui(ui);
             }
             Pane::Workflow => {
-                self.workflow_ui(ui);
+                if self.workflows.view_stack.is_empty() {
+                    self.workflow_ui(ui);
+                } else {
+                    self.subgraph_ui(ui);
+                }
             }
             Pane::Messages => {
                 self.message_graph(ui);
@@ -158,7 +203,7 @@ impl egui_tiles::Behavior<Pane> for AppState {
 
 /// Portion of the UI state dealing with workflows.
 pub struct WorkflowState<W: WorkflowStore> {
-    pub viewer: Option<super::workflow::WorkflowViewer>,
+    pub view_stack: ViewStack,
     pub frozen: bool,
     pub running: Arc<AtomicBool>,
     pub interrupt: Arc<AtomicBool>,
@@ -170,9 +215,6 @@ pub struct WorkflowState<W: WorkflowStore> {
 
     /// Load/save shadow graphs to disk
     pub store: W,
-
-    /// Data for the graph editor widget
-    pub snarl: Arc<tokio::sync::RwLock<Snarl<WorkNode>>>,
 
     /// The version of the current shadow graph saved to disk
     pub baseline: ShadowGraph<WorkNode>,
@@ -187,6 +229,7 @@ pub struct WorkflowState<W: WorkflowStore> {
     pub undo_stack: im::OrdMap<String, VecDeque<(SystemTime, ShadowGraph<WorkNode>)>>,
     pub redo_stack: im::OrdMap<String, VecDeque<(SystemTime, ShadowGraph<WorkNode>)>>,
 
+    pub previews: PreviewData,
     pub outputs: im::Vector<WorkflowRun>,
 }
 
@@ -197,13 +240,11 @@ impl<W: WorkflowStore> WorkflowState<W> {
             .unwrap_or("basic".to_string());
 
         let baseline: ShadowGraph<WorkNode> = store.get(edit_workflow.as_ref()).unwrap_or_default();
-        let snarl = Snarl::try_from(baseline.clone()).unwrap_or_default();
-        let snarl = fixup_workflow(snarl);
 
-        let snarl = Arc::new(tokio::sync::RwLock::new(snarl));
+        let view_stack = ViewStack::from_root(baseline.clone());
 
         Self {
-            viewer: None,
+            view_stack,
             frozen: false,
             running: Arc::new(AtomicBool::new(false)),
             interrupt: Arc::new(AtomicBool::new(false)),
@@ -211,7 +252,6 @@ impl<W: WorkflowStore> WorkflowState<W> {
             meta_edit: 0,
             renaming: None,
             store,
-            snarl: snarl.clone(),
             baseline: baseline.clone(),
             shadow: baseline.clone(),
             modtime: SystemTime::now(),
@@ -219,6 +259,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
             node_state: Default::default(),
             undo_stack: Default::default(),
             redo_stack: Default::default(),
+            previews: Default::default(),
             outputs: Default::default(),
         }
     }
@@ -250,13 +291,11 @@ impl<W: WorkflowStore> WorkflowState<W> {
             self.modtime = SystemTime::now();
         }
 
-        let snarl = Snarl::try_from(self.shadow.clone()).unwrap_or_default();
-        let snarl = fixup_workflow(snarl);
         self.frozen = false;
-        self.snarl = Arc::new(tokio::sync::RwLock::new(snarl));
         self.editing = workflow_name.to_string();
         self.renaming = None;
         self.switch_count += 1;
+        self.view_stack = ViewStack::from_root(self.shadow.clone());
     }
 
     pub fn rename(&mut self) -> anyhow::Result<()> {
@@ -395,18 +434,17 @@ impl<W: WorkflowStore> WorkflowState<W> {
                 }
             }
 
-            self.snarl = Arc::new(tokio::sync::RwLock::new(
-                Snarl::try_from(shadow.clone()).unwrap_or_default(),
-            ));
             self.shadow = shadow.clone();
             self.modtime = modtime;
             self.switch_count += 1;
+            self.view_stack.switch(shadow.clone());
             self.frozen = true;
         }
         tracing::debug!(
-            "Undid. undos={} redos={}",
+            "Undid. undos={} redos={}, path={:?}",
             undo_stack.len(),
-            redo_stack.len()
+            redo_stack.len(),
+            &self.view_stack.path
         );
     }
     pub fn redo(&mut self) {
@@ -420,13 +458,10 @@ impl<W: WorkflowStore> WorkflowState<W> {
 
         if let Some((ts, shadow)) = redo_stack.pop_front() {
             undo_stack.push_front((self.modtime, self.shadow.clone()));
-            self.snarl = Arc::new(tokio::sync::RwLock::new(
-                Snarl::try_from(shadow.clone()).unwrap_or_default(),
-            ));
-
             self.shadow = shadow.clone();
             self.modtime = ts;
             self.switch_count += 1;
+            self.view_stack.switch(shadow.clone());
             self.frozen = true;
         }
         tracing::debug!(
@@ -486,5 +521,19 @@ impl<W: WorkflowStore> WorkflowState<W> {
         self.store.save(&self.editing, self.shadow.clone()).unwrap();
 
         self.baseline = self.shadow.clone();
+    }
+
+    pub fn handle_event(&mut self, event: &AppEvent) -> bool {
+        match event {
+            AppEvent::EnterSubgraph(node_id) => {
+                self.view_stack.enter(*node_id).unwrap();
+
+                true
+            }
+            AppEvent::LeaveSubgraph => {
+                self.view_stack.exit().unwrap();
+                true
+            }
+        }
     }
 }

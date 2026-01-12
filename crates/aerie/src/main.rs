@@ -218,6 +218,8 @@ fn main() -> anyhow::Result<()> {
             tree.ui(&mut behavior, ui);
         });
 
+        behavior.handle_events();
+
         let errors = behavior.errors.load();
         if !errors.is_empty() {
             let modal = egui::Modal::new(egui::Id::new("Errors")).show(ctx, |ui| {

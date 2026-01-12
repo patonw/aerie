@@ -1,24 +1,31 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    iter,
     sync::Arc,
 };
 
+use anyhow::Context as _;
 use arc_swap::ArcSwap;
 use cached::proc_macro::cached;
-use egui::{Color32, Hyperlink, RichText, Ui, emath::TSTransform};
+use egui::{Color32, Hyperlink, RichText, Sense, Ui, emath::TSTransform};
 use egui_phosphor::regular::{CHECK_CIRCLE, HAND_PALM, HOURGLASS_MEDIUM, PLAY_CIRCLE, WARNING};
 use egui_snarl::{
     InPinId, NodeId, OutPinId, Snarl,
-    ui::{SnarlStyle, SnarlViewer, get_selected_nodes},
+    ui::{SnarlStyle, SnarlViewer, SnarlWidget, get_selected_nodes},
 };
+use im::vector;
 use typed_builder::TypedBuilder;
 
 use crate::{
     utils::ErrorDistiller as _,
     workflow::{
-        EditContext, MetaNode, ShadowGraph, WorkNode, nodes::CommentNode, runner::ExecState,
+        EditContext, MetaNode, ShadowGraph, WorkNode,
+        nodes::{CommentNode, Subgraph},
+        runner::ExecState,
     },
 };
+
+use super::AppEvents;
 
 #[cached]
 pub fn get_snarl_style() -> SnarlStyle {
@@ -38,7 +45,176 @@ pub fn get_snarl_style() -> SnarlStyle {
     }
 }
 
-#[derive(TypedBuilder)]
+#[derive(Debug, Clone, TypedBuilder)]
+pub struct ViewStack {
+    pub root_id: egui::Id,
+
+    pub path: im::Vector<NodeId>,
+
+    pub levels: im::Vector<ShadowGraph<WorkNode>>,
+}
+
+impl ViewStack {
+    pub fn new(root_graph: ShadowGraph<WorkNode>, path: impl Iterator<Item = NodeId>) -> Self {
+        let mut me = Self {
+            root_id: egui::Id::new(&root_graph.uuid),
+            path: Default::default(),
+            levels: vector![root_graph],
+        };
+
+        for id in path {
+            if me.enter(id).is_err() {
+                break;
+            }
+        }
+
+        me
+    }
+
+    pub fn from_root(root_graph: ShadowGraph<WorkNode>) -> Self {
+        Self::new(root_graph, iter::empty())
+    }
+
+    /// Replace root graph with a different version.
+    ///
+    /// Attempts to preserve path, but will navigate as far as possible
+    /// if subgraphs are absent.
+    pub fn switch(&mut self, root_graph: ShadowGraph<WorkNode>) {
+        let path = self.path.clone();
+        *self = Self::new(root_graph, path.into_iter());
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.path.is_empty()
+    }
+
+    pub fn root(&self) -> ShadowGraph<WorkNode> {
+        assert!(!self.levels.is_empty());
+        self.levels.back().cloned().unwrap()
+    }
+
+    pub fn root_snarl(&self) -> anyhow::Result<Snarl<WorkNode>> {
+        egui_snarl::Snarl::try_from(self.root())
+    }
+
+    pub fn leaf(&self) -> ShadowGraph<WorkNode> {
+        assert!(!self.levels.is_empty());
+        self.levels.front().cloned().unwrap()
+    }
+
+    pub fn leaf_snarl(&self) -> anyhow::Result<Snarl<WorkNode>> {
+        egui_snarl::Snarl::try_from(self.leaf())
+    }
+
+    pub fn view_id(&self) -> egui::Id {
+        self.root_id.with(&self.path)
+    }
+
+    pub fn exit(&mut self) -> anyhow::Result<()> {
+        if let Some(_) = self.path.pop_front()
+            && let Some(_) = self.levels.pop_front()
+        {
+            Ok(())
+        } else {
+            anyhow::bail!("stack is empty")
+        }
+    }
+
+    pub fn enter(&mut self, node: NodeId) -> anyhow::Result<()> {
+        let parent = self
+            .leaf()
+            .nodes
+            .get(&node)
+            .cloned()
+            .context("No such node in parent graph")?;
+
+        let graph = parent.value;
+        if !graph.is_subgraph() {
+            anyhow::bail!("Not a subgraph");
+        }
+
+        let WorkNode::Subgraph(subgraph) = graph else {
+            anyhow::bail!("Could not extract subgraph");
+        };
+
+        self.path.push_front(node);
+        self.levels.push_front(subgraph.graph.clone());
+
+        Ok(())
+    }
+
+    /// Cascades changes in the subgraphs up to the root
+    pub fn propagate(&mut self, shadow: ShadowGraph<WorkNode>) -> anyhow::Result<()> {
+        let mut ids = self.path.iter();
+        let mut graphs = self.levels.iter_mut();
+
+        let Some(child_graph) = graphs.next() else {
+            unreachable!()
+        };
+
+        if child_graph.fast_eq(&shadow) {
+            return Ok(());
+        }
+
+        *child_graph = shadow.clone();
+        let mut child_graph = shadow.clone();
+
+        let Some(mut child_id) = ids.next() else {
+            return Ok(());
+        };
+
+        loop {
+            let Some(parent_graph) = graphs.next() else {
+                unreachable!()
+            };
+
+            let mut target = parent_graph.clone();
+
+            match target.nodes.get(child_id) {
+                Some(meta) if !meta.value.is_subgraph() => anyhow::bail!(
+                    "Child node {child_id:?} of {:?} is not a subgraph",
+                    parent_graph.uuid
+                ),
+                Some(meta) => match &meta.value {
+                    WorkNode::Subgraph(node) => {
+                        if node.graph.fast_eq(&child_graph) {
+                            break;
+                        }
+
+                        let node = Subgraph {
+                            graph: child_graph.clone(),
+                            ..node.clone()
+                        };
+
+                        let meta = MetaNode {
+                            value: WorkNode::Subgraph(node),
+                            ..meta.clone()
+                        };
+
+                        target.nodes.insert(*child_id, meta);
+                        *parent_graph = target.clone();
+                        child_graph = target;
+                    }
+                    _ => unreachable!(),
+                },
+                None => anyhow::bail!(
+                    "No such subgraph {child_id:?} in parent graph {:?}",
+                    parent_graph.uuid
+                ),
+            }
+
+            if let Some(parent_id) = ids.next() {
+                child_id = parent_id;
+            } else {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, TypedBuilder)]
 pub struct WorkflowViewer {
     #[builder(default = egui::Id::new("default_viewer"))]
     pub view_id: egui::Id,
@@ -47,6 +223,8 @@ pub struct WorkflowViewer {
     pub transform: TSTransform,
 
     pub edit_ctx: EditContext,
+
+    pub events: Arc<AppEvents>,
 
     #[builder(default)]
     pub shadow: ShadowGraph<WorkNode>,
@@ -65,12 +243,92 @@ pub struct WorkflowViewer {
 }
 
 impl WorkflowViewer {
+    pub fn with_node_state(mut self, state: Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>>) -> Self {
+        self.node_state = state;
+        self
+    }
+
     pub fn frozen(&self) -> bool {
         self.running || self.frozen
     }
 
     pub fn can_edit(&self) -> bool {
         !self.frozen()
+    }
+
+    pub fn cast_positions(&mut self, snarl: &Snarl<WorkNode>) {
+        if self.frozen {
+            return;
+        }
+
+        let mut nodes = self.shadow.nodes.clone();
+        for (id, pos, data) in snarl.nodes_pos_ids() {
+            nodes
+                .entry(id)
+                .and_modify(|n| n.pos = pos)
+                .or_insert(MetaNode {
+                    value: data.clone(),
+                    pos,
+                    open: true,
+                });
+        }
+
+        if nodes != self.shadow.nodes {
+            self.shadow = ShadowGraph {
+                nodes,
+                ..self.shadow.clone()
+            };
+        }
+    }
+
+    pub fn handle_copy(&self, ui: &mut egui::Ui, widget: SnarlWidget) {
+        if ui.ctx().input_mut(|input| {
+            input
+                .events
+                .iter()
+                .any(|ev| matches!(ev, egui::Event::Copy))
+        }) {
+            let pos = self.transform.inverse()
+                * ui.ctx()
+                    .input(|i| i.pointer.interact_pos())
+                    .unwrap_or_default();
+
+            let selection = widget.get_selected_nodes(ui);
+            if !selection.is_empty() {
+                let copied = filter_graph(self.shadow.clone(), pos.to_vec2(), &selection);
+                if let Ok(text) = serde_yml::to_string(&copied) {
+                    ui.ctx().copy_text(text);
+                }
+            }
+        }
+    }
+    pub fn handle_paste(
+        &mut self,
+        snarl: &mut Snarl<WorkNode>,
+        ui: &mut egui::Ui,
+        widget: SnarlWidget,
+    ) {
+        if let Some(text) = ui.ctx().input_mut(|input| {
+            input.events.iter().find_map(|ev| {
+                if let egui::Event::Paste(text) = ev {
+                    Some(text.clone())
+                } else {
+                    None
+                }
+            })
+        }) {
+            let pos = self.transform.inverse()
+                * ui.ctx()
+                    .input(|i| i.pointer.interact_pos())
+                    .unwrap_or_default();
+
+            if let Ok(shadow) = serde_yml::from_str(&text) {
+                let inserted = merge_graphs(snarl, &mut self.shadow, pos.to_vec2(), shadow);
+                widget.update_selected_nodes(ui, |nodes| {
+                    *nodes = inserted;
+                });
+            }
+        }
     }
 }
 
@@ -249,6 +507,8 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                 self.connect(&out_pin, &in_pin, snarl);
             }
         }
+
+        self.shadow = self.shadow.with_node(&node, snarl.get_node_info(node));
     }
 
     fn has_on_hover_popup(&mut self, node: &WorkNode) -> bool {
@@ -458,6 +718,11 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             }
         });
 
+        if ui.button("Subgraph").clicked() {
+            snarl.insert_node(pos, WorkNode::Subgraph(Default::default()));
+            ui.close();
+        }
+
         if ui.button("Preview").clicked() {
             snarl.insert_node(pos, WorkNode::Preview(Default::default()));
             ui.close();
@@ -469,7 +734,11 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         }
 
         if ui.button("Comment").clicked() {
-            snarl.insert_node(pos, WorkNode::Comment(Default::default()));
+            let node_id = snarl.insert_node(pos, WorkNode::Comment(Default::default()));
+
+            self.shadow = self
+                .shadow
+                .with_node(&node_id, snarl.get_node_info(node_id));
             ui.close();
         }
     }
@@ -487,11 +756,21 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         snarl: &mut Snarl<WorkNode>,
     ) {
         self.edit_ctx.current_node = node;
-        ui.add_enabled_ui(self.can_edit(), |ui| {
-            snarl[node].as_ui_mut().show_body(ui, &self.edit_ctx);
-            self.shadow = self.shadow.with_node(&node, snarl.get_node_info(node));
-        })
-        .inner
+
+        if snarl[node].is_subgraph() {
+            if ui
+                .heading("subgraph")
+                .interact(Sense::click())
+                .double_clicked()
+            {
+                self.events.insert(crate::ui::AppEvent::EnterSubgraph(node));
+            }
+        } else {
+            ui.add_enabled_ui(self.can_edit(), |ui| {
+                snarl[node].as_ui_mut().show_body(ui, &self.edit_ctx);
+                self.shadow = self.shadow.with_node(&node, snarl.get_node_info(node));
+            });
+        }
     }
 
     fn connect(

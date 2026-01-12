@@ -11,7 +11,7 @@ use crate::{
     ChatContent,
     ui::{resizable_frame, tiles::chat::render_message_width},
     utils::{message_party, message_text},
-    workflow::WorkflowError,
+    workflow::{GraphId, WorkflowError},
 };
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
@@ -147,8 +147,8 @@ impl UiNode for Text {
 pub struct Preview {
     size: Option<crate::utils::EVec2>,
 
-    #[serde(skip)]
-    pub value: Value,
+    #[serde(default)]
+    pub uuid: GraphId,
 }
 
 impl std::hash::Hash for Preview {
@@ -174,24 +174,24 @@ impl DynNode for Preview {
         0
     }
 
-    fn value(&self, _out_pin: usize) -> Value {
-        self.value.clone()
-    }
-
     fn execute(
         &mut self,
-        _ctx: &RunContext,
+        ctx: &RunContext,
         _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
         if let Some(value) = inputs.first().and_then(|it| it.as_ref()) {
-            self.value = value.to_owned();
+            ctx.previews.update(self.uuid.0, value.clone());
         }
         Ok(vec![])
     }
 }
 
 impl UiNode for Preview {
+    fn on_paste(&mut self) {
+        self.uuid = GraphId::new();
+    }
+
     fn title(&self) -> &str {
         "Preview"
     }
@@ -200,46 +200,49 @@ impl UiNode for Preview {
         true
     }
 
-    fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
+    fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
         let mut cache = CommonMarkCache::default();
 
         egui::Frame::new().inner_margin(4).show(ui, |ui| {
             resizable_frame(&mut self.size, ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| match &self.value {
-                    Value::Text(text) => {
-                        ui.add(egui::Label::new(text).wrap());
-                    }
-                    Value::Chat(history) => {
-                        ui.vertical(|ui| {
-                            for entry in history.iter() {
-                                if let ChatContent::Message(msg) = &entry.content {
-                                    ui.label(RichText::new(message_party(msg)).strong());
-                                    ui.add(egui::Label::new(message_text(msg)).wrap());
-                                    ui.separator();
-                                }
-                            }
-                        });
-                    }
-                    Value::Message(msg) => {
-                        render_message_width(ui, &mut cache, msg, Some(600.0));
-                    }
-                    Value::Json(value) => {
-                        if let Ok(text) = serde_json::to_string_pretty(value) {
-                            let language = "json";
-                            let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(
-                                ui.ctx(),
-                                ui.style(),
-                            );
-
-                            egui_extras::syntax_highlighting::code_view_ui(
-                                ui, &theme, &text, language,
-                            );
-                        } else {
-                            ui.add(egui::Label::new(format!("{:?}", value)).wrap());
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    match &ctx.previews.value(self.uuid.0).unwrap_or_default() {
+                        Value::Text(text) => {
+                            ui.add(egui::Label::new(text).wrap());
                         }
-                    }
-                    _ => {
-                        ui.add(egui::Label::new(format!("{:?}", self.value)).wrap());
+                        Value::Chat(history) => {
+                            ui.vertical(|ui| {
+                                for entry in history.iter() {
+                                    if let ChatContent::Message(msg) = &entry.content {
+                                        ui.label(RichText::new(message_party(msg)).strong());
+                                        ui.add(egui::Label::new(message_text(msg)).wrap());
+                                        ui.separator();
+                                    }
+                                }
+                            });
+                        }
+                        Value::Message(msg) => {
+                            render_message_width(ui, &mut cache, msg, Some(600.0));
+                        }
+                        Value::Json(value) => {
+                            if let Ok(text) = serde_json::to_string_pretty(value) {
+                                let language = "json";
+                                let theme =
+                                    egui_extras::syntax_highlighting::CodeTheme::from_memory(
+                                        ui.ctx(),
+                                        ui.style(),
+                                    );
+
+                                egui_extras::syntax_highlighting::code_view_ui(
+                                    ui, &theme, &text, language,
+                                );
+                            } else {
+                                ui.add(egui::Label::new(format!("{:?}", value)).wrap());
+                            }
+                        }
+                        unk => {
+                            ui.add(egui::Label::new(format!("{unk:?}")).wrap());
+                        }
                     }
                 });
             });
