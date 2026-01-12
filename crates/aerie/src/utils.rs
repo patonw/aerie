@@ -91,7 +91,7 @@ impl<T: Ord> Default for PriorityQueue<T> {
     }
 }
 
-impl<T: Ord> PriorityQueue<T> {
+impl<T: Ord + std::fmt::Debug> PriorityQueue<T> {
     pub fn new() -> Self {
         Default::default()
     }

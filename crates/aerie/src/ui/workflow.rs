@@ -18,7 +18,7 @@ use typed_builder::TypedBuilder;
 use crate::{
     utils::ErrorDistiller as _,
     workflow::{
-        EditContext, MetaNode, ShadowGraph, WorkNode,
+        EditContext, GraphId, MetaNode, ShadowGraph, WorkNode,
         nodes::{CommentNode, Subgraph},
         runner::{ExecState, NodeStateMap},
     },
@@ -87,6 +87,20 @@ impl ViewStack {
         self.path.is_empty()
     }
 
+    pub fn names(&'_ self) -> impl DoubleEndedIterator<Item = String> {
+        self.path
+            .iter()
+            .zip(self.levels.skip(1))
+            .map(|(node_id, graph)| {
+                graph
+                    .nodes
+                    .get(node_id)
+                    .map(|m| m.value.as_ui().title().to_string())
+                    .unwrap_or("???".to_string())
+            })
+            .chain(std::iter::once("(root)".to_string()))
+    }
+
     pub fn root(&self) -> ShadowGraph<WorkNode> {
         assert!(!self.levels.is_empty());
         self.levels.back().cloned().unwrap()
@@ -105,18 +119,27 @@ impl ViewStack {
         egui_snarl::Snarl::try_from(self.leaf())
     }
 
+    /// The id of the parent graph and node id of the subgraph container
+    pub fn parent_id(&self) -> Option<(GraphId, NodeId)> {
+        if self.is_empty() {
+            None
+        } else {
+            Some((self.levels[1].uuid, self.path[0]))
+        }
+    }
+
     pub fn view_id(&self) -> egui::Id {
         self.root_id.with(&self.path)
     }
 
-    pub fn exit(&mut self) -> anyhow::Result<()> {
-        if let Some(_) = self.path.pop_front()
-            && let Some(_) = self.levels.pop_front()
-        {
-            Ok(())
-        } else {
-            anyhow::bail!("stack is empty")
+    pub fn exit(&mut self, levels: usize) -> anyhow::Result<()> {
+        for _ in 0..levels {
+            if self.path.pop_front().is_none() || self.levels.pop_front().is_none() {
+                anyhow::bail!("stack is empty")
+            }
         }
+
+        Ok(())
     }
 
     pub fn enter(&mut self, node: NodeId) -> anyhow::Result<()> {
@@ -142,8 +165,12 @@ impl ViewStack {
         Ok(())
     }
 
-    /// Cascades changes in the subgraphs up to the root
-    pub fn propagate(&mut self, shadow: ShadowGraph<WorkNode>) -> anyhow::Result<()> {
+    /// Cascades changes in the subgraphs up to the root,
+    /// transforming each level with the callback.
+    pub fn propagate<F>(&mut self, shadow: ShadowGraph<WorkNode>, f: F) -> anyhow::Result<()>
+    where
+        F: Fn(ShadowGraph<WorkNode>) -> ShadowGraph<WorkNode>,
+    {
         let mut ids = self.path.iter();
         let mut graphs = self.levels.iter_mut();
 
@@ -151,12 +178,13 @@ impl ViewStack {
             unreachable!()
         };
 
-        if child_graph.fast_eq(&shadow) {
-            return Ok(());
+        // Transform the new leaf before assigning it to the stack
+        let shadow = f(shadow);
+        if !child_graph.fast_eq(&shadow) {
+            *child_graph = shadow.clone();
         }
 
-        *child_graph = shadow.clone();
-        let mut child_graph = shadow.clone();
+        let mut child_graph = shadow;
 
         let Some(mut child_id) = ids.next() else {
             return Ok(());
@@ -176,22 +204,26 @@ impl ViewStack {
                 ),
                 Some(meta) => match &meta.value {
                     WorkNode::Subgraph(node) => {
-                        if node.graph.fast_eq(&child_graph) {
-                            break;
+                        if !node.graph.fast_eq(&child_graph) {
+                            // Replace the subgraph in the parent's node
+                            let node = Subgraph {
+                                graph: child_graph.clone(),
+                                ..node.clone()
+                            };
+
+                            let meta = MetaNode {
+                                value: WorkNode::Subgraph(node),
+                                ..meta.clone()
+                            };
+
+                            target.nodes.insert(*child_id, meta);
                         }
 
-                        let node = Subgraph {
-                            graph: child_graph.clone(),
-                            ..node.clone()
-                        };
-
-                        let meta = MetaNode {
-                            value: WorkNode::Subgraph(node),
-                            ..meta.clone()
-                        };
-
-                        target.nodes.insert(*child_id, meta);
-                        *parent_graph = target.clone();
+                        // Transform and save the parent graph
+                        let target = f(target);
+                        if !parent_graph.fast_eq(&target) {
+                            *parent_graph = target.clone();
+                        }
                         child_graph = target;
                     }
                     _ => unreachable!(),
@@ -461,34 +493,6 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         }
 
         // A bit hacky
-        let output_swap = self.edit_ctx.output_swap.swap(None);
-        if let Some(pins) = output_swap {
-            let (first, second) = pins.as_ref();
-            tracing::debug!("Swapping pins {first:?} and {second:?}");
-
-            let first_pin = snarl.out_pin(*first);
-            let first_remotes = first_pin.remotes.clone();
-            let second_pin = snarl.out_pin(*second);
-            for in_pin_id in &second_pin.remotes {
-                let in_pin = snarl.in_pin(*in_pin_id);
-                tracing::trace!("Moving pin {in_pin:?} from {second_pin:?} to {first_pin:?}");
-                self.disconnect(&second_pin, &in_pin, snarl);
-                self.connect(&first_pin, &in_pin, snarl);
-            }
-
-            for in_pin_id in &first_remotes {
-                let in_pin = snarl.in_pin(*in_pin_id);
-                tracing::trace!("Moving pin {in_pin:?} from {first_pin:?} to {second_pin:?}");
-                self.disconnect(&first_pin, &in_pin, snarl);
-                self.connect(&second_pin, &in_pin, snarl);
-            }
-        }
-        let output_drop = self.edit_ctx.output_drop.swap(Arc::new(Default::default()));
-        for out_pin_id in output_drop.iter() {
-            let out_pin = snarl.out_pin(*out_pin_id);
-            self.drop_outputs(&out_pin, snarl);
-        }
-
         let output_reset = self
             .edit_ctx
             .output_reset
@@ -759,6 +763,31 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         });
     }
 
+    fn has_footer(&mut self, node: &WorkNode) -> bool {
+        node.as_ui().has_footer()
+    }
+
+    fn show_footer(
+        &mut self,
+        node: NodeId,
+        _inputs: &[egui_snarl::InPin],
+        _outputs: &[egui_snarl::OutPin],
+        ui: &mut Ui,
+        snarl: &mut Snarl<WorkNode>,
+    ) {
+        self.edit_ctx.current_node = node;
+
+        ui.add_enabled_ui(self.can_edit(), |ui| {
+            let before = snarl[node].clone();
+            snarl[node].as_ui_mut().show_footer(ui, &self.edit_ctx);
+            self.shadow = self.shadow.with_node(&node, snarl.get_node_info(node));
+            let after = &snarl[node];
+            if &before != after {
+                tracing::trace!("Change detected in {before:?} to {after:?}");
+            }
+        });
+    }
+
     fn connect(
         &mut self,
         from: &egui_snarl::OutPin,
@@ -792,14 +821,14 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
 
     fn drop_inputs(&mut self, pin: &egui_snarl::InPin, snarl: &mut Snarl<WorkNode>) {
         if self.can_edit() {
-            self.shadow = self.shadow.drop_inputs(pin);
+            self.shadow = self.shadow.drop_inputs(pin.id);
             snarl.drop_inputs(pin.id);
         }
     }
 
     fn drop_outputs(&mut self, pin: &egui_snarl::OutPin, snarl: &mut Snarl<WorkNode>) {
         if self.can_edit() {
-            self.shadow = self.shadow.drop_outputs(pin);
+            self.shadow = self.shadow.drop_outputs(pin.id);
             snarl.drop_outputs(pin.id);
         }
     }

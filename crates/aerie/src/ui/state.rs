@@ -109,6 +109,8 @@ impl AppState {
             let edit_ctx = EditContext::builder()
                 .toolbox(self.agent_factory.toolbox.clone())
                 .events(self.events.clone())
+                .current_graph(shadow.uuid)
+                .parent_id(stack.parent_id())
                 .errors(self.errors.clone())
                 .previews(self.workflows.previews.clone())
                 .build();
@@ -150,6 +152,9 @@ impl AppState {
                 tracing::warn!("Unhandled event {event:?}");
             }
         }
+
+        let shadow = self.workflows.view_stack.root();
+        self.workflows.cast_shadow(shadow);
     }
 }
 
@@ -313,6 +318,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         self.renaming = None;
         self.switch_count += 1;
         self.view_stack = ViewStack::from_root(self.shadow.clone());
+        self.viewer = None;
     }
 
     pub fn rename(&mut self) -> anyhow::Result<()> {
@@ -455,6 +461,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
             self.modtime = modtime;
             self.switch_count += 1;
             self.view_stack.switch(shadow.clone());
+            self.viewer = None;
             self.frozen = true;
         }
         tracing::debug!(
@@ -540,16 +547,63 @@ impl<W: WorkflowStore> WorkflowState<W> {
         self.baseline = self.shadow.clone();
     }
 
+    // TODO: collect errors
     pub fn handle_event(&mut self, event: &AppEvent) -> bool {
+        use AppEvent::*;
         match event {
-            AppEvent::EnterSubgraph(node_id) => {
+            EnterSubgraph(node_id) => {
                 self.view_stack.enter(*node_id).unwrap();
                 self.viewer = None;
                 true
             }
-            AppEvent::LeaveSubgraph => {
-                self.view_stack.exit().unwrap();
+            LeaveSubgraph(levels) => {
+                self.view_stack.exit(*levels).unwrap();
                 self.viewer = None;
+                true
+            }
+            PinRemoved(graph_id, pin) => {
+                // At this point, the node already considers the pin gone,
+                // but we need to update the wires to reflect that.
+                use crate::workflow::AnyPin::*;
+                tracing::debug!("Handling pin event {graph_id:?} {pin:?}");
+
+                let _ = self.view_stack.propagate(self.view_stack.leaf(), |graph| {
+                    if graph.uuid == *graph_id {
+                        match pin {
+                            Out(pin) => graph.shift_outputs(*pin),
+                            In(pin) => graph.shift_inputs(*pin),
+                        }
+                    } else {
+                        graph
+                    }
+                });
+
+                // tracing::trace!(
+                //     "Done propagating: {:?}\n\n {}",
+                //     self.view_stack.root(),
+                //     std::backtrace::Backtrace::force_capture()
+                // );
+
+                true
+            }
+            SwapInputs(graph_id, a, b) => {
+                let _ = self.view_stack.propagate(self.view_stack.leaf(), |graph| {
+                    if graph.uuid == *graph_id {
+                        graph.swap_inputs(*a, *b)
+                    } else {
+                        graph
+                    }
+                });
+                true
+            }
+            SwapOutputs(graph_id, a, b) => {
+                let _ = self.view_stack.propagate(self.view_stack.leaf(), |graph| {
+                    if graph.uuid == *graph_id {
+                        graph.swap_outputs(*a, *b)
+                    } else {
+                        graph
+                    }
+                });
                 true
             }
         }

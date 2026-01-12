@@ -1,14 +1,18 @@
-use std::{borrow::Cow, convert::identity};
+use std::{borrow::Cow, convert::identity, sync::Arc};
 
 use egui::RichText;
 use egui_phosphor::regular::{ARROW_CIRCLE_DOWN, ARROW_CIRCLE_UP, TRASH};
-use egui_snarl::OutPinId;
+use egui_snarl::{InPinId, OutPinId};
 use im::vector;
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::{utils::message_text, workflow::WorkflowError};
+use crate::{
+    ui::AppEvent,
+    utils::message_text,
+    workflow::{AnyPin, WorkflowError},
+};
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
@@ -36,7 +40,7 @@ fn is_default_finish(value: &im::Vector<(String, ValueKind)>) -> bool {
 
 // These fields will always be set from the run context each execution.
 // Saving them to disk is just a waste.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Start {
     #[serde(
         default = "root_start_fields",
@@ -51,14 +55,6 @@ impl std::hash::Hash for Start {
     }
 }
 
-impl PartialEq for Start {
-    fn eq(&self, _other: &Self) -> bool {
-        true // Start is entirely transient, so all copies are equal
-    }
-}
-
-impl Eq for Start {}
-
 impl DynNode for Start {
     fn inputs(&self) -> usize {
         0
@@ -69,7 +65,11 @@ impl DynNode for Start {
     }
 
     fn out_kind(&self, out_pin: usize) -> ValueKind {
-        self.fields[out_pin].1
+        if out_pin < self.fields.len() {
+            self.fields[out_pin].1
+        } else {
+            ValueKind::Placeholder
+        }
     }
 
     fn execute(
@@ -95,12 +95,157 @@ impl UiNode for Start {
     fn show_output(
         &mut self,
         ui: &mut egui::Ui,
-        _ctx: &EditContext,
+        ctx: &EditContext,
         pin_id: usize,
     ) -> egui_snarl::ui::PinInfo {
-        ui.label(&self.fields[pin_id].0);
+        if ctx.edit_pin.load().as_ref() == &Some(AnyPin::output(ctx.current_node, pin_id)) {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let name = self.fields.get_mut(pin_id).unwrap();
+            let widget = egui::TextEdit::singleline(&mut name.0).desired_width(100.0);
+            let resp = ui.add(widget);
+
+            ui.add_enabled_ui(pin_id > 0, |ui| {
+                if ui.button(ARROW_CIRCLE_UP).clicked() {
+                    ctx.events.insert(AppEvent::SwapOutputs(
+                        ctx.current_graph,
+                        OutPinId {
+                            node: ctx.current_node,
+                            output: pin_id,
+                        },
+                        OutPinId {
+                            node: ctx.current_node,
+                            output: pin_id - 1,
+                        },
+                    ));
+
+                    if let Some((parent_graph, parent_node)) = ctx.parent_id {
+                        ctx.events.insert(AppEvent::SwapInputs(
+                            parent_graph,
+                            InPinId {
+                                node: parent_node,
+                                input: pin_id,
+                            },
+                            InPinId {
+                                node: parent_node,
+                                input: pin_id - 1,
+                            },
+                        ));
+                    }
+
+                    ctx.edit_pin
+                        .store(Arc::new(Some(AnyPin::output(ctx.current_node, pin_id - 1))));
+                    self.fields.swap(pin_id, pin_id - 1);
+                    resp.request_focus();
+                }
+            });
+
+            ui.add_enabled_ui(pin_id < self.fields.len() - 1, |ui| {
+                if ui.button(ARROW_CIRCLE_DOWN).clicked() {
+                    ctx.events.insert(AppEvent::SwapOutputs(
+                        ctx.current_graph,
+                        OutPinId {
+                            node: ctx.current_node,
+                            output: pin_id,
+                        },
+                        OutPinId {
+                            node: ctx.current_node,
+                            output: pin_id + 1,
+                        },
+                    ));
+
+                    if let Some((parent_graph, parent_node)) = ctx.parent_id {
+                        ctx.events.insert(AppEvent::SwapInputs(
+                            parent_graph,
+                            InPinId {
+                                node: parent_node,
+                                input: pin_id,
+                            },
+                            InPinId {
+                                node: parent_node,
+                                input: pin_id + 1,
+                            },
+                        ));
+                    }
+
+                    ctx.edit_pin
+                        .store(Arc::new(Some(AnyPin::output(ctx.current_node, pin_id + 1))));
+                    self.fields.swap(pin_id, pin_id + 1);
+                    resp.request_focus();
+                }
+            });
+            if ui.button(TRASH).clicked() {
+                let event = AppEvent::PinRemoved(
+                    ctx.current_graph,
+                    AnyPin::output(ctx.current_node, pin_id),
+                );
+                tracing::debug!("Removing pin on subgraph: {event:?}");
+                ctx.events.insert(event);
+
+                if let Some((parent_graph, parent_node)) = ctx.parent_id {
+                    let event =
+                        AppEvent::PinRemoved(parent_graph, AnyPin::input(parent_node, pin_id));
+                    tracing::debug!("Removing pin on parent: {event:?}");
+                    ctx.events.insert(event);
+                }
+
+                self.fields.remove(pin_id);
+            }
+
+            if resp.lost_focus() {
+                ctx.edit_pin.store(Arc::new(None));
+            }
+
+            resp.request_focus();
+        } else {
+            let name = self.fields.get(pin_id).map(|x| x.0.as_str()).unwrap_or("");
+            let text = if name.is_empty() {
+                RichText::new("(empty)").weak()
+            } else {
+                RichText::new(name)
+            };
+
+            let widget = egui::Label::new(text).truncate();
+            if ui
+                .add(widget)
+                .interact(egui::Sense::click())
+                .double_clicked()
+            {
+                ctx.edit_pin
+                    .store(Arc::new(Some(AnyPin::output(ctx.current_node, pin_id))));
+            }
+        }
 
         self.out_kind(pin_id).default_pin()
+    }
+
+    fn has_footer(&self) -> bool {
+        true
+    }
+
+    fn show_footer(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
+        if ctx.parent_id.is_some() {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                ui.menu_button("+new", |ui| {
+                    let kinds = [
+                        ValueKind::Text,
+                        ValueKind::Number,
+                        ValueKind::Integer,
+                        ValueKind::Json,
+                        ValueKind::Agent,
+                        ValueKind::Tools,
+                        ValueKind::Chat,
+                        ValueKind::Message,
+                    ];
+                    for kind in kinds {
+                        let label = kind.to_string().to_lowercase();
+                        if ui.button(&label).clicked() {
+                            self.fields = self.fields.clone();
+                            self.fields.push_back((label, kind));
+                        }
+                    }
+                });
+            });
+        }
     }
 }
 
@@ -125,10 +270,12 @@ impl DynNode for Finish {
     fn inputs(&self) -> usize {
         self.fields.len()
     }
+
     fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
-        match in_pin {
-            0 => Cow::Borrowed(&[ValueKind::Chat]),
-            _ => unreachable!(),
+        if in_pin < self.fields.len() {
+            Cow::Borrowed(std::slice::from_ref(&self.fields[in_pin].1))
+        } else {
+            Cow::Borrowed(&[ValueKind::Placeholder])
         }
     }
 
@@ -156,13 +303,171 @@ impl UiNode for Finish {
     fn show_input(
         &mut self,
         ui: &mut egui::Ui,
-        _ctx: &EditContext,
+        ctx: &EditContext,
         pin_id: usize,
-        _remote: Option<Value>, // TODO: rename to "wired" this should be ValueKind!
+        _remote: Option<Value>,
     ) -> egui_snarl::ui::PinInfo {
-        ui.label(&self.fields[pin_id].0);
+        if ctx.edit_pin.load().as_ref() == &Some(AnyPin::output(ctx.current_node, pin_id)) {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let name = self.fields.get_mut(pin_id).unwrap();
+            let widget = egui::TextEdit::singleline(&mut name.0).desired_width(100.0);
+            let resp = ui.add(widget);
 
+            ui.add_enabled_ui(pin_id > 0, |ui| {
+                if ui.button(ARROW_CIRCLE_UP).clicked() {
+                    ctx.events.insert(AppEvent::SwapInputs(
+                        ctx.current_graph,
+                        InPinId {
+                            node: ctx.current_node,
+                            input: pin_id,
+                        },
+                        InPinId {
+                            node: ctx.current_node,
+                            input: pin_id - 1,
+                        },
+                    ));
+
+                    if let Some((parent_graph, parent_node)) = ctx.parent_id {
+                        ctx.events.insert(AppEvent::SwapOutputs(
+                            parent_graph,
+                            OutPinId {
+                                node: parent_node,
+                                output: pin_id,
+                            },
+                            OutPinId {
+                                node: parent_node,
+                                output: pin_id - 1,
+                            },
+                        ));
+                    }
+
+                    ctx.edit_pin
+                        .store(Arc::new(Some(AnyPin::output(ctx.current_node, pin_id - 1))));
+                    self.fields.swap(pin_id, pin_id - 1);
+                    resp.request_focus();
+                }
+            });
+
+            ui.add_enabled_ui(pin_id < self.fields.len() - 1, |ui| {
+                if ui.button(ARROW_CIRCLE_DOWN).clicked() {
+                    ctx.events.insert(AppEvent::SwapInputs(
+                        ctx.current_graph,
+                        InPinId {
+                            node: ctx.current_node,
+                            input: pin_id,
+                        },
+                        InPinId {
+                            node: ctx.current_node,
+                            input: pin_id + 1,
+                        },
+                    ));
+
+                    if let Some((parent_graph, parent_node)) = ctx.parent_id {
+                        ctx.events.insert(AppEvent::SwapOutputs(
+                            parent_graph,
+                            OutPinId {
+                                node: parent_node,
+                                output: pin_id,
+                            },
+                            OutPinId {
+                                node: parent_node,
+                                output: pin_id + 1,
+                            },
+                        ));
+                    }
+
+                    ctx.edit_pin
+                        .store(Arc::new(Some(AnyPin::output(ctx.current_node, pin_id + 1))));
+                    self.fields.swap(pin_id, pin_id + 1);
+                    resp.request_focus();
+                }
+            });
+            if ui.button(TRASH).clicked() {
+                let event = AppEvent::PinRemoved(
+                    ctx.current_graph,
+                    AnyPin::input(ctx.current_node, pin_id),
+                );
+                tracing::debug!("Removing pin on subgraph: {event:?}");
+                ctx.events.insert(event);
+
+                if let Some((parent_graph, parent_node)) = ctx.parent_id {
+                    let event =
+                        AppEvent::PinRemoved(parent_graph, AnyPin::output(parent_node, pin_id));
+                    tracing::debug!("Removing pin on parent: {event:?}");
+                    ctx.events.insert(event);
+                }
+
+                self.fields.remove(pin_id);
+            }
+
+            if resp.lost_focus() {
+                ctx.edit_pin.store(Arc::new(None));
+            }
+
+            resp.request_focus();
+        } else {
+            let name = self.fields.get(pin_id).map(|x| x.0.as_str()).unwrap_or("");
+            let text = if name.is_empty() {
+                RichText::new("(empty)").weak()
+            } else {
+                RichText::new(name)
+            };
+
+            let widget = egui::Label::new(text).truncate();
+            if ui
+                .add(widget)
+                .interact(egui::Sense::click())
+                .double_clicked()
+            {
+                ctx.edit_pin
+                    .store(Arc::new(Some(AnyPin::output(ctx.current_node, pin_id))));
+            }
+        }
         self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+
+    fn has_footer(&self) -> bool {
+        true
+    }
+
+    fn show_footer(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
+        if ctx.parent_id.is_some() {
+            ui.menu_button("+new", |ui| {
+                let kinds = [
+                    ValueKind::Text,
+                    ValueKind::Number,
+                    ValueKind::Integer,
+                    ValueKind::Json,
+                    ValueKind::Agent,
+                    ValueKind::Tools,
+                    ValueKind::Chat,
+                    ValueKind::Message,
+                ];
+                for kind in kinds {
+                    let label = kind.to_string().to_lowercase();
+                    if ui.button(&label).clicked() {
+                        self.fields = self.fields.clone();
+                        self.fields.push_back((label, kind));
+
+                        if let Some((parent_graph, parent_node)) = ctx.parent_id {
+                            // Shift failure pin on subgraph node
+                            let pin_id = self.fields.len() - 1;
+                            ctx.events.insert(AppEvent::SwapOutputs(
+                                parent_graph,
+                                OutPinId {
+                                    node: parent_node,
+                                    output: pin_id,
+                                },
+                                OutPinId {
+                                    node: parent_node,
+                                    output: pin_id + 1,
+                                },
+                            ));
+                        }
+                    }
+                }
+            });
+        }
     }
 }
 
@@ -527,7 +832,8 @@ impl UiNode for Matcher {
     fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
             if ui.button("+new").clicked() {
-                ctx.swap_outputs(
+                ctx.events.insert(AppEvent::SwapOutputs(
+                    ctx.current_graph,
                     OutPinId {
                         node: ctx.current_node,
                         output: self.patterns.len(),
@@ -536,7 +842,8 @@ impl UiNode for Matcher {
                         node: ctx.current_node,
                         output: self.patterns.len() + 1,
                     },
-                );
+                ));
+
                 self.patterns.push_back(Default::default());
                 self.editing = Some(self.patterns.len() - 1);
             }
@@ -564,7 +871,8 @@ impl UiNode for Matcher {
 
             ui.add_enabled_ui(pin_id > 0, |ui| {
                 if ui.button(ARROW_CIRCLE_UP).clicked() {
-                    ctx.swap_outputs(
+                    ctx.events.insert(AppEvent::SwapOutputs(
+                        ctx.current_graph,
                         OutPinId {
                             node: ctx.current_node,
                             output: pin_id,
@@ -573,7 +881,7 @@ impl UiNode for Matcher {
                             node: ctx.current_node,
                             output: pin_id - 1,
                         },
-                    );
+                    ));
 
                     self.editing = Some(editing - 1);
                     self.patterns.swap(editing, editing - 1);
@@ -583,7 +891,8 @@ impl UiNode for Matcher {
 
             ui.add_enabled_ui(pin_id < self.patterns.len() - 1, |ui| {
                 if ui.button(ARROW_CIRCLE_DOWN).clicked() {
-                    ctx.swap_outputs(
+                    ctx.events.insert(AppEvent::SwapOutputs(
+                        ctx.current_graph,
                         OutPinId {
                             node: ctx.current_node,
                             output: pin_id,
@@ -592,7 +901,7 @@ impl UiNode for Matcher {
                             node: ctx.current_node,
                             output: pin_id + 1,
                         },
-                    );
+                    ));
 
                     self.editing = Some(editing + 1);
                     self.patterns.swap(editing, editing + 1);
@@ -605,20 +914,10 @@ impl UiNode for Matcher {
                 && ui
                     .menu_button(TRASH, |ui| {
                         if ui.button("Remove").clicked() {
-                            ctx.swap_outputs(
-                                OutPinId {
-                                    node: ctx.current_node,
-                                    output: pin_id,
-                                },
-                                OutPinId {
-                                    node: ctx.current_node,
-                                    output: pin_id + 1,
-                                },
-                            );
-                            ctx.drop_out_pin(OutPinId {
-                                node: ctx.current_node,
-                                output: pin_id + 1,
-                            });
+                            ctx.events.insert(AppEvent::PinRemoved(
+                                ctx.current_graph,
+                                AnyPin::output(ctx.current_node, pin_id),
+                            ));
 
                             self.patterns.pop_back();
                         }

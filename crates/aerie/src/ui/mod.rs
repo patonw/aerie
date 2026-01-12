@@ -5,12 +5,15 @@ pub mod state;
 pub mod tiles;
 pub mod workflow;
 
-use egui_snarl::NodeId;
+use egui_snarl::{InPinId, NodeId, OutPinId};
 pub use state::AppState;
 
 use crate::{
     utils::PriorityQueue,
-    workflow::nodes::{MIN_HEIGHT, MIN_WIDTH},
+    workflow::{
+        AnyPin, GraphId,
+        nodes::{MIN_HEIGHT, MIN_WIDTH},
+    },
 };
 
 pub enum Pane {
@@ -27,15 +30,23 @@ pub enum Pane {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum AppEvent {
     EnterSubgraph(NodeId),
-    LeaveSubgraph,
-    // TODO: pin events
+    LeaveSubgraph(usize),
+
+    /// Removes a pin from a node of a graph. Graph must be in the current ViewStack.
+    PinRemoved(GraphId, AnyPin),
+
+    /// Swaps the wires of two pins in a graph. Graph must be in the current ViewStack.
+    /// Pins must both be inputs or outputs.
+    SwapInputs(GraphId, InPinId, InPinId),
+    SwapOutputs(GraphId, OutPinId, OutPinId),
 }
 
 impl AppEvent {
     pub fn priority(&self) -> i64 {
         use AppEvent::*;
         match self {
-            EnterSubgraph(_) | LeaveSubgraph => -100,
+            EnterSubgraph(_) | LeaveSubgraph(_) => -100,
+            _ => 0,
         }
     }
 }

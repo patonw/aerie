@@ -1,4 +1,4 @@
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwap;
 use decorum::{E32, E64};
 use egui::{Color32, Stroke};
 use egui_snarl::{
@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{
     borrow::Cow,
+    fmt::Debug,
     hash::Hash,
     sync::{Arc, atomic::AtomicBool},
 };
@@ -114,11 +115,34 @@ impl PreviewData {
     }
 }
 
+// Copy-paste from egui_snarl::ui::pin
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AnyPin {
+    Out(OutPinId),
+    In(InPinId),
+}
+
+impl AnyPin {
+    pub fn output(node: NodeId, output: usize) -> Self {
+        AnyPin::Out(OutPinId { node, output })
+    }
+
+    pub fn input(node: NodeId, input: usize) -> Self {
+        AnyPin::In(InPinId { node, input })
+    }
+}
+
 #[derive(Clone, TypedBuilder)]
 pub struct EditContext {
     pub toolbox: Arc<Toolbox>,
 
     pub events: Arc<AppEvents>,
+
+    pub current_graph: GraphId,
+
+    /// Ids of the parent graph and subgraph container node
+    #[builder(default)]
+    pub parent_id: Option<(GraphId, NodeId)>,
 
     #[builder(default)]
     pub previews: PreviewData,
@@ -127,36 +151,21 @@ pub struct EditContext {
     pub errors: ErrorList<anyhow::Error>,
 
     #[builder(default)]
-    pub output_swap: Arc<ArcSwapOption<(OutPinId, OutPinId)>>,
-
-    #[builder(default)]
     pub output_reset: Arc<ArcSwap<im::OrdSet<OutPinId>>>,
-
-    #[builder(default)]
-    pub output_drop: Arc<ArcSwap<im::OrdSet<OutPinId>>>,
 
     #[builder(default=NodeId(0))]
     pub current_node: NodeId, // whoops
+
+    #[builder(default)]
+    pub edit_pin: Arc<ArcSwap<Option<AnyPin>>>,
 }
 
 impl EditContext {
-    pub fn swap_outputs(&self, first: OutPinId, second: OutPinId) {
-        tracing::debug!("Requested to swap output pins {first:?} and {second:?}");
-        self.output_swap.store(Some(Arc::new((first, second))));
-    }
-
     pub fn reset_out_pin(&self, pin_id: OutPinId) {
         let old_set = self.output_reset.load();
         let new_set = old_set.update(pin_id);
 
         self.output_reset.store(Arc::new(new_set));
-    }
-
-    pub fn drop_out_pin(&self, pin_id: OutPinId) {
-        let old_set = self.output_drop.load();
-        let new_set = old_set.update(pin_id);
-
-        self.output_drop.store(Arc::new(new_set));
     }
 }
 
@@ -347,7 +356,7 @@ impl AsRef<Uuid> for GraphId {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowGraph<T>
 where
-    T: Clone + PartialEq,
+    T: Clone + PartialEq + Debug,
 {
     #[serde(default)]
     pub uuid: GraphId,
@@ -369,7 +378,7 @@ where
     pub finish: Option<NodeId>,
 }
 
-impl<T: Clone + PartialEq> ShadowGraph<T> {
+impl<T: Clone + PartialEq + Debug> ShadowGraph<T> {
     pub fn from_snarl(snarl: &Snarl<T>) -> Self {
         let mut baseline = Self::empty();
 
@@ -415,7 +424,7 @@ impl TryFrom<ShadowGraph<WorkNode>> for Snarl<WorkNode> {
 
 impl<T> ShadowGraph<T>
 where
-    T: PartialEq + Clone,
+    T: PartialEq + Clone + std::fmt::Debug,
 {
     pub fn empty() -> Self {
         Self {
@@ -448,6 +457,8 @@ where
         if nodes.ptr_eq(&self.nodes) {
             self.clone()
         } else {
+            tracing::trace!("Nodes changed. Before {:?} after {nodes:?}", self.nodes);
+
             Self {
                 nodes,
                 ..self.clone()
@@ -511,11 +522,11 @@ where
     }
 
     #[must_use]
-    pub fn drop_inputs(&self, pin: &egui_snarl::InPin) -> Self {
+    pub fn drop_inputs(&self, pin: egui_snarl::InPinId) -> Self {
         let wires = self
             .wires
             .iter()
-            .filter(|wire| wire.in_pin != pin.id)
+            .filter(|wire| wire.in_pin != pin)
             .cloned()
             .collect::<im::OrdSet<Wire>>();
 
@@ -526,12 +537,124 @@ where
     }
 
     #[must_use]
-    pub fn drop_outputs(&self, pin: &egui_snarl::OutPin) -> Self {
+    pub fn drop_outputs(&self, pin: OutPinId) -> Self {
         let wires = self
             .wires
             .iter()
-            .filter(|wire| wire.out_pin != pin.id)
+            .filter(|wire| wire.out_pin != pin)
             .cloned()
+            .collect::<im::OrdSet<Wire>>();
+
+        Self {
+            wires,
+            ..self.clone()
+        }
+    }
+
+    /// Decrements successive outputs to fill the gap left by removal
+    #[must_use]
+    pub fn shift_inputs(&self, pin: egui_snarl::InPinId) -> Self {
+        let wires = self
+            .wires
+            .iter()
+            .filter(|wire| wire.in_pin != pin)
+            .map(|wire| {
+                if wire.in_pin.node != pin.node || wire.in_pin.input < pin.input {
+                    *wire
+                } else {
+                    Wire {
+                        in_pin: InPinId {
+                            node: pin.node,
+                            input: wire.in_pin.input - 1,
+                        },
+                        out_pin: wire.out_pin,
+                    }
+                }
+            })
+            .collect::<im::OrdSet<Wire>>();
+
+        Self {
+            wires,
+            ..self.clone()
+        }
+    }
+
+    /// Decrements successive outputs to fill the gap left by removal
+    #[must_use]
+    pub fn shift_outputs(&self, pin: OutPinId) -> Self {
+        let wires = self
+            .wires
+            .iter()
+            .filter(|wire| wire.out_pin != pin)
+            .map(|wire| {
+                if wire.out_pin.node != pin.node || wire.out_pin.output < pin.output {
+                    *wire
+                } else {
+                    Wire {
+                        out_pin: OutPinId {
+                            node: pin.node,
+                            output: wire.out_pin.output - 1,
+                        },
+                        in_pin: wire.in_pin,
+                    }
+                }
+            })
+            .collect::<im::OrdSet<Wire>>();
+
+        Self {
+            wires,
+            ..self.clone()
+        }
+    }
+
+    #[must_use]
+    pub fn swap_inputs(&self, a: InPinId, b: InPinId) -> Self {
+        let wires = self
+            .wires
+            .iter()
+            .map(|wire| {
+                if wire.in_pin == a {
+                    Wire {
+                        out_pin: wire.out_pin,
+                        in_pin: b,
+                    }
+                } else if wire.in_pin == b {
+                    Wire {
+                        out_pin: wire.out_pin,
+                        in_pin: a,
+                    }
+                } else {
+                    *wire
+                }
+            })
+            .collect::<im::OrdSet<Wire>>();
+
+        Self {
+            wires,
+            ..self.clone()
+        }
+    }
+
+    #[must_use]
+    pub fn swap_outputs(&self, a: OutPinId, b: OutPinId) -> Self {
+        let wires = self
+            .wires
+            .iter()
+            .map(|wire| {
+                if wire.out_pin == a {
+                    Wire {
+                        out_pin: b,
+                        in_pin: wire.in_pin,
+                    }
+                } else if wire.out_pin == b {
+                    Wire {
+                        out_pin: a,
+                        in_pin: wire.in_pin,
+                    }
+                } else {
+                    *wire
+                }
+            })
             .collect::<im::OrdSet<Wire>>();
 
         Self {
@@ -768,6 +891,13 @@ pub trait UiNode: DynNode {
 
     #[expect(unused_variables)]
     fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {}
+
+    fn has_footer(&self) -> bool {
+        false
+    }
+
+    #[expect(unused_variables)]
+    fn show_footer(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {}
 
     fn ghost_pin(&self, base_color: egui::Color32) -> PinInfo {
         PinInfo::circle()
