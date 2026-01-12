@@ -5,6 +5,7 @@ use egui_snarl::{
     InPinId, Node as SnarlNode, NodeId, OutPinId, Snarl,
     ui::{PinInfo, WireStyle},
 };
+use either::Either;
 use itertools::Itertools as _;
 use jsonschema::ValidationError;
 use kinded::Kinded;
@@ -13,6 +14,7 @@ use rig::{
     tool::{ToolSetError, server::ToolServerError},
 };
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 use std::{
     borrow::Cow,
     hash::Hash,
@@ -28,6 +30,7 @@ use crate::{
     config::SeedConfig,
     transmute::Transmuter,
     utils::{AtomicBuffer, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
+    workflow::nodes::{Finish, Start},
 };
 
 pub mod nodes;
@@ -179,20 +182,6 @@ pub struct RunContext {
     #[builder(default)]
     pub history: Arc<ArcSwap<ChatHistory>>,
 
-    /// A full copy of the current graph
-    #[builder(default)]
-    pub graph: ShadowGraph<WorkNode>,
-
-    /// The user's prompt that initiated the workflow run
-    #[builder(default)]
-    pub user_prompt: String,
-
-    #[builder(default)]
-    pub model: String,
-
-    #[builder(default)]
-    pub temperature: f64,
-
     #[builder(default)]
     pub seed: Option<SeedConfig>,
 
@@ -205,6 +194,48 @@ pub struct RunContext {
 
     #[builder(default)]
     pub errors: ErrorList<anyhow::Error>,
+}
+
+#[derive(TypedBuilder)]
+pub struct RootContext {
+    /// A full copy of the current graph
+    #[builder(default)]
+    pub graph: ShadowGraph<WorkNode>,
+
+    #[builder(default)]
+    pub model: String,
+
+    #[builder(default)]
+    pub temperature: f64,
+
+    /// Snapshot of the chat before the workflow is run
+    #[builder(default)]
+    pub history: Arc<ArcSwap<ChatHistory>>,
+
+    /// The user's prompt that initiated the workflow run
+    #[builder(default)]
+    pub user_prompt: String,
+}
+
+impl RootContext {
+    pub fn inputs(&self) -> Result<Vec<Option<Value>>, WorkflowError> {
+        let schema: serde_json::Value = if !self.graph.schema.is_empty() {
+            serde_json::from_str(&self.graph.schema)
+                .map_err(|_| WorkflowError::Conversion("Invalid input schema".into()))?
+        } else {
+            serde_json::json!({})
+        };
+
+        // TODO: Probably don't need most of these in the object
+        let values = vec![
+            Some(Value::Model(self.model.clone())),
+            Some(Value::Number(E64::assert(self.temperature))),
+            Some(Value::Chat(self.history.load().clone())),
+            Some(Value::Json(Arc::new(schema))),
+            Some(Value::Text(self.user_prompt.clone())),
+        ];
+        Ok(values)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -283,6 +314,7 @@ impl AsRef<Uuid> for GraphId {
 /// to make cloning-on-write cheap. This allows shadow graphs to be quickly compared using
 /// top-level pointer comparison. We could also use this to support undo/redo operations,
 /// though the shadow doesn't currently track positions.
+#[skip_serializing_none]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowGraph<T>
 where
@@ -302,6 +334,10 @@ where
 
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub schema: Arc<String>,
+
+    pub start: Option<NodeId>,
+
+    pub finish: Option<NodeId>,
 }
 
 impl<T: Clone + PartialEq> ShadowGraph<T> {
@@ -354,6 +390,8 @@ where
             disabled: Default::default(),
             description: Default::default(),
             schema: Default::default(),
+            start: Default::default(),
+            finish: Default::default(),
         }
     }
 
@@ -496,6 +534,80 @@ where
         Self {
             schema: Arc::new(schema.to_string()),
             ..self.clone()
+        }
+    }
+}
+
+impl ShadowGraph<WorkNode> {
+    pub fn repair(&self) -> Self {
+        let mut target = self.clone();
+        if let Some(id) = self.nodes.iter().find_map(|(id, n)| match &n.value {
+            WorkNode::Start(_) => Some(id),
+            _ => None,
+        }) {
+            target.start = Some(*id);
+        }
+
+        if let Some(id) = self.nodes.iter().find_map(|(id, n)| match &n.value {
+            WorkNode::Finish(_) => Some(id),
+            _ => None,
+        }) {
+            target.finish = Some(*id);
+        }
+
+        let keep = target.nodes.keys().cloned().collect_vec();
+        target.wires = target
+            .wires
+            .into_iter()
+            .filter(|w| keep.contains(&w.out_pin.node) && keep.contains(&w.in_pin.node))
+            .collect();
+
+        target
+    }
+
+    pub fn start_node(&self) -> Option<&Start> {
+        if let Some(node_id) = &self.start
+            && let Some(WorkNode::Start(node)) = self.nodes.get(node_id).map(|n| &n.value)
+        {
+            Some(node)
+        } else if let Some(node) = self.nodes.values().find_map(|n| match &n.value {
+            WorkNode::Start(node) => Some(node),
+            _ => None,
+        }) {
+            Some(node)
+        } else {
+            None
+        }
+    }
+
+    pub fn finish_node(&self) -> Option<&Finish> {
+        if let Some(node_id) = &self.finish
+            && let Some(WorkNode::Finish(node)) = self.nodes.get(node_id).map(|n| &n.value)
+        {
+            Some(node)
+        } else if let Some(node) = self.nodes.values().find_map(|n| match &n.value {
+            WorkNode::Finish(node) => Some(node),
+            _ => None,
+        }) {
+            Some(node)
+        } else {
+            None
+        }
+    }
+
+    pub fn start_kinds(&self) -> impl Iterator<Item = ValueKind> {
+        if let Some(start) = self.start_node() {
+            Either::Right((0..start.outputs()).map(|i| start.out_kind(i)))
+        } else {
+            Either::Left([].into_iter())
+        }
+    }
+
+    pub fn finish_kinds(&self) -> impl Iterator<Item = ValueKind> {
+        if let Some(finish) = self.finish_node() {
+            Either::Right((0..finish.inputs()).map(|i| finish.in_kinds(i)[0]))
+        } else {
+            Either::Left([].into_iter())
         }
     }
 }

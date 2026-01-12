@@ -20,7 +20,7 @@ use crate::{
     ui::workflow::{WorkflowViewer, filter_graph, get_snarl_style, merge_graphs},
     utils::ErrorDistiller as _,
     workflow::{
-        EditContext, RunContext,
+        EditContext, RootContext, RunContext,
         runner::{WorkflowRun, WorkflowRunner},
     },
 };
@@ -219,6 +219,10 @@ impl super::AppState {
                         ui.selectable_value(&mut current, name, name);
                     }
                     if current != &original {
+                        if settings.view(|s| s.autosave) {
+                            self.workflows.save();
+                        }
+
                         self.workflows.switch(current);
                     }
                 });
@@ -433,19 +437,28 @@ impl super::AppState {
                 .transmuter(self.transmuter.clone())
                 .interrupt(self.workflows.interrupt.clone())
                 .history(self.session.history.clone())
-                .graph(self.workflows.shadow.clone())
-                .user_prompt(self.prompt.clone())
-                .model(self.settings.view(|s| s.llm_model.clone()))
-                .temperature(self.settings.view(|s| s.temperature))
                 .seed(self.settings.view(|s| s.seed.clone()))
                 .errors(self.errors.clone())
                 .scratch(Some(self.session.scratch.clone()))
                 .streaming(self.settings.view(|s| s.streaming))
                 .build();
 
+            let inputs = RootContext::builder()
+                .history(self.session.history.clone())
+                .graph(self.workflows.shadow.clone())
+                .user_prompt(self.prompt.clone())
+                .model(self.settings.view(|s| s.llm_model.clone()))
+                .temperature(self.settings.view(|s| s.temperature))
+                .build()
+                .inputs()
+                .unwrap();
+
             self.workflows.interrupt.store(false, Ordering::Relaxed);
 
-            let mut exec = WorkflowRunner::builder().run_ctx(run_ctx).build();
+            let mut exec = WorkflowRunner::builder()
+                .inputs(inputs)
+                .run_ctx(run_ctx)
+                .build();
 
             self.workflows.node_state = exec.init(&self.workflows.shadow);
 
@@ -485,11 +498,11 @@ impl super::AppState {
 
                 duration.store(Arc::new(started.elapsed().unwrap_or_default()));
                 match exec.step(&mut target) {
-                    Ok(false) => break,
-                    Ok(true) => {
-                        let mut snarl = snarl_.blocking_write();
-                        *snarl = target.clone();
+                    Ok(false) => {
+                        exec.root_finish().unwrap();
+                        break;
                     }
+                    Ok(true) => {}
                     Err(err) => {
                         errors.push(err.into());
                         break;

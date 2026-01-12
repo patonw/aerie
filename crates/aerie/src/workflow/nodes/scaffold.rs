@@ -1,9 +1,9 @@
-use std::{borrow::Cow, convert::identity, sync::Arc};
+use std::{borrow::Cow, convert::identity};
 
-use decorum::E64;
 use egui::RichText;
 use egui_phosphor::regular::{ARROW_CIRCLE_DOWN, ARROW_CIRCLE_UP, TRASH};
 use egui_snarl::OutPinId;
+use im::vector;
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -12,10 +12,38 @@ use crate::{utils::message_text, workflow::WorkflowError};
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
+fn root_start_fields() -> im::Vector<(String, ValueKind)> {
+    vector![
+        ("model".into(), ValueKind::Model),
+        ("temperature".into(), ValueKind::Number),
+        ("conversation".into(), ValueKind::Chat),
+        ("schema".into(), ValueKind::Json),
+        ("input".into(), ValueKind::Text),
+    ]
+}
+
+fn is_default_start(value: &im::Vector<(String, ValueKind)>) -> bool {
+    *value == root_start_fields()
+}
+
+fn root_finish_fields() -> im::Vector<(String, ValueKind)> {
+    vector![("conversation".into(), ValueKind::Chat)]
+}
+
+fn is_default_finish(value: &im::Vector<(String, ValueKind)>) -> bool {
+    *value == root_finish_fields()
+}
+
 // These fields will always be set from the run context each execution.
 // Saving them to disk is just a waste.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Start {}
+pub struct Start {
+    #[serde(
+        default = "root_start_fields",
+        skip_serializing_if = "is_default_start"
+    )]
+    pub fields: im::Vector<(String, ValueKind)>,
+}
 
 impl std::hash::Hash for Start {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -37,39 +65,25 @@ impl DynNode for Start {
     }
 
     fn outputs(&self) -> usize {
-        5
+        self.fields.len()
     }
 
     fn out_kind(&self, out_pin: usize) -> ValueKind {
-        match out_pin {
-            0 => ValueKind::Model,
-            1 => ValueKind::Number,
-            2 => ValueKind::Chat,
-            3 => ValueKind::Json,
-            4 => ValueKind::Text,
-            _ => unreachable!(),
-        }
+        self.fields[out_pin].1
     }
 
     fn execute(
         &mut self,
-        ctx: &RunContext,
+        _ctx: &RunContext,
         _node_id: egui_snarl::NodeId,
-        _inputs: Vec<Option<Value>>,
+        inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        let schema: serde_json::Value = if !ctx.graph.schema.is_empty() {
-            serde_json::from_str(&ctx.graph.schema)
-                .map_err(|_| WorkflowError::Conversion("Invalid input schema".into()))?
-        } else {
-            serde_json::json!({})
-        };
-        Ok(vec![
-            Value::Model(ctx.model.clone()),
-            Value::Number(E64::assert(ctx.temperature)),
-            Value::Chat(ctx.history.load().clone()),
-            Value::Json(Arc::new(schema)),
-            Value::Text(ctx.user_prompt.clone()),
-        ])
+        // We don't show the inputs since they come from the runner and aren't wireable
+        // self.validate(&inputs)?;
+        Ok(inputs
+            .into_iter()
+            .map(|i| i.unwrap_or_default())
+            .collect_vec())
     }
 }
 
@@ -84,31 +98,20 @@ impl UiNode for Start {
         _ctx: &EditContext,
         pin_id: usize,
     ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                ui.label("model");
-            }
-            1 => {
-                ui.label("temperature");
-            }
-            2 => {
-                ui.label("conversation");
-            }
-            3 => {
-                ui.label("schema");
-            }
-            4 => {
-                ui.label("input");
-            }
-            _ => unreachable!(),
-        };
+        ui.label(&self.fields[pin_id].0);
 
         self.out_kind(pin_id).default_pin()
     }
 }
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Finish {}
+pub struct Finish {
+    #[serde(
+        default = "root_finish_fields",
+        skip_serializing_if = "is_default_finish"
+    )]
+    pub fields: im::Vector<(String, ValueKind)>,
+}
 
 impl DynNode for Finish {
     fn priority(&self) -> usize {
@@ -119,6 +122,9 @@ impl DynNode for Finish {
         0
     }
 
+    fn inputs(&self) -> usize {
+        self.fields.len()
+    }
     fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
         match in_pin {
             0 => Cow::Borrowed(&[ValueKind::Chat]),
@@ -128,27 +134,11 @@ impl DynNode for Finish {
 
     fn execute(
         &mut self,
-        ctx: &RunContext,
+        _ctx: &RunContext,
         _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
         self.validate(&inputs)?;
-
-        match &inputs[0] {
-            Some(Value::Chat(chat)) => {
-                if ctx.history.load().is_subset(chat) {
-                    ctx.history
-                        .store(Arc::new(chat.with_base(None).into_owned()));
-                } else {
-                    Err(WorkflowError::Conversion(
-                        "Final chat history is not related to the session. Refusing to overwrite."
-                            .into(),
-                    ))?;
-                }
-            }
-            None => {}
-            _ => unreachable!(),
-        }
 
         Ok(vec![])
     }
@@ -170,10 +160,7 @@ impl UiNode for Finish {
         pin_id: usize,
         _remote: Option<Value>, // TODO: rename to "wired" this should be ValueKind!
     ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => ui.label("conversation"),
-            _ => unreachable!(),
-        };
+        ui.label(&self.fields[pin_id].0);
 
         self.in_kinds(pin_id).first().unwrap().default_pin()
     }

@@ -1,5 +1,6 @@
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Local};
+use decorum::E64;
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use im::OrdSet;
 use itertools::{EitherOrBoth, Itertools};
@@ -119,6 +120,12 @@ pub struct WorkflowRunner {
 
     #[builder(default)]
     pub ready_nodes: BinaryHeap<Prioritized<NodeId>>,
+
+    #[builder(default)]
+    pub inputs: Vec<Option<Value>>,
+
+    #[builder(default)]
+    pub outputs: Vec<Option<Value>>,
 }
 
 // TODO methods to alter status when node controls or connections changed
@@ -127,7 +134,8 @@ impl WorkflowRunner {
         &mut self,
         graph: &ShadowGraph<WorkNode>,
     ) -> Arc<ArcSwap<im::OrdMap<NodeId, ExecState>>> {
-        self.graph = graph.clone();
+        self.graph = graph.repair();
+
         let mut node_state: im::OrdMap<NodeId, ExecState> = Default::default();
 
         for Wire { out_pin, in_pin } in &graph.wires {
@@ -210,91 +218,15 @@ impl WorkflowRunner {
             &snarl[node_id].kind()
         );
 
-        let dyn_node = (snarl[node_id]).as_dyn();
-        let single_out = dyn_node.outputs() == 1;
-        let num_outs = dyn_node.outputs();
+        let single_out = snarl[node_id].as_dyn().outputs() == 1;
+        let num_outs = snarl[node_id].as_dyn().outputs();
 
-        // Gather inputs
-        let mut inputs = (0..dyn_node.inputs())
-            .map(|_| None::<Value>)
-            .collect::<Vec<_>>();
-
-        // The input pin on this node that takes the failure with its remote output
-        let in_fail = (0..dyn_node.inputs()).find_map(|pin| {
-            let in_pin = snarl.in_pin(InPinId {
-                node: node_id,
-                input: pin,
-            });
-
-            let out_pin = in_pin
-                .remotes
-                .iter()
-                .find(|r| {
-                    matches!(
-                        snarl[r.node].as_dyn().out_kind(r.output),
-                        ValueKind::Failure
-                    )
-                })
-                .cloned();
-
-            out_pin.map(|out| (pin, out))
-        });
-
-        for (in_pin, remote) in self
-            .dependencies
-            .get(&node_id)
-            .unwrap_or(&Default::default())
-        {
-            if let Some(ExecState::Done(outputs)) = node_state.get(&remote.node)
-                && remote.output < outputs.len()
-            {
-                let value = &outputs[remote.output];
-                inputs[*in_pin] = if matches!(value, Value::Placeholder(_)) {
-                    None
-                } else {
-                    Some(value.clone())
-                };
-            } else {
-                // Unnecessary sanity checking
-                match snarl[node_id].kind() {
-                    WorkNodeKind::Fallback if *in_pin == 0 => {
-                        tracing::debug!("Fallback node fail pin {in_pin:?}");
-                    }
-                    WorkNodeKind::Select => {
-                        tracing::debug!("Select node empty pin {in_pin:?}");
-                    }
-                    _ => {
-                        tracing::warn!(
-                            "Falling back on legacy input value for {:?} pin #{:?}",
-                            snarl[node_id].kind(),
-                            in_pin
-                        );
-
-                        let other = snarl[remote.node].as_dyn();
-                        let value = other.value(remote.output);
-
-                        inputs[*in_pin] = Some(value);
-                    }
-                }
-            }
-        }
-
-        if let Some((in_pin, remote)) = in_fail
-            && let Some(ExecState::Failed(err)) = node_state.get(&remote.node)
-        {
-            tracing::info!(
-                "Setting failure node {:?} input on {}: {:?}",
-                snarl[node_id].kind(),
-                in_pin,
-                err
-            );
-
-            inputs[in_pin] = Some(Value::Failure(err.clone()));
-        }
+        let inputs = self.gather_inputs(snarl, node_id)?;
+        let inputs = self.inject_failure(snarl, node_id, inputs);
 
         // Find this node's connected failure output pin
         let out_fail = (0..num_outs).find_map(|pin| {
-            if !matches!(dyn_node.out_kind(pin), ValueKind::Failure) {
+            if !matches!(snarl[node_id].as_dyn().out_kind(pin), ValueKind::Failure) {
                 None
             } else {
                 let out_pin = snarl.out_pin(OutPinId {
@@ -334,6 +266,10 @@ impl WorkflowRunner {
 
         // When a pin outputs a placeholder, don't allow its remotes to become ready
         let mut blacklist: BTreeSet<NodeId> = Default::default();
+
+        if Some(node_id) == self.graph.finish {
+            self.outputs = inputs.clone();
+        }
 
         // Update run state of current node
         let succeeded = match snarl[node_id].execute(&self.run_ctx, node_id, inputs) {
@@ -461,5 +397,129 @@ impl WorkflowRunner {
         self.node_state.store(Arc::new(node_state));
 
         Ok(true)
+    }
+
+    fn gather_inputs(
+        &self,
+        snarl: &Snarl<WorkNode>,
+        node_id: NodeId,
+    ) -> Result<Vec<Option<Value>>, WorkflowError> {
+        if Some(node_id) == self.graph.start {
+            return Ok(self.inputs.clone());
+        }
+
+        let node_state = self.node_state.load();
+        let dyn_node = (snarl[node_id]).as_dyn();
+        // Gather inputs
+        let mut inputs = (0..dyn_node.inputs())
+            .map(|_| None::<Value>)
+            .collect::<Vec<_>>();
+
+        for (in_pin, remote) in self
+            .dependencies
+            .get(&node_id)
+            .unwrap_or(&Default::default())
+        {
+            if let Some(ExecState::Done(outputs)) = node_state.get(&remote.node)
+                && remote.output < outputs.len()
+            {
+                let value = &outputs[remote.output];
+                inputs[*in_pin] = if matches!(value, Value::Placeholder(_)) {
+                    None
+                } else {
+                    Some(value.clone())
+                };
+            } else {
+                // Unnecessary sanity checking
+                match snarl[node_id].kind() {
+                    WorkNodeKind::Fallback if *in_pin == 0 => {
+                        tracing::debug!("Fallback node fail pin {in_pin:?}");
+                    }
+                    WorkNodeKind::Select => {
+                        tracing::debug!("Select node empty pin {in_pin:?}");
+                    }
+                    _ => {
+                        tracing::warn!(
+                            "Falling back on legacy input value for {:?} pin #{:?}",
+                            snarl[node_id].kind(),
+                            in_pin
+                        );
+
+                        let other = snarl[remote.node].as_dyn();
+                        let value = other.value(remote.output);
+
+                        inputs[*in_pin] = Some(value);
+                    }
+                }
+            }
+        }
+        Ok(inputs)
+    }
+
+    fn inject_failure(
+        &self,
+        snarl: &mut Snarl<WorkNode>,
+        node_id: NodeId,
+        mut inputs: Vec<Option<Value>>,
+    ) -> Vec<Option<Value>> {
+        let node_state = self.node_state.load();
+        let dyn_node = (snarl[node_id]).as_dyn();
+        // The input pin on this node that takes the failure with its remote output
+        let in_fail = (0..dyn_node.inputs()).find_map(|pin| {
+            let in_pin = snarl.in_pin(InPinId {
+                node: node_id,
+                input: pin,
+            });
+
+            let out_pin = in_pin
+                .remotes
+                .iter()
+                .find(|r| {
+                    matches!(
+                        snarl[r.node].as_dyn().out_kind(r.output),
+                        ValueKind::Failure
+                    )
+                })
+                .cloned();
+
+            out_pin.map(|out| (pin, out))
+        });
+
+        if let Some((in_pin, remote)) = in_fail
+            && let Some(ExecState::Failed(err)) = node_state.get(&remote.node)
+        {
+            tracing::info!(
+                "Setting failure node {:?} input on {}: {:?}",
+                snarl[node_id].kind(),
+                in_pin,
+                err
+            );
+
+            inputs[in_pin] = Some(Value::Failure(err.clone()));
+        }
+        inputs
+    }
+
+    // TODO: refactor. Then we can move history out of RunContext
+    pub fn root_finish(&self) -> Result<(), WorkflowError> {
+        let ctx = &self.run_ctx;
+        let inputs = self.outputs.clone();
+        match &inputs[0] {
+            Some(Value::Chat(chat)) => {
+                if ctx.history.load().is_subset(chat) {
+                    ctx.history
+                        .store(Arc::new(chat.with_base(None).into_owned()));
+                } else {
+                    Err(WorkflowError::Conversion(
+                        "Final chat history is not related to the session. Refusing to overwrite."
+                            .into(),
+                    ))?;
+                }
+            }
+            None => {}
+            _ => unreachable!(),
+        }
+
+        Ok(())
     }
 }

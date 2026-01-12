@@ -1,3 +1,4 @@
+uuid: ae93ab94-ac67-4f3c-b24a-d3364bfc6490
 nodes:
   0:
     value: !Start {}
@@ -203,6 +204,7 @@ nodes:
       size:
         x: 300.0
         'y': 150.0
+      uuid: c1f1c997-69eb-4104-9c67-545a63043c31
     pos:
       x: 5338.54
       'y': 425.03525
@@ -460,5 +462,17 @@ schema: |-
       "pong": {
         "type": "number"
       }
-    }
+    },
+    "oneOf": [
+      {
+        "required": [
+          "ping"
+        ]
+      },
+      {
+        "required": [
+          "pong"
+        ]
+      }
+    ]
   }
