@@ -1,12 +1,14 @@
 use std::{
     borrow::Cow,
     cmp::{Eq, PartialEq},
+    collections::BinaryHeap,
     hash::Hash,
     sync::Arc,
 };
 
 use arc_swap::ArcSwap;
 use decorum::E32;
+use egui::mutex::Mutex;
 use itertools::{Itertools, iproduct};
 use rig::message::{AssistantContent, Message, ToolResultContent, UserContent};
 use rpds::{List, ListSync};
@@ -81,6 +83,55 @@ impl<T> AtomicBuffer<T> {
     }
 }
 
+pub struct PriorityQueue<T: Ord>(Mutex<(u64, BinaryHeap<(T, u64)>)>);
+
+impl<T: Ord> Default for PriorityQueue<T> {
+    fn default() -> Self {
+        Self(Mutex::new((u64::MAX, BinaryHeap::new())))
+    }
+}
+
+impl<T: Ord> PriorityQueue<T> {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn insert(&self, value: T) {
+        let mut data = self.0.lock();
+        let count = data.0;
+        data.1.push((value, count));
+        data.0 -= 1;
+    }
+
+    pub fn pop(&self) -> Option<T> {
+        let mut data = self.0.lock();
+        data.1.pop().map(|(t, _)| t)
+    }
+
+    /// Keep only the items matching the predicate. Returns the remainder in heap order
+    pub fn retain(&self, f: impl Fn(&T) -> bool) -> Vec<T> {
+        let mut remainder = vec![];
+        let mut target = BinaryHeap::new();
+        let mut data = self.0.lock();
+        while let Some((item, i)) = data.1.pop() {
+            if f(&item) {
+                target.push((item, i));
+            } else {
+                remainder.push(item);
+            }
+        }
+
+        data.1 = target;
+
+        remainder
+    }
+
+    /// Removes and returns items matching the predicate in heap order
+    pub fn withdraw(&self, f: impl Fn(&T) -> bool) -> Vec<T> {
+        self.retain(|item| !f(item))
+    }
+}
+
 pub trait CowExt<'a, T: Clone, E> {
     /// Flat map for cows.
     ///
@@ -126,6 +177,40 @@ impl<'a, T: Clone, E> CowExt<'a, T, E> for Cow<'a, T> {
             Cow::Borrowed(_) => self.clone(),
             Cow::Owned(res) => Cow::Owned(res),
         })
+    }
+}
+
+pub trait SwapAmend {
+    type Item;
+
+    fn amend<T>(&self, cb: impl FnOnce(&mut Self::Item) -> T) -> T;
+
+    fn transform(
+        &self,
+        cb: impl FnOnce(&Self::Item) -> anyhow::Result<Self::Item>,
+    ) -> anyhow::Result<()>;
+}
+
+impl<A: Clone> SwapAmend for Arc<ArcSwap<A>> {
+    type Item = A;
+
+    fn amend<T>(&self, cb: impl FnOnce(&mut Self::Item) -> T) -> T {
+        let mut item = self.load_full();
+        let result = cb(Arc::make_mut(&mut item));
+        self.store(item);
+
+        result
+    }
+
+    fn transform(
+        &self,
+        cb: impl FnOnce(&Self::Item) -> anyhow::Result<Self::Item>,
+    ) -> anyhow::Result<()> {
+        let item = self.load();
+
+        let result = cb(&item)?;
+        self.store(Arc::new(result));
+        Ok(())
     }
 }
 

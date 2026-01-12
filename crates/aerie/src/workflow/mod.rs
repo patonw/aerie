@@ -97,9 +97,25 @@ impl ValueKind {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct PreviewData(pub Arc<ArcSwap<im::OrdMap<Uuid, crate::workflow::Value>>>);
+
+impl PreviewData {
+    pub fn update(&self, uuid: Uuid, value: Value) {
+        self.0.rcu(|data| data.update(uuid, value.clone()));
+    }
+
+    pub fn value(&self, uuid: Uuid) -> Option<Value> {
+        self.0.load().get(&uuid).cloned()
+    }
+}
+
 #[derive(Clone, TypedBuilder)]
 pub struct EditContext {
     pub toolbox: Arc<Toolbox>,
+
+    #[builder(default)]
+    pub previews: PreviewData,
 
     #[builder(default)]
     pub errors: ErrorList<anyhow::Error>,
@@ -138,6 +154,7 @@ impl EditContext {
     }
 }
 
+#[derive(Clone)]
 pub struct OutputChannel(
     pub flume::Sender<(String, Value)>,
     pub flume::Receiver<(String, Value)>,
@@ -160,7 +177,7 @@ impl OutputChannel {
     }
 }
 
-#[derive(TypedBuilder)]
+#[derive(Clone, TypedBuilder)]
 pub struct RunContext {
     pub runtime: tokio::runtime::Handle,
 
@@ -168,6 +185,9 @@ pub struct RunContext {
 
     #[builder(default)]
     pub streaming: bool,
+
+    #[builder(default)]
+    pub previews: PreviewData,
 
     #[builder(default)]
     pub outputs: OutputChannel,
@@ -371,10 +391,16 @@ impl TryFrom<ShadowGraph<WorkNode>> for Snarl<WorkNode> {
     fn try_from(that: ShadowGraph<WorkNode>) -> Result<Self, Self::Error> {
         // Well, this is less than ideal. Can't construct snarl nodes, let alone programmatically
         // recreate the graph with same ids. API only allows us to insert/remove with inner data.
-        let value = serde_json::to_value(that)?;
+        let value = serde_json::to_value(&that)?;
 
-        let snarl = serde_json::from_value(value)?;
-        Ok(fixup_workflow(snarl))
+        let mut snarl: Snarl<WorkNode> = serde_json::from_value(value)?;
+
+        // Transfer transient state back to nodes
+        for (node_id, meta) in &that.nodes {
+            snarl[*node_id] = meta.value.clone();
+        }
+
+        Ok(snarl)
     }
 }
 

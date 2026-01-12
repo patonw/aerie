@@ -10,6 +10,7 @@ pub mod json;
 pub mod misc;
 pub mod primatives;
 pub mod scaffold;
+pub mod subgraph;
 
 pub use agent::*;
 pub use chat::*;
@@ -18,6 +19,7 @@ pub use json::*;
 pub use misc::*;
 pub use primatives::*;
 pub use scaffold::*;
+pub use subgraph::*;
 
 pub const MIN_WIDTH: f32 = 128.0;
 pub const MIN_HEIGHT: f32 = 32.0;
@@ -38,7 +40,7 @@ impl<T> NoopExt for T {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Serialize, Deserialize, Kinded)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, Kinded)]
 pub enum WorkNode {
     Comment(CommentNode),
     Preview(Preview),
@@ -67,6 +69,7 @@ pub enum WorkNode {
     TransformJson(TransformJson),
     TemplateNode(TemplateNode),
     GatherJson(GatherJson),
+    Subgraph(Subgraph),
 }
 
 impl WorkNode {
@@ -99,6 +102,7 @@ impl WorkNode {
             WorkNode::TransformJson(node) => node,
             WorkNode::TemplateNode(node) => node,
             WorkNode::GatherJson(node) => node,
+            WorkNode::Subgraph(node) => node,
         } {
             #[call(noop)]
             pub fn as_dyn(&self) -> &dyn DynNode;
@@ -126,5 +130,10 @@ impl WorkNode {
     #[inline]
     pub fn is_eager(&self) -> bool {
         matches!(self, WorkNode::Select(_))
+    }
+
+    #[inline]
+    pub fn is_subgraph(&self) -> bool {
+        matches!(self, WorkNode::Subgraph(_))
     }
 }

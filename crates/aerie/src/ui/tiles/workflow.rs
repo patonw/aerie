@@ -17,10 +17,10 @@ use itertools::Itertools;
 
 use crate::{
     config::ConfigExt as _,
-    ui::workflow::{WorkflowViewer, filter_graph, get_snarl_style, merge_graphs},
+    ui::workflow::get_snarl_style,
     utils::ErrorDistiller as _,
     workflow::{
-        EditContext, RootContext, RunContext,
+        RootContext, RunContext,
         runner::{WorkflowRun, WorkflowRunner},
     },
 };
@@ -42,105 +42,29 @@ impl super::AppState {
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            let shadow = self.workflows.shadow.clone();
-            if self.workflows.viewer.is_none() {
-                let edit_ctx = EditContext::builder()
-                    .toolbox(self.agent_factory.toolbox.clone())
-                    .errors(self.errors.clone())
-                    .build();
-
-                self.workflows.viewer = Some(WorkflowViewer::builder().edit_ctx(edit_ctx).build());
-            }
-
-            let Some(viewer) = &mut self.workflows.viewer else {
-                unreachable!()
-            };
-
-            // TODO: which of these actually needs updating every frame?
-            viewer.view_id = egui::Id::new(format!(
-                "{} viewer #{}",
-                self.workflows.editing, self.workflows.switch_count
-            ));
-            viewer.shadow = shadow;
-            viewer.running = running;
-            viewer.frozen = self.workflows.frozen;
-            viewer.node_state = self.workflows.node_state.clone();
+            let mut viewer = self.workflow_viewer(self.workflows.view_stack.clone());
 
             // Forces new widget state in children after switching or undos so that
             // Snarl will draw our persisted positions and sizes.
-            ui.push_id(self.workflows.switch_count, |ui| {
-                let mut snarl = self.workflows.snarl.blocking_write();
+            ui.push_id(self.workflows.view_stack.view_id(), |ui| {
+                let mut snarl = self.workflows.view_stack.root_snarl().unwrap();
+
                 let widget = SnarlWidget::new()
                     .id(viewer.view_id)
                     .style(get_snarl_style());
-                widget.show(&mut snarl, viewer, ui);
+                widget.show(&mut snarl, &mut viewer, ui);
+
+                // Unfortunately, there's no event for node movement so we have to
+                // iterate through the whole collection to find moved nodes.
+                viewer.cast_positions(&snarl);
 
                 // TODO: only when inside canvas
-                if ui.ctx().input_mut(|input| {
-                    input
-                        .events
-                        .iter()
-                        .any(|ev| matches!(ev, egui::Event::Copy))
-                }) {
-                    let pos = viewer.transform.inverse()
-                        * ui.ctx()
-                            .input(|i| i.pointer.interact_pos())
-                            .unwrap_or_default();
+                viewer.handle_copy(ui, widget);
 
-                    let selection = widget.get_selected_nodes(ui);
-                    if !selection.is_empty() {
-                        let copied =
-                            filter_graph(self.workflows.shadow.clone(), pos.to_vec2(), &selection);
-                        if let Ok(text) = serde_yml::to_string(&copied) {
-                            ui.ctx().copy_text(text);
-                        }
-                    }
-                }
-
-                if !self.workflows.frozen
-                    && let Some(text) = ui.ctx().input_mut(|input| {
-                        input.events.iter().find_map(|ev| {
-                            if let egui::Event::Paste(text) = ev {
-                                Some(text.clone())
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                {
-                    let pos = viewer.transform.inverse()
-                        * ui.ctx()
-                            .input(|i| i.pointer.interact_pos())
-                            .unwrap_or_default();
-
-                    if let Ok(shadow) = serde_yml::from_str(&text) {
-                        let inserted =
-                            merge_graphs(&mut snarl, &mut viewer.shadow, pos.to_vec2(), shadow);
-                        widget.update_selected_nodes(ui, |nodes| {
-                            *nodes = inserted;
-                        });
-                    }
+                if !self.workflows.frozen {
+                    viewer.handle_paste(&mut snarl, ui, widget);
                 }
             });
-
-            let shadow = viewer.shadow.clone();
-
-            self.workflows.cast_shadow(shadow);
-
-            egui::Area::new(egui::Id::new("workflow controls"))
-                .default_pos(egui::pos2(16.0, 32.0))
-                .default_size(egui::vec2(100.0, 100.0))
-                .constrain_to(ui.max_rect())
-                .movable(true)
-                .show(ui.ctx(), |ui| {
-                    egui::Frame::dark_canvas(&Default::default())
-                        .inner_margin(8.0)
-                        .outer_margin(4.0)
-                        .corner_radius(8)
-                        .show(ui, |ui| {
-                            self.workflow_controls(ui);
-                        });
-                });
 
             egui::Window::new(INFO)
                 .title_bar(false)
@@ -170,8 +94,7 @@ impl super::AppState {
                             );
 
                             if let Cow::Owned(desc) = description {
-                                self.workflows
-                                    .cast_shadow(self.workflows.shadow.with_description(&desc));
+                                viewer.shadow = viewer.shadow.with_description(&desc);
                             }
                         } else {
                             let mut schema = Cow::Borrowed(self.workflows.shadow.schema.as_str());
@@ -183,12 +106,31 @@ impl super::AppState {
                             );
 
                             if let Cow::Owned(schema) = schema {
-                                self.workflows
-                                    .cast_shadow(self.workflows.shadow.with_schema(&schema));
+                                viewer.shadow = viewer.shadow.with_schema(&schema);
                             }
                         }
                     });
-                })
+                });
+
+            let shadow = viewer.shadow.clone();
+            self.workflows.view_stack.propagate(shadow).unwrap();
+            let shadow = self.workflows.view_stack.root();
+            self.workflows.cast_shadow(shadow);
+
+            egui::Area::new(egui::Id::new("workflow controls"))
+                .default_pos(egui::pos2(16.0, 32.0))
+                .default_size(egui::vec2(100.0, 100.0))
+                .constrain_to(ui.max_rect())
+                .movable(true)
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::dark_canvas(&Default::default())
+                        .inner_margin(8.0)
+                        .outer_margin(4.0)
+                        .corner_radius(8)
+                        .show(ui, |ui| {
+                            self.workflow_controls(ui);
+                        });
+                });
         });
     }
 
@@ -422,8 +364,7 @@ impl super::AppState {
     // TODO: decouple editing and execution workflows
     /// Runs the workflow currently being edited and updates nodes in the viewer with results.
     pub fn exec_workflow(&mut self) {
-        let snarl_ = self.workflows.snarl.clone();
-        let mut target = { self.workflows.snarl.blocking_read().clone() };
+        let mut target = self.workflows.view_stack.root_snarl().unwrap();
         let task_count_ = self.task_count.clone();
 
         self.settings
@@ -434,6 +375,7 @@ impl super::AppState {
             let run_ctx = RunContext::builder()
                 .runtime(self.rt.clone())
                 .agent_factory(self.agent_factory.clone())
+                .previews(self.workflows.previews.clone())
                 .transmuter(self.transmuter.clone())
                 .interrupt(self.workflows.interrupt.clone())
                 .history(self.session.history.clone())

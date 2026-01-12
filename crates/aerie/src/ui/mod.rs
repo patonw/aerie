@@ -5,9 +5,13 @@ pub mod state;
 pub mod tiles;
 pub mod workflow;
 
+use egui_snarl::NodeId;
 pub use state::AppState;
 
-use crate::workflow::nodes::{MIN_HEIGHT, MIN_WIDTH};
+use crate::{
+    utils::PriorityQueue,
+    workflow::nodes::{MIN_HEIGHT, MIN_WIDTH},
+};
 
 pub enum Pane {
     Settings,
@@ -19,6 +23,36 @@ pub enum Pane {
     Messages,
     Outputs,
 }
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum AppEvent {
+    EnterSubgraph(NodeId),
+    LeaveSubgraph,
+    // TODO: pin events
+}
+
+impl AppEvent {
+    pub fn priority(&self) -> i64 {
+        use AppEvent::*;
+        match self {
+            EnterSubgraph(_) | LeaveSubgraph => -100,
+        }
+    }
+}
+
+impl PartialOrd for AppEvent {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AppEvent {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.priority().cmp(&other.priority())
+    }
+}
+
+pub type AppEvents = PriorityQueue<AppEvent>;
 
 fn user_bubble<R>(ui: &mut egui::Ui, cb_r: impl FnMut(&mut egui::Ui) -> R) -> R {
     egui::Sides::new()
