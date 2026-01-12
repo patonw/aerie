@@ -276,7 +276,7 @@ impl WorkflowStore for WorkflowStoreDir {
                 .rcu(|cache| cache.update(name.to_string(), value.clone()));
 
             let path = self.path.join(name).with_extension("yml");
-            tracing::info!("Saving {name} to {path:?}: {value:?}");
+            tracing::debug!("Saving {name} to {path:?}: {value:?}");
             let writer = OpenOptions::new()
                 .write(true)
                 .create(true)

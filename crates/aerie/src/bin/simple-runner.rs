@@ -4,7 +4,7 @@ use aerie::{
     AgentFactory, ChatSession, Settings,
     utils::message_text,
     workflow::{
-        RunContext, ShadowGraph, WorkNode,
+        RootContext, RunContext, ShadowGraph, WorkNode,
         runner::WorkflowRunner,
         store::{WorkflowStore as _, WorkflowStoreDir},
         write_value,
@@ -174,10 +174,6 @@ fn main() -> anyhow::Result<()> {
             .runtime(rt.handle().clone())
             .agent_factory(agent_factory.clone())
             .history(session.history.clone())
-            .graph(shadow.clone())
-            .user_prompt(prompt.clone())
-            .model(settings.llm_model.clone())
-            .temperature(settings.temperature)
             .seed(settings.seed.clone())
             .build();
 
@@ -195,18 +191,34 @@ fn main() -> anyhow::Result<()> {
                 .spawn(console_output(run_ctx.outputs.receiver()))
         };
 
-        let mut exec = WorkflowRunner::builder().run_ctx(run_ctx).build();
+        let inputs = RootContext::builder()
+            .history(session.history.clone())
+            .graph(shadow.clone())
+            .user_prompt(prompt.clone())
+            .model(settings.llm_model.clone())
+            .temperature(settings.temperature)
+            .build()
+            .inputs()?;
+
+        let mut exec = WorkflowRunner::builder()
+            .inputs(inputs)
+            .run_ctx(run_ctx)
+            .build();
 
         exec.init(&shadow);
         let mut snarl = Snarl::try_from(shadow.clone())?;
 
         let result = loop {
             match exec.step(&mut snarl) {
-                Ok(false) => break Ok(false),
+                Ok(false) => {
+                    exec.root_finish()?;
+                    break Ok(false);
+                }
                 err @ Err(_) => break err,
                 _ => {}
             }
         };
+
         drop(exec);
 
         rt.block_on(async move {

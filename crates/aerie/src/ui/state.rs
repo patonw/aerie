@@ -232,18 +232,17 @@ impl<W: WorkflowStore> WorkflowState<W> {
             return;
         }
 
-        // Stash current editee if changes unsaved
-        if !self.shadow.fast_eq(&self.baseline) {
-            self.undo_stack
-                .entry(self.editing.clone())
-                .or_default()
-                .push_front((self.modtime, self.shadow.clone()));
-        }
+        // Stash current editee to preserve unsaved changes
+        self.undo_stack
+            .entry(self.editing.clone())
+            .or_default()
+            .push_front((self.modtime, self.shadow.clone()));
 
         self.baseline = self.store.get(workflow_name).unwrap_or_default();
         if let Some(undos) = self.undo_stack.get_mut(workflow_name)
             && let Some((mt, sg)) = undos.pop_front()
         {
+            // Unstash any workflows we were previously editing
             self.shadow = sg;
             self.modtime = mt;
         } else {
