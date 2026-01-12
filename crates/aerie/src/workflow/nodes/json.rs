@@ -11,7 +11,7 @@ use crate::{
         shortcuts::{Shortcut, squelch},
     },
     utils::{extract_json, message_text},
-    workflow::{DynNode, EditContext, RunContext, UiNode, Value, WorkflowError},
+    workflow::{DynNode, EditContext, FlexNode, RunContext, UiNode, Value, WorkflowError},
 };
 
 use super::ValueKind;
@@ -29,6 +29,9 @@ pub struct ParseJson {
 
     size: Option<crate::utils::EVec2>,
 }
+
+#[typetag::serde]
+impl FlexNode for ParseJson {}
 
 impl DynNode for ParseJson {
     fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
@@ -215,6 +218,9 @@ pub struct ValidateJson {
     size: Option<crate::utils::EVec2>,
 }
 
+#[typetag::serde]
+impl FlexNode for ValidateJson {}
+
 impl DynNode for ValidateJson {
     fn inputs(&self) -> usize {
         2
@@ -348,6 +354,9 @@ pub struct TransformJson {
     size: Option<crate::utils::EVec2>,
 }
 
+#[typetag::serde]
+impl FlexNode for TransformJson {}
+
 impl DynNode for TransformJson {
     fn inputs(&self) -> usize {
         2
@@ -455,6 +464,9 @@ impl UiNode for TransformJson {
 pub struct GatherJson {
     count: usize,
 }
+
+#[typetag::serde]
+impl FlexNode for GatherJson {}
 
 impl DynNode for GatherJson {
     fn inputs(&self) -> usize {

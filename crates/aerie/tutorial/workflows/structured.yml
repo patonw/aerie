@@ -1,422 +1,446 @@
+---
 nodes:
   0:
-    value: !Start {}
+    value:
+      Start: {}
     pos:
       x: -1060.0529
-      'y': -3349.4878
+      y: -3349.4878
     open: true
   1:
-    value: !Finish {}
+    value:
+      Finish: {}
     pos:
       x: 2145.6956
-      'y': -4249.3647
+      y: -4249.3647
     open: true
   2:
-    value: !TransformJson
-      filter: |-
-        {
-          "users" : [.[0], .[1]],
-          "greeting": .[2],
-          "temperature": .[3]
-        }
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      TransformJson:
+        filter: |-
+          {
+            "users" : [.[0], .[1]],
+            "greeting": .[2],
+            "temperature": .[3]
+          }
+        size:
+          x: 300
+          y: 150
     pos:
       x: 968.5644
-      'y': -3110.83
+      y: -3110.83
     open: true
   3:
-    value: !Comment
-      comment: |-
-        Schema itself must be a JSON value.
-
-        You can use online tools to generate schemas from examples.
-
-        Easier yet, describe the structure to an LLM to have it generate the schema and some examples.
-      size:
-        x: 380.0
-        'y': 338.46875
+    value:
+      CommentNode:
+        comment: |-
+          Schema itself must be a JSON value.
+          
+          You can use online tools to generate schemas from examples.
+          
+          Easier yet, describe the structure to an LLM to have it generate the schema and some examples.
+        size:
+          x: 380
+          y: 338.46875
     pos:
       x: -552.5858
-      'y': -2641.5146
+      y: -2641.5146
     open: true
   4:
-    value: !GatherJson
-      count: 4
+    value:
+      GatherJson:
+        count: 4
     pos:
       x: 531.62
-      'y': -2983.694
+      y: -2983.694
     open: true
   5:
-    value: !ValidateJson {}
+    value:
+      ValidateJson: {}
     pos:
       x: 40.78583
-      'y': -2886.561
+      y: -2886.561
     open: true
   6:
-    value: !ParseJson
-      text: |+
-        {
-          "$id": "https://example.com/user-profile.schema.json",
-          "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "description": "A representation of a user profile",
-          "type": "object",
-          "required": ["username", "email"],
-          "properties": {
-            "username": {
-              "type": "string"
-            },
-            "email": {
-              "type": "string",
-              "format": "email"
-            },
-            "fullName": {
-              "type": "string"
-            },
-            "age": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "location": {
-              "type": "string"
-            },
-            "interests": {
-              "type": "array",
-              "items": {
+    value:
+      ParseJson:
+        text: |
+          {
+            "$id": "https://example.com/user-profile.schema.json",
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "description": "A representation of a user profile",
+            "type": "object",
+            "required": ["username", "email"],
+            "properties": {
+              "username": {
                 "type": "string"
+              },
+              "email": {
+                "type": "string",
+                "format": "email"
+              },
+              "fullName": {
+                "type": "string"
+              },
+              "age": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "location": {
+                "type": "string"
+              },
+              "interests": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             }
           }
-        }
-
-      size:
-        x: 300.0
-        'y': 150.0
+          
+        size:
+          x: 300
+          y: 150
     pos:
       x: -547.88586
-      'y': -3043.341
+      y: -3043.341
     open: true
   7:
-    value: !Preview
-      size:
-        x: 612.78125
-        'y': 280.59375
+    value:
+      Preview:
+        size:
+          x: 612.78125
+          y: 280.59375
     pos:
       x: 1469.585
-      'y': -2503.3445
+      y: -2503.3445
     open: true
   8:
-    value: !TemplateNode
-      template: |-
-        {{ greeting }}
-        The temperature is {{ temperature }}.
-
-        {% for user in users -%}
-        Happy birthday, {{ user.fullName }} from {{ user.location }}.
-        You are now {{user.age}} years old.
-
-        {% endfor %}
-      size:
-        x: 523.0
-        'y': 337.84375
+    value:
+      TemplateNode:
+        template: |-
+          {{ greeting }}
+          The temperature is {{ temperature }}.
+          
+          {% for user in users -%}
+          Happy birthday, {{ user.fullName }} from {{ user.location }}.
+          You are now {{user.age}} years old.
+          
+          {% endfor %}
+        size:
+          x: 523
+          y: 337.84375
     pos:
       x: 1536.7391
-      'y': -3479.971
+      y: -3479.971
     open: true
   9:
-    value: !Preview
-      size:
-        x: 449.53125
-        'y': 415.875
+    value:
+      Preview:
+        size:
+          x: 449.53125
+          y: 415.875
     pos:
       x: 2317.9812
-      'y': -3228.9668
+      y: -3228.9668
     open: true
   10:
-    value: !Comment
-      comment: |-
-        Redundant since Structured Output already validates against the schema.
-
-        Try opening the Help from the context menu of the Validate node.
-      size:
-        x: 273.0
-        'y': 292.6875
+    value:
+      CommentNode:
+        comment: |-
+          Redundant since Structured Output already validates against the schema.
+          
+          Try opening the Help from the context menu of the Validate node.
+        size:
+          x: 273
+          y: 292.6875
     pos:
       x: 47.7918
-      'y': -2645.8696
+      y: -2645.8696
     open: true
   11:
-    value: !Comment
-      comment: You can gather JSON documents, texts and numbers into a single JSON value
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CommentNode:
+        comment: "You can gather JSON documents, texts and numbers into a single JSON value"
+        size:
+          x: 300
+          y: 150
     pos:
       x: 520.4035
-      'y': -2664.0308
+      y: -2664.0308
     open: true
   12:
-    value: !Structured
-      prompt: Generate an example user in this format with a wild west theme.
-      size:
-        x: 300.0
-        'y': 150.0
-      retries: 3
-      extract: true
+    value:
+      StructuredChat:
+        prompt: Generate an example user in this format with a wild west theme.
+        size:
+          x: 300
+          y: 150
+        retries: 3
+        extract: true
     pos:
       x: 12.184714
-      'y': -3503.0635
+      y: -3503.0635
     open: true
   13:
-    value: !Agent
-      model: ''
-      preamble: |-
-        Generate a character inspired by the user's prompt.
-        Structure your response in the requested format using the supplied tool.
-      temperature: 0.0
-      size:
-        x: 258.28125
-        'y': 270.53125
+    value:
+      AgentNode:
+        model: ""
+        preamble: |-
+          Generate a character inspired by the user's prompt.
+          Structure your response in the requested format using the supplied tool.
+        temperature: 0
+        size:
+          x: 258.28125
+          y: 270.53125
     pos:
       x: -543.1476
-      'y': -3871.2583
+      y: -3871.2583
     open: true
   14:
-    value: !MaskChat
-      limit: 0
+    value:
+      MaskHistory:
+        limit: 0
     pos:
       x: -552.2143
-      'y': -3286.0288
+      y: -3286.0288
     open: true
   15:
-    value: !Text
-      value: Hello, world!
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Text:
+        value: "Hello, world!"
+        size:
+          x: 300
+          y: 150
     pos:
       x: 37.558872
-      'y': -2117.0977
+      y: -2117.0977
     open: true
   16:
-    value: !Comment
-      comment: Aside from templates, this can also be transformed into tool call arguments.
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CommentNode:
+        comment: "Aside from templates, this can also be transformed into tool call arguments."
+        size:
+          x: 300
+          y: 150
     pos:
       x: 987.4609
-      'y': -2740.3323
+      y: -2740.3323
     open: true
   17:
-    value: !Comment
-      comment: See the error-handling example on dealing with LLMs that do not consistently produce structured data.
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CommentNode:
+        comment: See the error-handling example on dealing with LLMs that do not consistently produce structured data.
+        size:
+          x: 300
+          y: 150
     pos:
       x: 759.8141
-      'y': -3415.646
+      y: -3415.646
     open: true
   18:
-    value: !Tools
-      toolset:
-      - '*/*'
-      size:
-        x: 250.0
-        'y': 250.0
+    value:
+      Tools:
+        toolset:
+          - "*/*"
+        size:
+          x: 250
+          y: 250
     pos:
       x: -1089.8729
-      'y': -3737.343
+      y: -3737.343
     open: true
   19:
-    value: !CreateMessage
-      kind: Assistant
-      content: ''
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CreateMessage:
+        kind: Assistant
+        content: ""
+        size:
+          x: 300
+          y: 150
     pos:
       x: 2326.287
-      'y': -3661.7856
+      y: -3661.7856
     open: true
   21:
-    value: !ExtendHistory
-      count: 1
+    value:
+      ExtendHistory:
+        count: 1
     pos:
       x: 1315.6727
-      'y': -4046.609
+      y: -4046.609
     open: true
   22:
-    value: !GraftChat {}
+    value:
+      GraftHistory: {}
     pos:
       x: 1726.09
-      'y': -4304.893
+      y: -4304.893
     open: true
   23:
-    value: !Comment
-      comment: |-
-        Sometimes it helps to mention the tool name in the system message. Wtih better models it shouldn't be needed.
-
-        Then again, some models just refuse to see the tools given to them in some circumstances.
-
-        You should check the logs to verify.
-      size:
-        x: 407.0
-        'y': 354.5625
+    value:
+      CommentNode:
+        comment: |-
+          Sometimes it helps to mention the tool name in the system message. Wtih better models it shouldn't be needed.
+          
+          Then again, some models just refuse to see the tools given to them in some circumstances.
+          
+          You should check the logs to verify.
+        size:
+          x: 407
+          y: 354.5625
     pos:
       x: -63.55568
-      'y': -3992.2476
+      y: -3992.2476
     open: true
 wires:
-- out_pin:
-    node: 0
-    output: 0
-  in_pin:
-    node: 13
-    input: 1
-- out_pin:
-    node: 0
-    output: 1
-  in_pin:
-    node: 4
-    input: 3
-- out_pin:
-    node: 0
-    output: 1
-  in_pin:
-    node: 13
-    input: 2
-- out_pin:
-    node: 0
-    output: 2
-  in_pin:
-    node: 14
-    input: 0
-- out_pin:
-    node: 0
-    output: 2
-  in_pin:
-    node: 22
-    input: 0
-- out_pin:
-    node: 0
-    output: 4
-  in_pin:
-    node: 12
-    input: 3
-- out_pin:
-    node: 2
-    output: 0
-  in_pin:
-    node: 7
-    input: 0
-- out_pin:
-    node: 2
-    output: 0
-  in_pin:
-    node: 8
-    input: 1
-- out_pin:
-    node: 4
-    output: 0
-  in_pin:
-    node: 2
-    input: 1
-- out_pin:
-    node: 5
-    output: 0
-  in_pin:
-    node: 4
-    input: 0
-- out_pin:
-    node: 5
-    output: 0
-  in_pin:
-    node: 4
-    input: 1
-- out_pin:
-    node: 6
-    output: 0
-  in_pin:
-    node: 5
-    input: 0
-- out_pin:
-    node: 6
-    output: 0
-  in_pin:
-    node: 12
-    input: 2
-- out_pin:
-    node: 8
-    output: 0
-  in_pin:
-    node: 9
-    input: 0
-- out_pin:
-    node: 8
-    output: 0
-  in_pin:
-    node: 19
-    input: 0
-- out_pin:
-    node: 12
-    output: 0
-  in_pin:
-    node: 21
-    input: 0
-- out_pin:
-    node: 12
-    output: 3
-  in_pin:
-    node: 5
-    input: 1
-- out_pin:
-    node: 13
-    output: 0
-  in_pin:
-    node: 12
-    input: 0
-- out_pin:
-    node: 14
-    output: 0
-  in_pin:
-    node: 12
-    input: 1
-- out_pin:
-    node: 15
-    output: 0
-  in_pin:
-    node: 4
-    input: 2
-- out_pin:
-    node: 18
-    output: 0
-  in_pin:
-    node: 13
-    input: 3
-- out_pin:
-    node: 19
-    output: 0
-  in_pin:
-    node: 21
-    input: 1
-- out_pin:
-    node: 21
-    output: 0
-  in_pin:
-    node: 22
-    input: 1
-- out_pin:
-    node: 22
-    output: 0
-  in_pin:
-    node: 1
-    input: 0
+  - out_pin:
+      node: 0
+      output: 0
+    in_pin:
+      node: 13
+      input: 1
+  - out_pin:
+      node: 0
+      output: 1
+    in_pin:
+      node: 4
+      input: 3
+  - out_pin:
+      node: 0
+      output: 1
+    in_pin:
+      node: 13
+      input: 2
+  - out_pin:
+      node: 0
+      output: 2
+    in_pin:
+      node: 14
+      input: 0
+  - out_pin:
+      node: 0
+      output: 2
+    in_pin:
+      node: 22
+      input: 0
+  - out_pin:
+      node: 0
+      output: 4
+    in_pin:
+      node: 12
+      input: 3
+  - out_pin:
+      node: 2
+      output: 0
+    in_pin:
+      node: 7
+      input: 0
+  - out_pin:
+      node: 2
+      output: 0
+    in_pin:
+      node: 8
+      input: 1
+  - out_pin:
+      node: 4
+      output: 0
+    in_pin:
+      node: 2
+      input: 1
+  - out_pin:
+      node: 5
+      output: 0
+    in_pin:
+      node: 4
+      input: 0
+  - out_pin:
+      node: 5
+      output: 0
+    in_pin:
+      node: 4
+      input: 1
+  - out_pin:
+      node: 6
+      output: 0
+    in_pin:
+      node: 5
+      input: 0
+  - out_pin:
+      node: 6
+      output: 0
+    in_pin:
+      node: 12
+      input: 2
+  - out_pin:
+      node: 8
+      output: 0
+    in_pin:
+      node: 9
+      input: 0
+  - out_pin:
+      node: 8
+      output: 0
+    in_pin:
+      node: 19
+      input: 0
+  - out_pin:
+      node: 12
+      output: 0
+    in_pin:
+      node: 21
+      input: 0
+  - out_pin:
+      node: 12
+      output: 3
+    in_pin:
+      node: 5
+      input: 1
+  - out_pin:
+      node: 13
+      output: 0
+    in_pin:
+      node: 12
+      input: 0
+  - out_pin:
+      node: 14
+      output: 0
+    in_pin:
+      node: 12
+      input: 1
+  - out_pin:
+      node: 15
+      output: 0
+    in_pin:
+      node: 4
+      input: 2
+  - out_pin:
+      node: 18
+      output: 0
+    in_pin:
+      node: 13
+      input: 3
+  - out_pin:
+      node: 19
+      output: 0
+    in_pin:
+      node: 21
+      input: 1
+  - out_pin:
+      node: 21
+      output: 0
+    in_pin:
+      node: 22
+      input: 1
+  - out_pin:
+      node: 22
+      output: 0
+    in_pin:
+      node: 1
+      input: 0
 description: |-
   An example of generating and transforming structured data, then templatizing it into unstructured text.
-
+  
   Since it involves creative writing as well as strict formatting, it will likely confuse smaller models.
-
+  
   Try different error handling techniques you've learned from previous examples.

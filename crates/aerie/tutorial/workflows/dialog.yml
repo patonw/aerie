@@ -1,68 +1,74 @@
+---
 nodes:
   0:
-    value: !Start {}
+    value:
+      Start: {}
     pos:
       x: -367.72028
-      'y': -239.70123
+      y: -239.70123
     open: true
   1:
-    value: !Finish {}
+    value:
+      Finish: {}
     pos:
       x: 1254.8867
-      'y': -113.72266
+      y: -113.72266
     open: true
   2:
-    value: !ExtendHistory
-      count: 2
+    value:
+      ExtendHistory:
+        count: 2
     pos:
       x: 785.0605
-      'y': -157.02625
+      y: -157.02625
     open: true
   3:
-    value: !CreateMessage
-      kind: User
-      content: How can I update the history manually?
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CreateMessage:
+        kind: User
+        content: How can I update the history manually?
+        size:
+          x: 300
+          y: 150
     pos:
       x: 195.73517
-      'y': -479.2699
+      y: -479.2699
     open: true
   4:
-    value: !CreateMessage
-      kind: Assistant
-      content: You can use multiple "Create Message" nodes with "Extend History" to add entries to the history.
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CreateMessage:
+        kind: Assistant
+        content: "You can use multiple \"Create Message\" nodes with \"Extend History\" to add entries to the history."
+        size:
+          x: 300
+          y: 150
     pos:
       x: 209.95435
-      'y': 39.07715
+      y: 39.07715
     open: true
 wires:
-- out_pin:
-    node: 0
-    output: 2
-  in_pin:
-    node: 2
-    input: 0
-- out_pin:
-    node: 2
-    output: 0
-  in_pin:
-    node: 1
-    input: 0
-- out_pin:
-    node: 3
-    output: 0
-  in_pin:
-    node: 2
-    input: 1
-- out_pin:
-    node: 4
-    output: 0
-  in_pin:
-    node: 2
-    input: 2
+  - out_pin:
+      node: 0
+      output: 2
+    in_pin:
+      node: 2
+      input: 0
+  - out_pin:
+      node: 2
+      output: 0
+    in_pin:
+      node: 1
+      input: 0
+  - out_pin:
+      node: 3
+      output: 0
+    in_pin:
+      node: 2
+      input: 1
+  - out_pin:
+      node: 4
+      output: 0
+    in_pin:
+      node: 2
+      input: 2
 description: Very simple demonstration of how to manually update the chat history from a workflow without callingan agent.

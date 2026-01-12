@@ -1,130 +1,140 @@
+---
 nodes:
   0:
-    value: !Start {}
+    value:
+      Start: {}
     pos:
       x: -524.3321
-      'y': -20.134
+      y: -20.134
     open: true
   1:
-    value: !Finish {}
+    value:
+      Finish: {}
     pos:
       x: 60.33723
-      'y': -24.640959
+      y: -24.640959
     open: true
   2:
-    value: !Comment
-      comment: You could use this to route between workflows and/or have a dialog between two agents.
-      size:
-        x: 474.0
-        'y': 301.59375
+    value:
+      CommentNode:
+        comment: You could use this to route between workflows and/or have a dialog between two agents.
+        size:
+          x: 474
+          y: 301.59375
     pos:
       x: 1098.9103
-      'y': 559.31934
+      y: 559.31934
     open: true
   3:
-    value: !Tools
-      toolset:
-      - chainer/drivechain
-      size:
-        x: 384.0
-        'y': 368.09375
+    value:
+      Tools:
+        toolset:
+          - chainer/drivechain
+        size:
+          x: 384
+          y: 368.09375
     pos:
       x: 431.38168
-      'y': 201.49043
+      y: 201.49043
     open: true
   4:
-    value: !Output
-      label: prompt
+    value:
+      OutputNode:
+        label: prompt
     pos:
       x: -152.36467
-      'y': 199.80003
+      y: 199.80003
     open: true
   5:
-    value: !InvokeTool
-      tool_name: drivechain
+    value:
+      InvokeTool:
+        tool_name: drivechain
     pos:
       x: 1119.1831
-      'y': 52.688828
+      y: 52.688828
     open: true
   7:
-    value: !Preview
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Preview:
+        size:
+          x: 300
+          y: 150
     pos:
       x: 1550.4734
-      'y': 182.01042
+      y: 182.01042
     open: true
   8:
-    value: !TemplateNode
-      template: |-
-        {{ value }}
-
-        Hello, again!
-      size:
-        x: 320.0
-        'y': 150.0
+    value:
+      TemplateNode:
+        template: |-
+          {{ value }}
+          
+          Hello, again!
+        size:
+          x: 320
+          y: 150
     pos:
       x: -125.429924
-      'y': 725.6462
+      y: 725.6462
     open: true
   10:
-    value: !TransformJson
-      filter: '{"prompt": . }'
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      TransformJson:
+        filter: "{\"prompt\": . }"
+        size:
+          x: 300
+          y: 150
     pos:
       x: 479.1796
-      'y': 760.5454
+      y: 760.5454
     open: true
 wires:
-- out_pin:
-    node: 0
-    output: 2
-  in_pin:
-    node: 5
-    input: 0
-- out_pin:
-    node: 0
-    output: 4
-  in_pin:
-    node: 4
-    input: 0
-- out_pin:
-    node: 0
-    output: 4
-  in_pin:
-    node: 8
-    input: 1
-- out_pin:
-    node: 3
-    output: 0
-  in_pin:
-    node: 5
-    input: 1
-- out_pin:
-    node: 5
-    output: 2
-  in_pin:
-    node: 7
-    input: 0
-- out_pin:
-    node: 8
-    output: 0
-  in_pin:
-    node: 10
-    input: 1
-- out_pin:
-    node: 10
-    output: 0
-  in_pin:
-    node: 5
-    input: 3
+  - out_pin:
+      node: 0
+      output: 2
+    in_pin:
+      node: 5
+      input: 0
+  - out_pin:
+      node: 0
+      output: 4
+    in_pin:
+      node: 4
+      input: 0
+  - out_pin:
+      node: 0
+      output: 4
+    in_pin:
+      node: 8
+      input: 1
+  - out_pin:
+      node: 3
+      output: 0
+    in_pin:
+      node: 5
+      input: 1
+  - out_pin:
+      node: 5
+      output: 2
+    in_pin:
+      node: 7
+      input: 0
+  - out_pin:
+      node: 8
+      output: 0
+    in_pin:
+      node: 10
+      input: 1
+  - out_pin:
+      node: 10
+      output: 0
+    in_pin:
+      node: 5
+      input: 3
 description: |-
   I repeat
   I repeat
-
+  
   A simple (relatively) example of how to invoke the chain tools to queue other workflows to run after current run finishes.
-
+  
   Invokes itself until autorun limit is exhausted. Extends the prompt each run.

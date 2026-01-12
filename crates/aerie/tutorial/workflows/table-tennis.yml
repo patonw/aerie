@@ -1,456 +1,485 @@
+---
 uuid: ae93ab94-ac67-4f3c-b24a-d3364bfc6490
 nodes:
   0:
-    value: !Start {}
+    value:
+      Start: {}
     pos:
       x: 40.099857
-      'y': 57.86646
+      y: 57.86646
     open: true
   1:
-    value: !Finish {}
+    value:
+      Finish: {}
     pos:
       x: 44.876534
-      'y': 425.48828
+      y: 425.48828
     open: true
   2:
-    value: !Output
-      label: next-args
+    value:
+      OutputNode:
+        label: next-args
     pos:
       x: 4758.6274
-      'y': 769.314
+      y: 769.314
     open: true
   3:
-    value: !Fallback
-      kinds:
-      - Json
+    value:
+      Fallback:
+        kinds:
+          - Json
     pos:
       x: 1445.3461
-      'y': 326.0135
+      y: 326.0135
     open: true
   4:
-    value: !ParseJson
-      text: '{"ping": 0 }'
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      ParseJson:
+        text: "{\"ping\": 0 }"
+        size:
+          x: 300
+          y: 150
     pos:
       x: 887.2179
-      'y': 309.14545
+      y: 309.14545
     open: true
   5:
-    value: !ValidateJson
-      schema: |-
-        {
-          "type": "object",
-          "properties": {
-            "ping": {
-              "type": "number"
-            },
-            "pong": {
-              "type": "number"
+    value:
+      ValidateJson:
+        schema: |-
+          {
+            "type": "object",
+            "properties": {
+              "ping": {
+                "type": "number"
+              },
+              "pong": {
+                "type": "number"
+              }
             }
           }
-        }
-      size:
-        x: 504.0
-        'y': 330.03125
+        size:
+          x: 504
+          y: 330.03125
     pos:
       x: 873.125
-      'y': -29.839844
+      y: -29.839844
     open: true
   6:
-    value: !Select
-      count: 2
-      kind: Json
+    value:
+      Select:
+        count: 2
+        kind: Json
     pos:
       x: 1823.9835
-      'y': 258.60764
+      y: 258.60764
     open: true
   7:
-    value: !Text
-      value: table-tennis
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Text:
+        value: table-tennis
+        size:
+          x: 300
+          y: 150
     pos:
       x: 3163.1748
-      'y': -598.8017
+      y: -598.8017
     open: true
   8:
-    value: !ParseJson
-      text: |-
-        {
-          "type": "object",
-          "properties": {
-            "ping": {
-              "type": "number"
-            },
-            "pong": {
-              "type": "number"
+    value:
+      ParseJson:
+        text: |-
+          {
+            "type": "object",
+            "properties": {
+              "ping": {
+                "type": "number"
+              },
+              "pong": {
+                "type": "number"
+              }
             }
           }
-        }
-      size:
-        x: 300.0
-        'y': 150.0
+        size:
+          x: 300
+          y: 150
     pos:
       x: 83.20411
-      'y': -466.17395
+      y: -466.17395
     open: true
   9:
-    value: !TransformJson
-      filter: first(keys[] | select( . == "ping" or . == "pong"))
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      TransformJson:
+        filter: "first(keys[] | select( . == \"ping\" or . == \"pong\"))"
+        size:
+          x: 300
+          y: 150
     pos:
       x: 2129.2932
-      'y': -104.81585
+      y: -104.81585
     open: true
   10:
-    value: !Matcher
-      kind: Json
-      patterns:
-      - ping
-      - pong
-      exact: true
+    value:
+      Matcher:
+        kind: Json
+        patterns:
+          - ping
+          - pong
+        exact: true
     pos:
       x: 2541.6414
-      'y': 306.03616
+      y: 306.03616
     open: true
   11:
-    value: !Panic {}
+    value:
+      Panic: {}
     pos:
       x: 2541.7742
-      'y': 825.49884
+      y: 825.49884
     open: true
   12:
-    value: !TransformJson
-      filter: '{"pong": (.ping // 0) + 1}'
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      TransformJson:
+        filter: "{\"pong\": (.ping // 0) + 1}"
+        size:
+          x: 300
+          y: 150
     pos:
       x: 3555.7405
-      'y': 155.96921
+      y: 155.96921
     open: true
   13:
-    value: !TransformJson
-      filter: '{"ping": (.pong // 0) + 1}'
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      TransformJson:
+        filter: "{\"ping\": (.pong // 0) + 1}"
+        size:
+          x: 300
+          y: 150
     pos:
       x: 3551.4653
-      'y': 526.8125
+      y: 526.8125
     open: true
   14:
-    value: !Text
-      value: table-tennis
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Text:
+        value: table-tennis
+        size:
+          x: 300
+          y: 150
     pos:
       x: 3163.2617
-      'y': -279.35855
+      y: -279.35855
     open: true
   15:
-    value: !Select
-      count: 2
-      kind: Text
+    value:
+      Select:
+        count: 2
+        kind: Text
     pos:
       x: 3682.524
-      'y': -242.80856
+      y: -242.80856
     open: true
   16:
-    value: !InvokeTool
-      tool_name: chainpong
+    value:
+      InvokeTool:
+        tool_name: chainpong
     pos:
       x: 4819.1655
-      'y': 131.57043
+      y: 131.57043
     open: true
   17:
-    value: !Tools
-      toolset:
-      - chainer/chainpong
-      - chainer/table-tennis
-      size:
-        x: 250.0
-        'y': 250.0
+    value:
+      Tools:
+        toolset:
+          - chainer/chainpong
+          - chainer/table-tennis
+        size:
+          x: 250
+          y: 250
     pos:
       x: 4420.8525
-      'y': -309.4084
+      y: -309.4084
     open: true
   18:
-    value: !Select
-      count: 2
-      kind: Json
+    value:
+      Select:
+        count: 2
+        kind: Json
     pos:
       x: 4128.451
-      'y': 454.40942
+      y: 454.40942
     open: true
   20:
-    value: !TransformJson
-      filter: '.pong'
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      TransformJson:
+        filter: ".pong"
+        size:
+          x: 300
+          y: 150
     pos:
       x: 2835.9175
-      'y': 752.98267
+      y: 752.98267
     open: true
   21:
-    value: !Preview
-      size:
-        x: 300.0
-        'y': 150.0
-      uuid: c1f1c997-69eb-4104-9c67-545a63043c31
+    value:
+      Preview:
+        size:
+          x: 300
+          y: 150
+        uuid: c1f1c997-69eb-4104-9c67-545a63043c31
     pos:
       x: 5338.54
-      'y': 425.03525
+      y: 425.03525
     open: true
   22:
-    value: !Matcher
-      kind: Json
-      patterns:
-      - '0..=4'
+    value:
+      Matcher:
+        kind: Json
+        patterns:
+          - 0..=4
     pos:
       x: 3257.8713
-      'y': 582.8715
+      y: 582.8715
     open: true
   23:
-    value: !Output
-      label: done
+    value:
+      OutputNode:
+        label: done
     pos:
       x: 3575.8928
-      'y': 954.0145
+      y: 954.0145
     open: true
   24:
-    value: !Comment
-      comment: |-
-        Conditionally, define the next workflow.
-        These could call different workflows
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CommentNode:
+        comment: |-
+          Conditionally, define the next workflow.
+          These could call different workflows
+        size:
+          x: 300
+          y: 150
     pos:
       x: 3635.1323
-      'y': -535.7874
+      y: -535.7874
     open: true
   25:
-    value: !Comment
-      comment: Even with comments, something like this is hard to follow.
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CommentNode:
+        comment: "Even with comments, something like this is hard to follow."
+        size:
+          x: 300
+          y: 150
     pos:
       x: 2986.5117
-      'y': 154.84068
+      y: 154.84068
     open: true
   26:
-    value: !Comment
-      comment: Provide a default, if prompt does not conform to schema
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CommentNode:
+        comment: "Provide a default, if prompt does not conform to schema"
+        size:
+          x: 300
+          y: 150
     pos:
       x: 1399.1936
-      'y': 604.39984
+      y: 604.39984
     open: true
   27:
-    value: !Comment
-      comment: This extracts the field name
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CommentNode:
+        comment: This extracts the field name
+        size:
+          x: 300
+          y: 150
     pos:
       x: 2194.8806
-      'y': -430.98935
+      y: -430.98935
     open: true
   29:
-    value: !Comment
-      comment: It would be fairly onerous to change the key names or add new cases, since we'd have to edit most of the nodes by hand.
-      size:
-        x: 321.0
-        'y': 184.6875
+    value:
+      CommentNode:
+        comment: "It would be fairly onerous to change the key names or add new cases, since we'd have to edit most of the nodes by hand."
+        size:
+          x: 321
+          y: 184.6875
     pos:
       x: 399.34314
-      'y': 319.2026
+      y: 319.2026
     open: true
 wires:
-- out_pin:
-    node: 0
-    output: 2
-  in_pin:
-    node: 16
-    input: 0
-- out_pin:
-    node: 0
-    output: 3
-  in_pin:
-    node: 5
-    input: 0
-- out_pin:
-    node: 0
-    output: 4
-  in_pin:
-    node: 5
-    input: 1
-- out_pin:
-    node: 3
-    output: 0
-  in_pin:
-    node: 6
-    input: 1
-- out_pin:
-    node: 4
-    output: 0
-  in_pin:
-    node: 3
-    input: 1
-- out_pin:
-    node: 5
-    output: 0
-  in_pin:
-    node: 6
-    input: 0
-- out_pin:
-    node: 5
-    output: 1
-  in_pin:
-    node: 3
-    input: 0
-- out_pin:
-    node: 6
-    output: 0
-  in_pin:
-    node: 9
-    input: 1
-- out_pin:
-    node: 6
-    output: 0
-  in_pin:
-    node: 10
-    input: 1
-- out_pin:
-    node: 7
-    output: 0
-  in_pin:
-    node: 15
-    input: 0
-- out_pin:
-    node: 9
-    output: 0
-  in_pin:
-    node: 10
-    input: 0
-- out_pin:
-    node: 10
-    output: 0
-  in_pin:
-    node: 7
-    input: 0
-- out_pin:
-    node: 10
-    output: 0
-  in_pin:
-    node: 12
-    input: 1
-- out_pin:
-    node: 10
-    output: 1
-  in_pin:
-    node: 14
-    input: 0
-- out_pin:
-    node: 10
-    output: 1
-  in_pin:
-    node: 20
-    input: 1
-- out_pin:
-    node: 10
-    output: 1
-  in_pin:
-    node: 22
-    input: 1
-- out_pin:
-    node: 10
-    output: 2
-  in_pin:
-    node: 11
-    input: 0
-- out_pin:
-    node: 12
-    output: 0
-  in_pin:
-    node: 18
-    input: 0
-- out_pin:
-    node: 13
-    output: 0
-  in_pin:
-    node: 18
-    input: 1
-- out_pin:
-    node: 14
-    output: 0
-  in_pin:
-    node: 15
-    input: 1
-- out_pin:
-    node: 15
-    output: 0
-  in_pin:
-    node: 16
-    input: 2
-- out_pin:
-    node: 16
-    output: 2
-  in_pin:
-    node: 21
-    input: 0
-- out_pin:
-    node: 17
-    output: 0
-  in_pin:
-    node: 16
-    input: 1
-- out_pin:
-    node: 18
-    output: 0
-  in_pin:
-    node: 2
-    input: 0
-- out_pin:
-    node: 18
-    output: 0
-  in_pin:
-    node: 16
-    input: 3
-- out_pin:
-    node: 20
-    output: 0
-  in_pin:
-    node: 22
-    input: 0
-- out_pin:
-    node: 22
-    output: 0
-  in_pin:
-    node: 13
-    input: 1
-- out_pin:
-    node: 22
-    output: 1
-  in_pin:
-    node: 23
-    input: 0
+  - out_pin:
+      node: 0
+      output: 2
+    in_pin:
+      node: 16
+      input: 0
+  - out_pin:
+      node: 0
+      output: 3
+    in_pin:
+      node: 5
+      input: 0
+  - out_pin:
+      node: 0
+      output: 4
+    in_pin:
+      node: 5
+      input: 1
+  - out_pin:
+      node: 3
+      output: 0
+    in_pin:
+      node: 6
+      input: 1
+  - out_pin:
+      node: 4
+      output: 0
+    in_pin:
+      node: 3
+      input: 1
+  - out_pin:
+      node: 5
+      output: 0
+    in_pin:
+      node: 6
+      input: 0
+  - out_pin:
+      node: 5
+      output: 1
+    in_pin:
+      node: 3
+      input: 0
+  - out_pin:
+      node: 6
+      output: 0
+    in_pin:
+      node: 9
+      input: 1
+  - out_pin:
+      node: 6
+      output: 0
+    in_pin:
+      node: 10
+      input: 1
+  - out_pin:
+      node: 7
+      output: 0
+    in_pin:
+      node: 15
+      input: 0
+  - out_pin:
+      node: 9
+      output: 0
+    in_pin:
+      node: 10
+      input: 0
+  - out_pin:
+      node: 10
+      output: 0
+    in_pin:
+      node: 7
+      input: 0
+  - out_pin:
+      node: 10
+      output: 0
+    in_pin:
+      node: 12
+      input: 1
+  - out_pin:
+      node: 10
+      output: 1
+    in_pin:
+      node: 14
+      input: 0
+  - out_pin:
+      node: 10
+      output: 1
+    in_pin:
+      node: 20
+      input: 1
+  - out_pin:
+      node: 10
+      output: 1
+    in_pin:
+      node: 22
+      input: 1
+  - out_pin:
+      node: 10
+      output: 2
+    in_pin:
+      node: 11
+      input: 0
+  - out_pin:
+      node: 12
+      output: 0
+    in_pin:
+      node: 18
+      input: 0
+  - out_pin:
+      node: 13
+      output: 0
+    in_pin:
+      node: 18
+      input: 1
+  - out_pin:
+      node: 14
+      output: 0
+    in_pin:
+      node: 15
+      input: 1
+  - out_pin:
+      node: 15
+      output: 0
+    in_pin:
+      node: 16
+      input: 2
+  - out_pin:
+      node: 16
+      output: 2
+    in_pin:
+      node: 21
+      input: 0
+  - out_pin:
+      node: 17
+      output: 0
+    in_pin:
+      node: 16
+      input: 1
+  - out_pin:
+      node: 18
+      output: 0
+    in_pin:
+      node: 2
+      input: 0
+  - out_pin:
+      node: 18
+      output: 0
+    in_pin:
+      node: 16
+      input: 3
+  - out_pin:
+      node: 20
+      output: 0
+    in_pin:
+      node: 22
+      input: 0
+  - out_pin:
+      node: 22
+      output: 0
+    in_pin:
+      node: 13
+      input: 1
+  - out_pin:
+      node: 22
+      output: 1
+    in_pin:
+      node: 23
+      input: 0
 description: |-
   An overly complicated example for chaining workflows with structured prompts. Serves to demonstrate the pitfalls of creating workflows reliant on conditional logic.
-
+  
   This is not a good fit for a node-based workflow, but we can see that it's at least possible, if not practical.
-
+  
   There are numerous reasons why traditional scripting/programming is better for tasks with conditional logic like this.
 schema: |-
   {

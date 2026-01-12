@@ -1,7 +1,11 @@
 use delegate::delegate;
 use egui_snarl::NodeId;
-use kinded::Kinded;
 use serde::{Deserialize, Serialize};
+use std::{
+    any::type_name_of_val,
+    hash::Hash,
+    ops::{Deref, DerefMut},
+};
 
 pub mod agent;
 pub mod chat;
@@ -24,116 +28,90 @@ pub use subgraph::*;
 pub const MIN_WIDTH: f32 = 128.0;
 pub const MIN_HEIGHT: f32 = 32.0;
 
-use crate::workflow::WorkflowError;
+use crate::workflow::{FlexNode, WorkflowError};
 
 pub use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
-// Allows us to just return the delegatee instead of calling a method on it.
-// i.e. instead of delegated call like `self.0.foo()` just return `self.0`
-trait NoopExt {
-    fn noop(self) -> Self;
-}
+#[derive(Debug, Clone, Eq, Serialize, Deserialize)]
+pub struct WorkNode(pub Box<dyn FlexNode>);
 
-impl<T> NoopExt for T {
-    fn noop(self) -> Self {
-        self
+impl PartialEq for WorkNode {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, Kinded)]
-pub enum WorkNode {
-    Comment(CommentNode),
-    Preview(Preview),
-    Output(OutputNode),
-    Number(Number),
-    Text(Text),
-    Tools(Tools),
-    Start(Start),
-    Fallback(Fallback),
-    Matcher(Matcher),
-    Select(Select),
-    Finish(Finish),
-    Panic(Panic),
-    Demote(Demote),
-    CreateMessage(CreateMessage),
-    GraftChat(GraftHistory),
-    MaskChat(MaskHistory),
-    ExtendHistory(ExtendHistory),
-    Agent(AgentNode),
-    Context(ChatContext),
-    Chat(ChatNode),
-    Structured(StructuredChat),
-    InvokeTool(InvokeTool),
-    ParseJson(ParseJson),
-    ValidateJson(ValidateJson),
-    TransformJson(TransformJson),
-    TemplateNode(TemplateNode),
-    GatherJson(GatherJson),
-    Subgraph(Subgraph),
+impl Hash for WorkNode {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl<T: FlexNode> From<T> for WorkNode {
+    fn from(value: T) -> Self {
+        Self(Box::new(value))
+    }
 }
 
 impl WorkNode {
     delegate! {
-        to match self {
-            WorkNode::Comment(node) => node,
-            WorkNode::Preview(node) => node,
-            WorkNode::Output(node) => node,
-            WorkNode::Number(node) => node,
-            WorkNode::Text(node) => node,
-            WorkNode::Tools(node) => node,
-            WorkNode::Start(node) => node,
-            WorkNode::Fallback(node) => node,
-            WorkNode::Matcher(node) => node,
-            WorkNode::Select(node) => node,
-            WorkNode::Finish(node) => node,
-            WorkNode::Panic(node) => node,
-            WorkNode::Demote(node) => node,
-            WorkNode::CreateMessage(node) => node,
-            WorkNode::GraftChat(node) => node,
-            WorkNode::MaskChat(node) => node,
-            WorkNode::ExtendHistory(node) => node,
-            WorkNode::Agent(node) => node,
-            WorkNode::Context(node) => node,
-            WorkNode::Chat(node) => node,
-            WorkNode::Structured(node) => node,
-            WorkNode::InvokeTool(node) => node,
-            WorkNode::ParseJson(node) => node,
-            WorkNode::ValidateJson(node) => node,
-            WorkNode::TransformJson(node) => node,
-            WorkNode::TemplateNode(node) => node,
-            WorkNode::GatherJson(node) => node,
-            WorkNode::Subgraph(node) => node,
-        } {
-            #[call(noop)]
-            pub fn as_dyn(&self) -> &dyn DynNode;
+        // Pointless now
+        // TODO: deprecate and replace with trait method calls
+        to self.0 {
+                #[call(deref)]
+                pub fn as_dyn(&self) -> &dyn DynNode;
 
-            #[call(noop)]
-            pub fn as_dyn_mut(&mut self) -> &mut dyn DynNode;
+                #[call(deref_mut)]
+                pub fn as_dyn_mut(&mut self) -> &mut dyn DynNode;
 
-            #[call(noop)]
-            pub fn as_ui_mut(&mut self) -> &mut dyn UiNode;
+                #[call(deref)]
+                pub fn as_ui(&self) -> &dyn UiNode;
 
-            #[call(noop)]
-            pub fn as_ui(&self) -> &dyn UiNode;
+                #[call(deref_mut)]
+                pub fn as_ui_mut(&mut self) -> &mut dyn UiNode;
 
-            pub fn execute( &mut self, ctx: &RunContext, node_id: NodeId, inputs: Vec<Option<Value>>,) -> Result<Vec<Value>, WorkflowError>;
+                pub fn execute(&mut self, ctx: &RunContext, node_id: NodeId, inputs: Vec<Option<Value>>,) -> Result<Vec<Value>, WorkflowError>;
         }
     }
 
-    /// Nodes that cannot be removed or disabled
-    #[inline]
-    pub fn is_protected(&self) -> bool {
-        matches!(self, WorkNode::Start(_) | WorkNode::Finish(_))
+    pub fn kind(&self) -> &'static str {
+        type_name_of_val(self)
     }
 
-    /// Nodes that execute as soon as any input is available
     #[inline]
-    pub fn is_eager(&self) -> bool {
-        matches!(self, WorkNode::Select(_))
+    pub fn as_node<T: FlexNode>(&self) -> Option<&T> {
+        self.0.as_ref().downcast_ref::<T>()
+    }
+
+    #[inline]
+    pub fn as_node_mut<T: FlexNode>(&mut self) -> Option<&mut T> {
+        self.0.as_mut().downcast_mut::<T>()
     }
 
     #[inline]
     pub fn is_subgraph(&self) -> bool {
-        matches!(self, WorkNode::Subgraph(_))
+        self.0.as_ref().downcast_ref::<Subgraph>().is_some()
+    }
+
+    #[inline]
+    pub fn is_start(&self) -> bool {
+        self.0.as_ref().downcast_ref::<Start>().is_some()
+    }
+    #[inline]
+    pub fn is_finish(&self) -> bool {
+        self.0.as_ref().downcast_ref::<Finish>().is_some()
+    }
+    #[inline]
+    pub fn is_comment(&self) -> bool {
+        self.0.as_ref().downcast_ref::<CommentNode>().is_some()
+    }
+    #[inline]
+    pub fn is_protected(&self) -> bool {
+        self.is_start() || self.is_finish()
+    }
+
+    #[inline]
+    pub fn is_eager(&self) -> bool {
+        self.0.as_ref().downcast_ref::<Select>().is_some()
     }
 }

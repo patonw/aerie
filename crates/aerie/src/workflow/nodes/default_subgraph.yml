@@ -1,19 +1,24 @@
+---
 nodes:
   0:
-    value: !Start
-      fields:
-        - [input, Json]
+    value:
+      Start:
+        fields:
+          - - input
+            - Json
     pos:
-      x: 0.0
-      "y": 0.0
+      x: 0
+      y: 0
     open: true
   1:
-    value: !Finish
-      fields:
-        - [output, Json]
+    value:
+      Finish:
+        fields:
+          - - output
+            - Json
     pos:
-      x: 2000.0
-      "y": 0.0
+      x: 2000
+      y: 0
     open: true
 wires: []
 start: 0

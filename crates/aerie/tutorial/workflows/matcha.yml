@@ -1,346 +1,371 @@
+---
 nodes:
   0:
-    value: !Start {}
+    value:
+      Start: {}
     pos:
       x: -291.46097
-      'y': 573.70734
+      y: 573.70734
     open: true
   1:
-    value: !Finish {}
+    value:
+      Finish: {}
     pos:
       x: -236.112
-      'y': 305.77756
+      y: 305.77756
     open: true
   2:
-    value: !Text
-      value: Change the prompt to something beginning with "hello" and see where this message ends up.
-      size:
-        x: 300.0
-        'y': 184.0
+    value:
+      Text:
+        value: "Change the prompt to something beginning with \"hello\" and see where this message ends up."
+        size:
+          x: 300
+          y: 184
     pos:
       x: -214.6275
-      'y': 1162.5555
+      y: 1162.5555
     open: true
   3:
-    value: !Number
-      f_value: 0.4
-      i_value: 0
+    value:
+      Number:
+        f_value: 0.4
+        i_value: 0
     pos:
       x: -107.17021
-      'y': -651.82874
+      y: -651.82874
     open: true
   4:
-    value: !Preview
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Preview:
+        size:
+          x: 300
+          y: 150
     pos:
       x: 945.50977
-      'y': 1704.5023
+      y: 1704.5023
     open: false
   5:
-    value: !Comment
-      comment: Try changing the temperature using the slider in the Settings tab
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CommentNode:
+        comment: Try changing the temperature using the slider in the Settings tab
+        size:
+          x: 300
+          y: 150
     pos:
       x: 420.6636
-      'y': 584.1121
+      y: 584.1121
     open: true
   6:
-    value: !Matcher
-      kind: Text
-      patterns:
-      - '0.0..0.3 | 0.4 | 0.5..=1.0'
-      exact: true
+    value:
+      Matcher:
+        kind: Text
+        patterns:
+          - 0.0..0.3 | 0.4 | 0.5..=1.0
+        exact: true
     pos:
       x: 796.0029
-      'y': -401.4348
+      y: -401.4348
     open: true
   7:
-    value: !Matcher
-      kind: Text
-      patterns:
-      - ^.el+o
-      - goodbye | hello
-      - ^(this \| that)$
+    value:
+      Matcher:
+        kind: Text
+        patterns:
+          - ^.el+o
+          - goodbye | hello
+          - "^(this \\| that)$"
     pos:
       x: 387.06107
-      'y': 1350.56
+      y: 1350.56
     open: true
   8:
-    value: !Text
-      value: Make sure `exact` is toggled off when using numeric ranges or the workflow will fail.
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Text:
+        value: "Make sure `exact` is toggled off when using numeric ranges or the workflow will fail."
+        size:
+          x: 300
+          y: 150
     pos:
       x: 299.56992
-      'y': -376.93423
+      y: -376.93423
     open: true
   9:
-    value: !Preview
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Preview:
+        size:
+          x: 300
+          y: 150
     pos:
       x: 957.13605
-      'y': 1195.2659
+      y: 1195.2659
     open: false
   10:
-    value: !Matcher
-      kind: Chat
-      patterns:
-      - '0..=0.3'
-      - '0.3..0.7'
+    value:
+      Matcher:
+        kind: Chat
+        patterns:
+          - 0..=0.3
+          - 0.3..0.7
     pos:
       x: 450.32846
-      'y': 238.92337
+      y: 238.92337
     open: true
   11:
-    value: !Text
-      value: Cool
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Text:
+        value: Cool
+        size:
+          x: 300
+          y: 150
     pos:
       x: 1014.5817
-      'y': 43.016075
+      y: 43.016075
     open: true
   12:
-    value: !Text
-      value: Warmer
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Text:
+        value: Warmer
+        size:
+          x: 300
+          y: 150
     pos:
       x: 1006.2787
-      'y': 377.18774
+      y: 377.18774
     open: true
   13:
-    value: !Text
-      value: Ouch! Too hot!
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Text:
+        value: Ouch! Too hot!
+        size:
+          x: 300
+          y: 150
     pos:
       x: 996.587
-      'y': 711.7149
+      y: 711.7149
     open: true
   14:
-    value: !Select
-      count: 3
-      kind: Text
+    value:
+      Select:
+        count: 3
+        kind: Text
     pos:
       x: 1490.5669
-      'y': 437.54095
+      y: 437.54095
     open: true
   15:
-    value: !Preview
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Preview:
+        size:
+          x: 300
+          y: 150
     pos:
       x: 1789.7545
-      'y': 512.3602
+      y: 512.3602
     open: true
   16:
-    value: !Preview
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Preview:
+        size:
+          x: 300
+          y: 150
     pos:
       x: 1387.3314
-      'y': -253.16368
+      y: -253.16368
     open: true
   17:
-    value: !Preview
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Preview:
+        size:
+          x: 300
+          y: 150
     pos:
       x: 1376.8406
-      'y': -578.2139
+      y: -578.2139
     open: true
   18:
-    value: !Text
-      value: this | that
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Text:
+        value: this | that
+        size:
+          x: 300
+          y: 150
     pos:
       x: -201.138
-      'y': 1575.3102
+      y: 1575.3102
     open: true
   19:
-    value: !Preview
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Preview:
+        size:
+          x: 300
+          y: 150
     pos:
       x: 962.3906
-      'y': 1358.4199
+      y: 1358.4199
     open: false
   20:
-    value: !Preview
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      Preview:
+        size:
+          x: 300
+          y: 150
     pos:
       x: 954.4658
-      'y': 1531.3712
+      y: 1531.3712
     open: false
   21:
-    value: !Comment
-      comment: To match a string with a literal '|' character, you'll need to use a regex.
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CommentNode:
+        comment: "To match a string with a literal '|' character, you'll need to use a regex."
+        size:
+          x: 300
+          y: 150
     pos:
       x: 286.50354
-      'y': 1730.4634
+      y: 1730.4634
     open: true
   22:
-    value: !Comment
-      comment: Multiple values and/or ranges can be separated with the pipe '|' character...
-      size:
-        x: 300.0
-        'y': 150.0
+    value:
+      CommentNode:
+        comment: "Multiple values and/or ranges can be separated with the pipe '|' character..."
+        size:
+          x: 300
+          y: 150
     pos:
       x: 865.2824
-      'y': -691.0408
+      y: -691.0408
     open: true
   23:
-    value: !Demote
-      priority: 3000
-      kind: Number
+    value:
+      Demote:
+        priority: 3000
+        kind: Number
     pos:
       x: 273.12924
-      'y': -618.72064
+      y: -618.72064
     open: true
 wires:
-- out_pin:
-    node: 0
-    output: 1
-  in_pin:
-    node: 10
-    input: 0
-- out_pin:
-    node: 0
-    output: 2
-  in_pin:
-    node: 10
-    input: 1
-- out_pin:
-    node: 0
-    output: 4
-  in_pin:
-    node: 7
-    input: 0
-- out_pin:
-    node: 2
-    output: 0
-  in_pin:
-    node: 7
-    input: 1
-- out_pin:
-    node: 3
-    output: 0
-  in_pin:
-    node: 23
-    input: 0
-- out_pin:
-    node: 6
-    output: 0
-  in_pin:
-    node: 17
-    input: 0
-- out_pin:
-    node: 6
-    output: 1
-  in_pin:
-    node: 16
-    input: 0
-- out_pin:
-    node: 7
-    output: 0
-  in_pin:
-    node: 9
-    input: 0
-- out_pin:
-    node: 7
-    output: 1
-  in_pin:
-    node: 19
-    input: 0
-- out_pin:
-    node: 7
-    output: 2
-  in_pin:
-    node: 20
-    input: 0
-- out_pin:
-    node: 7
-    output: 3
-  in_pin:
-    node: 4
-    input: 0
-- out_pin:
-    node: 8
-    output: 0
-  in_pin:
-    node: 6
-    input: 1
-- out_pin:
-    node: 10
-    output: 0
-  in_pin:
-    node: 11
-    input: 0
-- out_pin:
-    node: 10
-    output: 1
-  in_pin:
-    node: 12
-    input: 0
-- out_pin:
-    node: 10
-    output: 2
-  in_pin:
-    node: 13
-    input: 0
-- out_pin:
-    node: 11
-    output: 0
-  in_pin:
-    node: 14
-    input: 0
-- out_pin:
-    node: 12
-    output: 0
-  in_pin:
-    node: 14
-    input: 1
-- out_pin:
-    node: 13
-    output: 0
-  in_pin:
-    node: 14
-    input: 2
-- out_pin:
-    node: 14
-    output: 0
-  in_pin:
-    node: 15
-    input: 0
-- out_pin:
-    node: 23
-    output: 0
-  in_pin:
-    node: 6
-    input: 0
+  - out_pin:
+      node: 0
+      output: 1
+    in_pin:
+      node: 10
+      input: 0
+  - out_pin:
+      node: 0
+      output: 2
+    in_pin:
+      node: 10
+      input: 1
+  - out_pin:
+      node: 0
+      output: 4
+    in_pin:
+      node: 7
+      input: 0
+  - out_pin:
+      node: 2
+      output: 0
+    in_pin:
+      node: 7
+      input: 1
+  - out_pin:
+      node: 3
+      output: 0
+    in_pin:
+      node: 23
+      input: 0
+  - out_pin:
+      node: 6
+      output: 0
+    in_pin:
+      node: 17
+      input: 0
+  - out_pin:
+      node: 6
+      output: 1
+    in_pin:
+      node: 16
+      input: 0
+  - out_pin:
+      node: 7
+      output: 0
+    in_pin:
+      node: 9
+      input: 0
+  - out_pin:
+      node: 7
+      output: 1
+    in_pin:
+      node: 19
+      input: 0
+  - out_pin:
+      node: 7
+      output: 2
+    in_pin:
+      node: 20
+      input: 0
+  - out_pin:
+      node: 7
+      output: 3
+    in_pin:
+      node: 4
+      input: 0
+  - out_pin:
+      node: 8
+      output: 0
+    in_pin:
+      node: 6
+      input: 1
+  - out_pin:
+      node: 10
+      output: 0
+    in_pin:
+      node: 11
+      input: 0
+  - out_pin:
+      node: 10
+      output: 1
+    in_pin:
+      node: 12
+      input: 0
+  - out_pin:
+      node: 10
+      output: 2
+    in_pin:
+      node: 13
+      input: 0
+  - out_pin:
+      node: 11
+      output: 0
+    in_pin:
+      node: 14
+      input: 0
+  - out_pin:
+      node: 12
+      output: 0
+    in_pin:
+      node: 14
+      input: 1
+  - out_pin:
+      node: 13
+      output: 0
+    in_pin:
+      node: 14
+      input: 2
+  - out_pin:
+      node: 14
+      output: 0
+    in_pin:
+      node: 15
+      input: 0
+  - out_pin:
+      node: 23
+      output: 0
+    in_pin:
+      node: 6
+      input: 0
 description: |-
   A simple showcase of conditional flow.
-
+  
   Use this sparingly otherwise, workflows will end up like the "table-tennis" example

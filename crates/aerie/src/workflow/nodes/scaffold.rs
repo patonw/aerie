@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ui::{AppEvent, shortcuts::squelch},
     utils::message_text,
-    workflow::{AnyPin, WorkflowError},
+    workflow::{AnyPin, FlexNode, WorkflowError},
 };
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
@@ -48,6 +48,9 @@ pub struct Start {
     )]
     pub fields: im::Vector<(String, ValueKind)>,
 }
+
+#[typetag::serde]
+impl FlexNode for Start {}
 
 impl std::hash::Hash for Start {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -257,6 +260,9 @@ pub struct Finish {
     )]
     pub fields: im::Vector<(String, ValueKind)>,
 }
+
+#[typetag::serde]
+impl FlexNode for Finish {}
 
 impl DynNode for Finish {
     fn priority(&self) -> usize {
@@ -476,6 +482,9 @@ pub struct Fallback {
     pub kinds: Vec<ValueKind>,
 }
 
+#[typetag::serde]
+impl FlexNode for Fallback {}
+
 impl Default for Fallback {
     fn default() -> Self {
         Self {
@@ -614,6 +623,9 @@ pub struct Matcher {
     #[serde(skip)]
     editing: Option<usize>,
 }
+
+#[typetag::serde]
+impl FlexNode for Matcher {}
 
 impl Default for Matcher {
     fn default() -> Self {
@@ -962,6 +974,9 @@ pub struct Select {
     kind: ValueKind,
 }
 
+#[typetag::serde]
+impl FlexNode for Select {}
+
 impl DynNode for Select {
     fn inputs(&self) -> usize {
         self.count + 1 // Extra slot to add another document
@@ -1075,6 +1090,9 @@ pub struct Demote {
 
     kind: ValueKind,
 }
+
+#[typetag::serde]
+impl FlexNode for Demote {}
 
 impl Default for Demote {
     fn default() -> Self {

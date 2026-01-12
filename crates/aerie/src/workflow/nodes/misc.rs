@@ -7,7 +7,7 @@ use serde_with::skip_serializing_none;
 use crate::{
     ui::{resizable_frame, shortcuts::squelch},
     utils::message_text,
-    workflow::{DynNode, EditContext, RunContext, UiNode, Value, WorkflowError},
+    workflow::{DynNode, EditContext, FlexNode, RunContext, UiNode, Value, WorkflowError},
 };
 
 use super::ValueKind;
@@ -19,6 +19,9 @@ pub struct CommentNode {
 
     size: Option<crate::utils::EVec2>,
 }
+
+#[typetag::serde]
+impl FlexNode for CommentNode {}
 
 impl DynNode for CommentNode {
     fn inputs(&self) -> usize {
@@ -68,6 +71,9 @@ pub struct TemplateNode {
 
     size: Option<crate::utils::EVec2>,
 }
+
+#[typetag::serde]
+impl FlexNode for TemplateNode {}
 
 impl DynNode for TemplateNode {
     fn inputs(&self) -> usize {
