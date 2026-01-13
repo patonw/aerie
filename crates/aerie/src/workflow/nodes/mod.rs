@@ -1,5 +1,6 @@
 use delegate::delegate;
-use egui_snarl::NodeId;
+use egui::Ui;
+use egui_snarl::{NodeId, Snarl};
 use serde::{Deserialize, Serialize};
 use std::{
     any::type_name_of_val,
@@ -115,3 +116,10 @@ impl WorkNode {
         self.0.as_ref().downcast_ref::<Select>().is_some()
     }
 }
+
+pub struct GraphSubmenu(
+    pub &'static str,
+    pub fn(&mut Ui, &mut Snarl<WorkNode>, egui::Pos2),
+);
+
+inventory::collect!(GraphSubmenu);

@@ -469,3 +469,34 @@ impl UiNode for ExtendHistory {
         self.in_kinds(pin_id).first().unwrap().default_pin()
     }
 }
+
+fn history_node_menu(
+    ui: &mut egui::Ui,
+    snarl: &mut egui_snarl::Snarl<super::WorkNode>,
+    pos: egui::Pos2,
+) {
+    ui.menu_button("History", |ui| {
+        if ui.button("Create Message").clicked() {
+            snarl.insert_node(pos, CreateMessage::default().into());
+            ui.close();
+        }
+
+        if ui.button("Mask History").clicked() {
+            snarl.insert_node(pos, MaskHistory::default().into());
+            ui.close();
+        }
+
+        if ui.button("Extend History").clicked() {
+            snarl.insert_node(pos, ExtendHistory::default().into());
+            ui.close();
+        }
+
+        if ui.button("Side Chat").clicked() {
+            snarl.insert_node(pos, GraftHistory::default().into());
+            ui.close();
+        }
+    });
+}
+inventory::submit! {
+    super::GraphSubmenu("history", history_node_menu)
+}

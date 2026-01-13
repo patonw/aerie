@@ -11,7 +11,10 @@ use crate::{
         shortcuts::{Shortcut, squelch},
     },
     utils::{extract_json, message_text},
-    workflow::{DynNode, EditContext, FlexNode, RunContext, UiNode, Value, WorkflowError},
+    workflow::{
+        DynNode, EditContext, FlexNode, RunContext, UiNode, Value, WorkNode, WorkflowError,
+        nodes::GraphSubmenu,
+    },
 };
 
 use super::ValueKind;
@@ -551,4 +554,32 @@ impl UiNode for GatherJson {
 
         self.in_kinds(pin_id).first().unwrap().default_pin()
     }
+}
+
+fn json_node_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
+    ui.menu_button("JSON", |ui| {
+        if ui.button("Parse JSON").clicked() {
+            snarl.insert_node(pos, ParseJson::default().into());
+            ui.close();
+        }
+
+        if ui.button("Gather JSON").clicked() {
+            snarl.insert_node(pos, GatherJson::default().into());
+            ui.close();
+        }
+
+        if ui.button("Validate JSON").clicked() {
+            snarl.insert_node(pos, ValidateJson::default().into());
+            ui.close();
+        }
+
+        if ui.button("Transform JSON").clicked() {
+            snarl.insert_node(pos, TransformJson::default().into());
+            ui.close();
+        }
+    });
+}
+
+inventory::submit! {
+    GraphSubmenu("json", json_node_menu)
 }

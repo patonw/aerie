@@ -13,6 +13,7 @@ use egui_snarl::{
     ui::{SnarlStyle, SnarlViewer, SnarlWidget, get_selected_nodes},
 };
 use im::vector;
+use itertools::Itertools;
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -21,10 +22,9 @@ use crate::{
     workflow::{
         EditContext, GraphId, MetaNode, ShadowGraph, WorkNode,
         nodes::{
-            AgentNode, ChatContext, ChatNode, CommentNode, CreateMessage, Demote, ExtendHistory,
-            Fallback, GatherJson, GraftHistory, InvokeTool, MaskHistory, Matcher, Number,
-            OutputNode, Panic, ParseJson, Preview, Select, StructuredChat, Subgraph, TemplateNode,
-            Text, Tools, TransformJson, ValidateJson,
+            AgentNode, ChatContext, ChatNode, CommentNode, Demote, Fallback, GraphSubmenu,
+            InvokeTool, Matcher, Number, OutputNode, Panic, Preview, Select, StructuredChat,
+            Subgraph, TemplateNode, Text, Tools,
         },
         runner::{ExecState, NodeStateMap},
     },
@@ -737,50 +737,14 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                 ui.close();
             }
         });
+        let menus = inventory::iter::<GraphSubmenu>
+            .into_iter()
+            .sorted_by_key(|m| m.0)
+            .collect_vec();
 
-        ui.menu_button("History", |ui| {
-            if ui.button("Create Message").clicked() {
-                snarl.insert_node(pos, CreateMessage::default().into());
-                ui.close();
-            }
-
-            if ui.button("Mask History").clicked() {
-                snarl.insert_node(pos, MaskHistory::default().into());
-                ui.close();
-            }
-
-            if ui.button("Extend History").clicked() {
-                snarl.insert_node(pos, ExtendHistory::default().into());
-                ui.close();
-            }
-
-            if ui.button("Side Chat").clicked() {
-                snarl.insert_node(pos, GraftHistory::default().into());
-                ui.close();
-            }
-        });
-
-        ui.menu_button("JSON", |ui| {
-            if ui.button("Parse JSON").clicked() {
-                snarl.insert_node(pos, ParseJson::default().into());
-                ui.close();
-            }
-
-            if ui.button("Gather JSON").clicked() {
-                snarl.insert_node(pos, GatherJson::default().into());
-                ui.close();
-            }
-
-            if ui.button("Validate JSON").clicked() {
-                snarl.insert_node(pos, ValidateJson::default().into());
-                ui.close();
-            }
-
-            if ui.button("Transform JSON").clicked() {
-                snarl.insert_node(pos, TransformJson::default().into());
-                ui.close();
-            }
-        });
+        for cb in menus {
+            (cb.1)(ui, snarl, pos);
+        }
 
         if ui.button("Subgraph").clicked() {
             snarl.insert_node(pos, Subgraph::default().into());
