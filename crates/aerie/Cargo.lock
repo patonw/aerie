@@ -156,6 +156,7 @@ dependencies = [
  "humantime",
  "im",
  "image",
+ "inventory",
  "itertools",
  "jaq-core",
  "jaq-json",
