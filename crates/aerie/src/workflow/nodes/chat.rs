@@ -182,7 +182,7 @@ impl ChatNode {
         let mut chat = Cow::Borrowed(chat.as_ref());
 
         let prompt = match &inputs[2] {
-            Some(Value::Text(text)) if !text.is_empty() => Message::user(text.clone()),
+            Some(Value::Text(text)) if !text.is_empty() => Message::user((**text).clone()),
             Some(Value::Message(msg @ Message::User { .. })) => msg.clone(),
             Some(Value::Message(msg @ Message::Assistant { .. })) => {
                 // Coerce into user message if we want to use another agent's output for cross talk
@@ -435,7 +435,7 @@ impl StructuredChat {
         };
 
         let prompt = match &inputs[3] {
-            Some(Value::Text(text)) if !text.is_empty() => Message::user(text.clone()),
+            Some(Value::Text(text)) if !text.is_empty() => Message::user((**text).clone()),
             Some(Value::Message(msg)) => msg.clone(),
             None if !self.prompt.is_empty() => Message::user(self.prompt.clone()),
             _ => Err(WorkflowError::Required(vec!["A prompt is required".into()]))?,
@@ -599,7 +599,7 @@ impl StructuredChat {
         Ok(vec![
             Value::Chat(history),
             message,
-            Value::Text(tool_name),
+            Value::Text(Arc::new(tool_name)),
             Value::Json(args),
             Value::Placeholder(ValueKind::Failure),
         ])

@@ -54,11 +54,10 @@ pub use nodes::WorkNode;
 pub enum Value {
     Placeholder(ValueKind),
     Failure(Arc<WorkflowError>),
-    Text(String),
+    Text(Arc<String>),
     Number(E64),
     Integer(i64),
     Json(Arc<serde_json::Value>), // I think this is immutable?
-    Model(String),
     Agent(Arc<AgentSpec>),
     Tools(Arc<ToolSelector>),
     Chat(Arc<ChatHistory>),
@@ -87,7 +86,6 @@ impl ValueKind {
             ValueKind::Number => Color32::from_rgb(0xbb, 0x44, 0x88),
             ValueKind::Integer => Color32::from_rgb(0xbb, 0x77, 0x00),
             ValueKind::Json => Color32::from_rgb(0x42, 0xbb, 0x00),
-            ValueKind::Model => Color32::LIGHT_BLUE,
             ValueKind::Agent => Color32::from_rgb(0x56, 0x78, 0xff),
             ValueKind::Tools => Color32::PURPLE,
             ValueKind::Chat => Color32::GOLD,
@@ -269,11 +267,11 @@ impl RootContext {
 
         // TODO: Probably don't need most of these in the object
         let values = vec![
-            Some(Value::Model(self.model.clone())),
+            Some(Value::Text(Arc::new(self.model.clone()))),
             Some(Value::Number(E64::assert(self.temperature))),
             Some(Value::Chat(self.history.load().clone())),
             Some(Value::Json(Arc::new(schema))),
-            Some(Value::Text(self.user_prompt.clone())),
+            Some(Value::Text(Arc::new(self.user_prompt.clone()))),
         ];
         Ok(values)
     }

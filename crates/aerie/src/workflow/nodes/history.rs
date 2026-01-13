@@ -283,20 +283,24 @@ impl DynNode for CreateMessage {
             _ => {
                 let text = match &inputs[0] {
                     Some(Value::Text(text)) => text.clone(),
-                    Some(Value::Json(data)) => serde_json::to_string_pretty(&data).unwrap(),
+                    Some(Value::Json(data)) => {
+                        Arc::new(serde_json::to_string_pretty(data).unwrap())
+                    }
                     None if self.content.is_empty() => {
                         Err(WorkflowError::Required(vec!["content required".into()]))?
                     }
-                    None => self.content.clone(),
+                    None => Arc::new(self.content.clone()),
                     _ => unreachable!(),
                 };
 
                 Some(match self.kind {
-                    MessageKind::Error => ChatContent::Error { err: text },
-                    MessageKind::User => ChatContent::Message(Message::user(text)),
-                    MessageKind::Assistant => ChatContent::Message(Message::assistant(text)),
+                    MessageKind::Error => ChatContent::Error {
+                        err: (*text).clone(),
+                    },
+                    MessageKind::User => ChatContent::Message(Message::user(&*text)),
+                    MessageKind::Assistant => ChatContent::Message(Message::assistant(&*text)),
                     MessageKind::ToolResult => {
-                        let message = Message::tool_result("", text);
+                        let message = Message::tool_result("", &*text);
                         ChatContent::Message(message)
                     }
                     _ => unreachable!(),
