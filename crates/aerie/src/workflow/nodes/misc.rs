@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -104,8 +104,8 @@ impl DynNode for TemplateNode {
         self.validate(&inputs)?;
 
         let template = match &inputs[0] {
-            Some(Value::Text(text)) => text.clone(),
-            None => self.template.clone(),
+            Some(Value::Text(text)) => text.as_str(),
+            None => self.template.as_str(),
             _ => unreachable!(),
         };
 
@@ -122,9 +122,9 @@ impl DynNode for TemplateNode {
             _ => unreachable!(),
         };
 
-        let value = ctx.transmuter.render_template(&template, &vars)?;
+        let value = ctx.transmuter.render_template(template, &vars)?;
 
-        Ok(vec![Value::Text(value)])
+        Ok(vec![Value::Text(Arc::new(value))])
     }
 }
 

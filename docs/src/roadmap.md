@@ -1,7 +1,7 @@
 # Roadmap
 
 - [ ] Documentation to actual sentences
-- [ ] Deprecate Model values and replace instances with Text
+- [x] Deprecate Model values and replace instances with Text
   - Switch text storage to `smol_str`
 - [ ] Warn on missing tools & providers in mentioned in selection
 - [ ] Extensibility

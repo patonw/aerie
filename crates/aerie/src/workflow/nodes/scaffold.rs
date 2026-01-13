@@ -18,7 +18,7 @@ use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
 fn root_start_fields() -> im::Vector<(String, ValueKind)> {
     vector![
-        ("model".into(), ValueKind::Model),
+        ("model".into(), ValueKind::Text),
         ("temperature".into(), ValueKind::Number),
         ("conversation".into(), ValueKind::Chat),
         ("schema".into(), ValueKind::Json),
@@ -704,10 +704,10 @@ impl DynNode for Matcher {
         }
 
         let key = match &inputs[0] {
-            Some(Value::Text(text)) => text.clone(),
-            Some(Value::Message(message)) => message_text(message),
+            Some(Value::Text(text)) => Cow::Borrowed(text.as_str()),
+            Some(Value::Message(message)) => Cow::Owned(message_text(message)),
             Some(Value::Json(value)) => match value.as_ref() {
-                serde_json::Value::String(text) => text.clone(),
+                serde_json::Value::String(text) => Cow::Borrowed(text.as_str()),
                 _ => Err(WorkflowError::Conversion(format!(
                     "Unsuppported conversion: {value:?}"
                 )))?,
@@ -716,7 +716,7 @@ impl DynNode for Matcher {
             _ => unreachable!(),
         };
 
-        let pos = self.match_strings(key)?;
+        let pos = self.match_strings(&key)?;
         let out_pin = pos.unwrap_or(default_pin);
         result[out_pin] = data;
 
@@ -763,7 +763,7 @@ impl Matcher {
         Ok(None)
     }
 
-    fn match_strings(&mut self, key: String) -> anyhow::Result<Option<usize>> {
+    fn match_strings(&mut self, key: &str) -> anyhow::Result<Option<usize>> {
         for (i, pattern) in self.patterns.iter().enumerate() {
             if self.exact || pattern.is_empty() {
                 for pattern in pattern.split('|') {
@@ -773,7 +773,7 @@ impl Matcher {
                 }
             } else {
                 let rx = Regex::new(pattern)?;
-                if rx.is_match(&key) {
+                if rx.is_match(key) {
                     return Ok(Some(i));
                 }
             }

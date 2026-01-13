@@ -1,4 +1,4 @@
-use std::convert::identity;
+use std::{convert::identity, sync::Arc};
 
 use decorum::E64;
 use egui::RichText;
@@ -84,7 +84,7 @@ impl UiNode for Number {
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Text {
-    pub value: String,
+    pub value: Arc<String>,
 
     pub size: Option<crate::utils::EVec2>,
 }
@@ -121,7 +121,8 @@ impl UiNode for Text {
     fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
         egui::Frame::new().inner_margin(4).show(ui, |ui| {
             resizable_frame(&mut self.size, ui, |ui| {
-                let widget = egui::TextEdit::multiline(&mut self.value)
+                let text = Arc::make_mut(&mut self.value);
+                let widget = egui::TextEdit::multiline(text)
                     .desired_width(f32::INFINITY)
                     .hint_text("Enter text \u{1F64B}");
 
@@ -209,7 +210,7 @@ impl UiNode for Preview {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     match &ctx.previews.value(self.uuid.0).unwrap_or_default() {
                         Value::Text(text) => {
-                            ui.add(egui::Label::new(text).wrap());
+                            ui.add(egui::Label::new(text.as_str()).wrap());
                         }
                         Value::Chat(history) => {
                             ui.vertical(|ui| {

@@ -224,7 +224,7 @@ pub struct _AgentSpec_ {
 
     pub preamble: String,
 
-    pub context_doc: String,
+    pub context_doc: Arc<String>,
 
     pub tools: Arc<ToolSelector>,
 

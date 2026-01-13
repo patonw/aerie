@@ -380,12 +380,12 @@ impl DynNode for TransformJson {
         self.validate(&inputs)?;
 
         let filter = match &inputs[0] {
-            Some(Value::Text(text)) => text.clone(),
-            None => self.filter.clone(),
+            Some(Value::Text(text)) => text.as_str(),
+            None => self.filter.as_str(),
             _ => unreachable!(),
         };
 
-        let filter = ctx.transmuter.init_filter(&filter)?;
+        let filter = ctx.transmuter.init_filter(filter)?;
 
         let input = match &inputs[1] {
             Some(Value::Json(input)) => input.as_ref().to_owned(),
@@ -491,7 +491,7 @@ impl DynNode for GatherJson {
             .take(self.count)
             .map(|it| match it {
                 Some(Value::Json(value)) => value.as_ref().clone(),
-                Some(Value::Text(value)) => serde_json::Value::String(value),
+                Some(Value::Text(value)) => serde_json::Value::String((*value).clone()),
                 Some(Value::Number(value)) => {
                     serde_json::Value::Number(Number::from_f64(value.into_inner()).unwrap())
                 }

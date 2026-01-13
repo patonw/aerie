@@ -15,6 +15,9 @@ use crate::{
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tools {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+
     pub toolset: Arc<ToolSelector>,
 
     pub size: Option<crate::utils::EVec2>,
@@ -37,7 +40,15 @@ impl DynNode for Tools {
 
 impl UiNode for Tools {
     fn title(&self) -> &str {
-        "Tools"
+        if self.name.is_empty() {
+            "Tools"
+        } else {
+            &self.name
+        }
+    }
+
+    fn title_mut(&mut self) -> Option<&mut String> {
+        Some(&mut self.name)
     }
 
     fn has_body(&self) -> bool {
@@ -177,7 +188,7 @@ impl DynNode for AgentNode {
     fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
         Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Agent],
-            1 => &[ValueKind::Model],
+            1 => &[ValueKind::Text],
             2 => &[ValueKind::Number],
             3 => &[ValueKind::Tools],
             4 => &[ValueKind::Text],
@@ -207,7 +218,7 @@ impl DynNode for AgentNode {
         };
 
         let model = match &inputs[1] {
-            Some(Value::Model(name)) => Some(name.clone()),
+            Some(Value::Text(name)) => Some((**name).clone()),
             None => self.model.clone(),
             _ => unreachable!(),
         };
@@ -231,7 +242,7 @@ impl DynNode for AgentNode {
         };
 
         let preamble = match &inputs[4] {
-            Some(Value::Text(text)) => Some(text.clone()),
+            Some(Value::Text(text)) => Some((**text).clone()),
             None => self.preamble.clone(),
             _ => unreachable!(),
         };
@@ -389,7 +400,7 @@ impl UiNode for AgentNode {
 #[skip_serializing_none]
 #[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
 pub struct ChatContext {
-    pub context_doc: String,
+    pub context_doc: Arc<String>,
 
     pub size: Option<crate::utils::EVec2>,
 }
@@ -492,7 +503,8 @@ impl UiNode for ChatContext {
                     .vertical(|ui| {
                         if remote.is_none() {
                             resizable_frame(&mut self.size, ui, |ui| {
-                                let widget = egui::TextEdit::multiline(&mut self.context_doc)
+                                let buffer = Arc::make_mut(&mut self.context_doc);
+                                let widget = egui::TextEdit::multiline(buffer)
                                     .id_salt("context")
                                     .desired_width(f32::INFINITY)
                                     .hint_text("context");
@@ -698,7 +710,7 @@ impl InvokeTool {
         Ok(vec![
             Value::Chat(history.clone()),
             msg,
-            Value::Text(tool_output.clone()),
+            Value::Text(Arc::new(tool_output.clone())),
             Value::Placeholder(ValueKind::Failure),
         ])
     }
