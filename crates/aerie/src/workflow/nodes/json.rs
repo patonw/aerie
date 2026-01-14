@@ -6,7 +6,10 @@ use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
-    ui::{resizable_frame, shortcuts::squelch},
+    ui::{
+        resizable_frame,
+        shortcuts::{Shortcut, squelch},
+    },
     utils::{extract_json, message_text},
     workflow::{DynNode, EditContext, RunContext, UiNode, Value, WorkflowError},
 };
@@ -84,6 +87,57 @@ impl DynNode for ParseJson {
     }
 }
 
+fn json_editor(
+    ui: &mut egui::Ui,
+    buffer: &mut dyn egui::TextBuffer,
+    hint: Option<&str>,
+) -> egui::Response {
+    let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
+    let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+        let mut layout_job = egui_extras::syntax_highlighting::highlight(
+            ui.ctx(),
+            ui.style(),
+            &theme,
+            buf.as_str(),
+            "json",
+        );
+        layout_job.wrap.max_width = wrap_width;
+        ui.fonts_mut(|f| f.layout_job(layout_job))
+    };
+
+    let mut widget = egui::TextEdit::multiline(buffer)
+        .id_salt("json text")
+        .font(egui::TextStyle::Monospace) // for cursor height
+        .code_editor()
+        .desired_rows(10)
+        .lock_focus(true)
+        .desired_width(f32::INFINITY)
+        .layouter(&mut layouter);
+
+    let hover = if let Some(hint) = hint {
+        widget = widget.id_salt(hint).hint_text(hint);
+        hint
+    } else {
+        "JSON"
+    };
+
+    let resp = ui
+        .add_sized(ui.available_size(), widget)
+        .on_hover_text(hover);
+
+    if resp.has_focus()
+        && resp
+            .ctx
+            .input_mut(|i| i.consume_shortcut(&Shortcut::FormatCode.key()))
+        && let Ok(text) = serde_json::from_str::<serde_json::Value>(buffer.as_str())
+            .and_then(|v| serde_json::to_string_pretty(&v))
+    {
+        buffer.replace_with(text.as_str());
+    }
+
+    squelch(resp)
+}
+
 impl UiNode for ParseJson {
     fn title(&self) -> &str {
         "Parse JSON"
@@ -100,16 +154,7 @@ impl UiNode for ParseJson {
             0 => {
                 if remote.is_none() {
                     resizable_frame(&mut self.size, ui, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            let widget = egui::TextEdit::multiline(&mut self.text)
-                                .id_salt("json text")
-                                .desired_width(f32::INFINITY);
-
-                            squelch(
-                                ui.add_sized(ui.available_size(), widget)
-                                    .on_hover_text("JSON text"),
-                            );
-                        });
+                        json_editor(ui, &mut self.text, None);
                     });
                 } else {
                     ui.label("JSON text");
@@ -260,15 +305,7 @@ impl UiNode for ValidateJson {
                     resizable_frame(&mut self.size, ui, |ui| {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             let hint_text = "JSON Schema";
-                            let widget = egui::TextEdit::multiline(&mut self.schema)
-                                .hint_text(hint_text)
-                                .id_salt(hint_text)
-                                .desired_width(f32::INFINITY);
-
-                            squelch(
-                                ui.add_sized(ui.available_size(), widget)
-                                    .on_hover_text(hint_text),
-                            );
+                            json_editor(ui, &mut self.schema, Some(hint_text));
                         });
                     });
                 } else {
@@ -394,7 +431,7 @@ impl UiNode for TransformJson {
                             egui::ScrollArea::vertical().show(ui, |ui| {
                                 let widget = egui::TextEdit::multiline(&mut self.filter)
                                     .desired_width(f32::INFINITY)
-                                    .hint_text("Fitler\u{1F64B}");
+                                    .hint_text("Filter\u{1F64B}");
 
                                 squelch(ui.add_sized(ui.available_size(), widget));
                             });
