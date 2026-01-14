@@ -608,6 +608,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
 
             let node_id = pin.id.node;
             self.edit_ctx.current_node = node_id;
+            self.edit_ctx.disabled = self.shadow.is_disabled(node_id);
             let node = &mut snarl[node_id];
             let pin = node
                 .as_ui_mut()
@@ -635,6 +636,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui.add_enabled_ui(self.can_edit(), |ui| {
             let node_id = pin.id.node;
             self.edit_ctx.current_node = node_id;
+            self.edit_ctx.disabled = self.shadow.is_disabled(node_id);
             let node = &mut snarl[node_id];
             let pin = node
                 .as_ui_mut()
@@ -812,6 +814,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         snarl: &mut Snarl<WorkNode>,
     ) {
         self.edit_ctx.current_node = node;
+        self.edit_ctx.disabled = self.shadow.is_disabled(node);
 
         let enabled = self.can_edit() || matches!(snarl[node], WorkNode::Subgraph(_));
 
@@ -834,6 +837,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         snarl: &mut Snarl<WorkNode>,
     ) {
         self.edit_ctx.current_node = node;
+        self.edit_ctx.disabled = self.shadow.is_disabled(node);
 
         ui.add_enabled_ui(self.can_edit(), |ui| {
             let before = snarl[node].clone();
@@ -951,7 +955,7 @@ pub fn filter_graph(
 ) -> ShadowGraph<WorkNode> {
     let ShadowGraph { nodes, wires, .. } = graph;
     let keep = keep_nodes.as_ref().iter().collect::<BTreeSet<_>>();
-    let nodes = nodes
+    let nodes: im::OrdMap<NodeId, _> = nodes
         .into_iter()
         .filter(|n| keep.contains(&n.0))
         .map(|(id, meta)| {
@@ -967,9 +971,17 @@ pub fn filter_graph(
         .filter(|w| keep.contains(&w.out_pin.node) && keep.contains(&w.in_pin.node))
         .collect();
 
+    let disabled = graph
+        .disabled
+        .iter()
+        .filter(|n| nodes.contains_key(n))
+        .cloned()
+        .collect();
+
     ShadowGraph {
         nodes,
         wires,
+        disabled,
         ..ShadowGraph::empty()
     }
 }
@@ -1032,6 +1044,19 @@ pub fn merge_graphs(
             snarl.connect(src, dest);
         }
     }
+
+    let disabled = source
+        .disabled
+        .iter()
+        .filter_map(|n| node_map.get(n))
+        .cloned()
+        .collect();
+    let disabled = target.disabled.clone().union(disabled);
+
+    *target = ShadowGraph {
+        disabled,
+        ..target.clone()
+    };
 
     node_map
         .into_values()

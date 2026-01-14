@@ -9,7 +9,7 @@ use serde_with::skip_serializing_none;
 
 use crate::{
     ChatContent,
-    ui::{resizable_frame, shortcuts::squelch, tiles::chat::render_message_width},
+    ui::{AppEvent, resizable_frame, shortcuts::squelch, tiles::chat::render_message_width},
     utils::{message_party, message_text},
     workflow::{GraphId, WorkflowError},
 };
@@ -306,7 +306,12 @@ impl UiNode for OutputNode {
         true
     }
 
-    fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
+    fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
+        if ctx.parent_id.is_some() && !ctx.disabled {
+            ctx.events
+                .insert(AppEvent::DisableNode(ctx.current_graph, ctx.current_node));
+        }
+
         ui.vertical(|ui| {
             ui.label("label:");
             ui.text_edit_singleline(&mut self.label);

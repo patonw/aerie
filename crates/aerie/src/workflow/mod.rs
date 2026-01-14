@@ -157,6 +157,9 @@ pub struct EditContext {
     pub current_node: NodeId, // whoops
 
     #[builder(default)]
+    pub disabled: bool,
+
+    #[builder(default)]
     pub edit_pin: Arc<ArcSwap<Option<AnyPin>>>,
 }
 

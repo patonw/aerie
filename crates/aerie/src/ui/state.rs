@@ -603,6 +603,16 @@ impl<W: WorkflowStore> WorkflowState<W> {
                 }
                 true
             }
+            DisableNode(graph_id, node_id) => {
+                let _ = self.view_stack.propagate(self.view_stack.leaf(), |graph| {
+                    if graph.uuid == *graph_id {
+                        graph.disable_node(*node_id)
+                    } else {
+                        graph
+                    }
+                });
+                true
+            }
             PinRemoved(graph_id, pin) => {
                 // At this point, the node already considers the pin gone,
                 // but we need to update the wires to reflect that.
