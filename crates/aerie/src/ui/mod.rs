@@ -40,6 +40,8 @@ pub enum AppEvent {
     EnterSubgraph(NodeId),
     LeaveSubgraph(usize),
 
+    DisableNode(GraphId, NodeId),
+
     /// Removes a pin from a node of a graph. Graph must be in the current ViewStack.
     PinRemoved(GraphId, AnyPin),
 
