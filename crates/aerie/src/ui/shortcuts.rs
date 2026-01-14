@@ -65,6 +65,9 @@ pub enum Shortcut {
 
     #[assoc(key=shortcut(NONE, Key::Delete))]
     RemoveNode,
+
+    #[assoc(key=shortcut(CTRL, Key::T))]
+    FormatCode,
 }
 
 pub const SHORTCUT_QUIT: KeyboardShortcut = Shortcut::Quit.key();
@@ -296,6 +299,12 @@ pub fn show_shortcuts(ui: &mut egui::Ui) {
 
                     render_shortcut(ui, SHORTCUT_EXIT_SUBGRAPH);
                     ui.label("Leave the subgraph");
+                    ui.end_row();
+
+                    ui.end_row();
+
+                    render_shortcut(ui, Shortcut::FormatCode.key());
+                    ui.label("Format JSON/script");
                     ui.end_row();
                 });
         });
