@@ -9,7 +9,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ui::AppEvent,
+    ui::{AppEvent, shortcuts::squelch},
     utils::message_text,
     workflow::{AnyPin, WorkflowError},
 };
@@ -102,7 +102,7 @@ impl UiNode for Start {
             ui.spacing_mut().item_spacing.x = 4.0;
             let name = self.fields.get_mut(pin_id).unwrap();
             let widget = egui::TextEdit::singleline(&mut name.0).desired_width(100.0);
-            let resp = ui.add(widget);
+            let resp = squelch(ui.add(widget));
 
             ui.add_enabled_ui(pin_id > 0, |ui| {
                 if ui.button(ARROW_CIRCLE_UP).clicked() {
@@ -311,7 +311,7 @@ impl UiNode for Finish {
             ui.spacing_mut().item_spacing.x = 4.0;
             let name = self.fields.get_mut(pin_id).unwrap();
             let widget = egui::TextEdit::singleline(&mut name.0).desired_width(100.0);
-            let resp = ui.add(widget);
+            let resp = squelch(ui.add(widget));
 
             ui.add_enabled_ui(pin_id > 0, |ui| {
                 if ui.button(ARROW_CIRCLE_UP).clicked() {
@@ -867,7 +867,7 @@ impl UiNode for Matcher {
             ui.spacing_mut().item_spacing.x = 4.0;
             let pattern = self.patterns.get_mut(editing).unwrap();
             let widget = egui::TextEdit::singleline(pattern).desired_width(200.0);
-            let resp = ui.add(widget);
+            let resp = squelch(ui.add(widget));
 
             ui.add_enabled_ui(pin_id > 0, |ui| {
                 if ui.button(ARROW_CIRCLE_UP).clicked() {

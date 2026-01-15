@@ -452,6 +452,9 @@ where
 
     #[must_use]
     pub fn with_node(&self, id: &NodeId, t: Option<&SnarlNode<T>>) -> Self {
+        if t.is_none() {
+            return self.without_node(id);
+        }
         let t = t.unwrap();
         let nodes = self.nodes.with(id, &MetaNode::from(t.clone()));
         if nodes.ptr_eq(&self.nodes) {

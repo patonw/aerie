@@ -1,6 +1,6 @@
 [package]
 name = "aerie"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 default-run = "aerie"
 
@@ -81,3 +81,5 @@ futures-util = "0.3.31"
 either = { version = "1.15.0", features = ["serde"] }
 dotenvy = { version = "0.15.7", features = ["clap"] }
 humantime = "2.3.0"
+enum-assoc = "1.3.0"
+enum-iterator = "2.3.0"

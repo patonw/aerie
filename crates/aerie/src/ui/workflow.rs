@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::Context as _;
 use cached::proc_macro::cached;
-use egui::{Color32, Hyperlink, RichText, Ui, emath::TSTransform};
+use egui::{Color32, Hyperlink, RichText, Sense, Ui, emath::TSTransform};
 use egui_phosphor::regular::{CHECK_CIRCLE, HAND_PALM, HOURGLASS_MEDIUM, PLAY_CIRCLE, WARNING};
 use egui_snarl::{
     InPinId, NodeId, OutPinId, Snarl,
@@ -16,6 +16,7 @@ use im::vector;
 use typed_builder::TypedBuilder;
 
 use crate::{
+    ui::shortcuts::{ShortcutHandler, squelch},
     utils::ErrorDistiller as _,
     workflow::{
         EditContext, GraphId, MetaNode, ShadowGraph, WorkNode,
@@ -307,27 +308,23 @@ impl WorkflowViewer {
         }
     }
 
-    pub fn handle_copy(&self, ui: &mut egui::Ui, widget: SnarlWidget) {
-        if ui.ctx().input_mut(|input| {
-            input
-                .events
-                .iter()
-                .any(|ev| matches!(ev, egui::Event::Copy))
-        }) {
-            let pos = self.transform.inverse()
-                * ui.ctx()
-                    .input(|i| i.pointer.interact_pos())
-                    .unwrap_or_default();
+    pub fn handle_copy(&self, ui: &mut Ui, widget: SnarlWidget) -> Vec<NodeId> {
+        let pos = self.transform.inverse()
+            * ui.ctx()
+                .input(|i| i.pointer.interact_pos())
+                .unwrap_or_default();
 
-            let selection = widget.get_selected_nodes(ui);
-            if !selection.is_empty() {
-                let copied = filter_graph(self.shadow.clone(), pos.to_vec2(), &selection);
-                if let Ok(text) = serde_yml::to_string(&copied) {
-                    ui.ctx().copy_text(text);
-                }
+        let selection = widget.get_selected_nodes(ui);
+        if !selection.is_empty() {
+            let copied = filter_graph(self.shadow.clone(), pos.to_vec2(), &selection);
+            if let Ok(text) = serde_yml::to_string(&copied) {
+                ui.ctx().copy_text(text);
             }
         }
+
+        selection
     }
+
     pub fn handle_paste(
         &mut self,
         snarl: &mut Snarl<WorkNode>,
@@ -345,7 +342,7 @@ impl WorkflowViewer {
         }) {
             let pos = self.transform.inverse()
                 * ui.ctx()
-                    .input(|i| i.pointer.interact_pos())
+                    .input(|i| i.pointer.interact_pos().or(i.pointer.latest_pos()))
                     .unwrap_or_default();
 
             if let Ok(shadow) = serde_yml::from_str(&text) {
@@ -353,6 +350,59 @@ impl WorkflowViewer {
                 widget.update_selected_nodes(ui, |nodes| {
                     *nodes = inserted;
                 });
+            }
+        }
+    }
+
+    pub fn target_nodes(&mut self, ui: &mut Ui, node: Option<NodeId>) -> Vec<NodeId> {
+        let selection = get_selected_nodes(self.view_id, ui.ctx());
+        if let Some(node) = node {
+            if selection.contains(&node) {
+                selection
+            } else {
+                vec![node]
+            }
+        } else {
+            selection
+        }
+    }
+
+    pub fn remove_nodes(&mut self, ui: &mut Ui, snarl: &mut Snarl<WorkNode>, node: Option<NodeId>) {
+        let targets = self.target_nodes(ui, node);
+
+        for node in &targets {
+            if !&snarl[*node].is_protected() {
+                snarl.remove_node(*node);
+                self.shadow = self.shadow.enable_node(*node).without_node(node);
+            }
+        }
+    }
+
+    pub fn disable_nodes(
+        &mut self,
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<WorkNode>,
+        node: Option<NodeId>,
+    ) {
+        let targets = self.target_nodes(ui, node);
+
+        if let Some(node) = node
+            && self.shadow.is_disabled(node)
+        {
+            for node in &targets {
+                self.shadow = self.shadow.enable_node(*node);
+            }
+        } else if targets.iter().all(|n| self.shadow.is_disabled(*n)) {
+            for node in &targets {
+                self.shadow = self.shadow.enable_node(*node);
+            }
+        } else {
+            for node in &targets {
+                let can_disable =
+                    !matches!(snarl[*node], WorkNode::Comment(_)) && !snarl[*node].is_protected();
+                if can_disable {
+                    self.shadow = self.shadow.disable_node(*node);
+                }
             }
         }
     }
@@ -418,7 +468,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                 if let Some(title) = snarl[node].as_ui_mut().title_mut() {
                     if self.rename_node == Some(node) {
                         let widget = egui::TextEdit::singleline(title).desired_width(200.0);
-                        let resp = ui.add(widget);
+                        let resp = squelch(ui.add(widget));
 
                         if resp.lost_focus() {
                             self.rename_node = None;
@@ -490,6 +540,14 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                 16.0,
                 egui::Color32::from_rgb(0x42, 0, 0).gamma_multiply(0.5),
             );
+        }
+
+        let node_egui_id = self.view_id.with(("snarl-node", node)); //.with("frame");
+        let hover_resp = ui.interact(rect, node_egui_id, Sense::hover());
+        if hover_resp.hovered() {
+            let mut handler = ShortcutHandler::builder().snarl(snarl).viewer(self).build();
+
+            handler.node_shortcuts(ui, node);
         }
 
         // A bit hacky
@@ -845,12 +903,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui: &mut Ui,
         snarl: &mut Snarl<WorkNode>,
     ) {
-        let selection = get_selected_nodes(self.view_id, ui.ctx());
-        let targets = if selection.contains(&node) {
-            selection
-        } else {
-            vec![node]
-        };
+        let targets = self.target_nodes(ui, Some(node));
 
         let help_link = snarl[node].as_ui().help_link();
         if !help_link.is_empty() {
@@ -876,13 +929,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         }
 
         if ui.button("Remove").clicked() {
-            for node in &targets {
-                if !&snarl[*node].is_protected() {
-                    snarl.remove_node(*node);
-                    self.shadow = self.shadow.enable_node(*node).without_node(node);
-                }
-            }
-
+            self.remove_nodes(ui, snarl, Some(node));
             ui.close();
         }
     }

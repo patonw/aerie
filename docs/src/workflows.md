@@ -3,7 +3,6 @@
 - Represents a task to be completed by one or more agents
 - Consists of a set of nodes
   - Smallest unit of work in the workflow
-  -
 - Nodes have inputs and outputs
   - Input pins can accept various types depending on their role
   - Output pins have only one concrete type (at a time)
@@ -31,6 +30,7 @@
 - If inputs supplied by another node:
   - when other is waiting or running, the node is not ready
   - when all others complete, node becomes ready
+  - Exception: [Select](./nodes/control.md#select) takes first ready input
   - if other node fails, node will never become ready
   - ...unless, it is attached as a failure handler
 - If a node fails without failure handlers, workflow stops
@@ -38,12 +38,18 @@
   - Handler can be anything that accepts a failure
   - However, Fallback node is usually the most sensible
   - Other options: Output, Gather and Preview to squelch errors
+- When a node completes, it supplies values to all output pins
+  - Exception: [Match](./nodes/control.md#match) only sends output to pin matching key
 - Nodes currently run one at a time
   - Concurrency will be implemented in the future
   - At the moment, if multiple nodes ready, highest priority executed first
   - Priority defined by node implementation
   - Can use the Demote node to locally adjust priority
     - Only affects immediate successor
+- Only one Start/Finish node per workflow
+  - If Finish node is connected, it must run or the execution will fail
+  - Use [Select](./nodes/control.md#select) to join diverging branches into one value
+  - Use [Select](./nodes/control.md#select) with [Demote](./nodes/control.md#demote) to provide default values
 
 ## Workflow input
 
@@ -80,3 +86,26 @@
   - in the UI simply use the Run or chat buttons to start a new execution
   - From a runner, start your initial run with `--next`
   - This will output an additional JSON object with the next workflow to run
+
+## Subgraphs
+
+- Workflows can be nested inside the [Subgraph](./nodes/general.md#subgraph) node
+- Customizable inputs/outputs
+- Some things to be aware of though
+- The entire subgraph runs from start to finish as the node is evaluated
+  - Execution of nodes inside the subgraph are not interleaved with parent nodes
+  - i.e. Priority of parent nodes irrelevant during subgraph execution
+- Inputs from diverging branches
+  - A subgraph taking inputs from diverging branches will never run
+  - e.g. different cases on a match or success and failure from a falliable node
+  - Either use different subgraphs for each branch
+  - Or include the divergence inside the graph
+- Diverging outputs
+  - A subgraph will diverging outputs will start but never finish
+  - All outputs inside the subgraph must be ready for a subgraph to finish
+  - Use Select nodes to pick outputs or defaults (when combined with Demote)
+- Output nodes are disabled inside subgraphs
+  - Partially to eliminate confusion of outputs hidden deep in subgraph hierarchies
+  - Behavior would be undefined when iterative subgraphs are implemented
+- Failures in a subgraph always captured by the failure pin
+  - Regardless of how the failure would be handled at the node level

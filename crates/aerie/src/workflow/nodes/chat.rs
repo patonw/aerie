@@ -17,7 +17,7 @@ use serde_with::skip_serializing_none;
 
 use crate::{
     ChatContent, ToolSelector,
-    ui::resizable_frame,
+    ui::{resizable_frame, shortcuts::squelch},
     utils::{CowExt as _, extract_json, message_text},
     workflow::WorkflowError,
 };
@@ -139,8 +139,10 @@ impl UiNode for ChatNode {
                                     .desired_width(f32::INFINITY)
                                     .hint_text("Prompt");
 
-                                ui.add_sized(ui.available_size(), widget)
-                                    .on_hover_text("Prompt");
+                                squelch(
+                                    ui.add_sized(ui.available_size(), widget)
+                                        .on_hover_text("Prompt"),
+                                );
                             });
                             self.ghost_pin(ValueKind::Text.color())
                         } else {
@@ -367,8 +369,10 @@ impl UiNode for StructuredChat {
                                     .desired_width(f32::INFINITY)
                                     .hint_text("Prompt");
 
-                                ui.add_sized(ui.available_size(), widget)
-                                    .on_hover_text("Prompt");
+                                squelch(
+                                    ui.add_sized(ui.available_size(), widget)
+                                        .on_hover_text("Prompt"),
+                                );
                             });
                             self.ghost_pin(ValueKind::Text.color())
                         } else {

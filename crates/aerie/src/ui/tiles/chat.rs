@@ -8,7 +8,7 @@ use std::{borrow::Cow, sync::atomic::Ordering};
 use crate::{
     ChatContent,
     config::ConfigExt,
-    ui::{AppEvent, agent_bubble, error_bubble, user_bubble},
+    ui::{AppEvent, agent_bubble, error_bubble, shortcuts::squelch, user_bubble},
     utils::{ErrorDistiller as _, FormatOpts},
 };
 
@@ -67,7 +67,7 @@ impl super::AppState {
                         .desired_width(f32::INFINITY)
                         .hint_text("Type your message here \u{1F64B}");
 
-                    ui.add_sized(ui.available_size(), widget);
+                    squelch(ui.add_sized(ui.available_size(), widget));
 
                     if let Cow::Owned(prompt) = prompt_w {
                         self.prompt = prompt;

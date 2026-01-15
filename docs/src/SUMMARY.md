@@ -16,7 +16,7 @@
 - [Tools](tools.md)
 - [Workflows](workflows.md)
 
-# Nodes
+# Core Nodes
 
 - [General](./nodes/general.md)
 - [Control](nodes/control.md)

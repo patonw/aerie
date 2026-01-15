@@ -6,7 +6,7 @@ use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
-    ui::resizable_frame,
+    ui::{resizable_frame, shortcuts::squelch},
     utils::{extract_json, message_text},
     workflow::{DynNode, EditContext, RunContext, UiNode, Value, WorkflowError},
 };
@@ -105,8 +105,10 @@ impl UiNode for ParseJson {
                                 .id_salt("json text")
                                 .desired_width(f32::INFINITY);
 
-                            ui.add_sized(ui.available_size(), widget)
-                                .on_hover_text("JSON text");
+                            squelch(
+                                ui.add_sized(ui.available_size(), widget)
+                                    .on_hover_text("JSON text"),
+                            );
                         });
                     });
                 } else {
@@ -263,8 +265,10 @@ impl UiNode for ValidateJson {
                                 .id_salt(hint_text)
                                 .desired_width(f32::INFINITY);
 
-                            ui.add_sized(ui.available_size(), widget)
-                                .on_hover_text(hint_text);
+                            squelch(
+                                ui.add_sized(ui.available_size(), widget)
+                                    .on_hover_text(hint_text),
+                            );
                         });
                     });
                 } else {
@@ -392,7 +396,7 @@ impl UiNode for TransformJson {
                                     .desired_width(f32::INFINITY)
                                     .hint_text("Fitler\u{1F64B}");
 
-                                ui.add_sized(ui.available_size(), widget);
+                                squelch(ui.add_sized(ui.available_size(), widget));
                             });
                         });
                     });

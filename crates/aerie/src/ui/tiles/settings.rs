@@ -43,12 +43,13 @@ impl super::AppState {
                             });
                         }
 
-                        if ui
-                            .add(
+                        if crate::ui::shortcuts::squelch(
+                            ui.add(
                                 TextEdit::singleline(&mut settings.llm_model)
                                     .hint_text("provider/model:tag"),
-                            )
-                            .lost_focus()
+                            ),
+                        )
+                        .lost_focus()
                             && !settings.llm_model.is_empty()
                         {
                             settings.prev_models.retain(|m| m != &settings.llm_model);

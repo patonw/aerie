@@ -24,7 +24,7 @@ use crate::{
     AgentFactory, LogEntry, Settings, ToolSpec,
     chat::ChatSession,
     transmute::Transmuter,
-    ui::{AppEvent, tiles::messages::MessageGraph, workflow::WorkflowViewer},
+    ui::{AppEvent, ShowHelp, tiles::messages::MessageGraph, workflow::WorkflowViewer},
     utils::ErrorList,
     workflow::{
         EditContext, PreviewData, ShadowGraph, WorkNode,
@@ -48,6 +48,9 @@ pub enum ToolEditorState {
 #[derive(TypedBuilder)]
 pub struct AppState {
     pub rt: tokio::runtime::Handle,
+
+    #[builder(default)]
+    pub show_help: Option<ShowHelp>,
 
     #[builder(default)]
     pub events: Arc<super::AppEvents>,
@@ -572,14 +575,32 @@ impl<W: WorkflowStore> WorkflowState<W> {
     pub fn handle_event(&mut self, event: &AppEvent) -> bool {
         use AppEvent::*;
         match event {
+            Freeze(Some(value)) => {
+                self.frozen = *value;
+                true
+            }
+            Freeze(None) => {
+                self.frozen = !self.frozen;
+                true
+            }
+            Undo => {
+                self.undo();
+                true
+            }
+            Redo => {
+                self.redo();
+                true
+            }
             EnterSubgraph(node_id) => {
                 self.view_stack.enter(*node_id).unwrap();
                 self.viewer = None;
                 true
             }
             LeaveSubgraph(levels) => {
-                self.view_stack.exit(*levels).unwrap();
-                self.viewer = None;
+                if !self.view_stack.is_empty() {
+                    self.view_stack.exit(*levels).unwrap();
+                    self.viewer = None;
+                }
                 true
             }
             PinRemoved(graph_id, pin) => {

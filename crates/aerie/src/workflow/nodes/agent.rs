@@ -9,7 +9,7 @@ use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 use crate::{
     ChatContent, ToolProvider, ToolSelector,
     config::Ternary,
-    ui::{resizable_frame, resizable_frame_opt},
+    ui::{resizable_frame, resizable_frame_opt, shortcuts::squelch},
     workflow::WorkflowError,
 };
 
@@ -319,7 +319,9 @@ impl UiNode for AgentNode {
                         Some("model"),
                         &mut self.model,
                         |ui, value| {
-                            ui.add(TextEdit::singleline(value).hint_text("provider/model:tag"));
+                            squelch(
+                                ui.add(TextEdit::singleline(value).hint_text("provider/model:tag")),
+                            );
                         },
                     );
                 } else {
@@ -366,8 +368,10 @@ impl UiNode for AgentNode {
                                     .desired_width(f32::INFINITY)
                                     .hint_text("system message");
 
-                                ui.add_sized(ui.available_size(), widget)
-                                    .on_hover_text(help);
+                                squelch(
+                                    ui.add_sized(ui.available_size(), widget)
+                                        .on_hover_text(help),
+                                );
                             });
                         },
                     );
@@ -493,8 +497,10 @@ impl UiNode for ChatContext {
                                     .desired_width(f32::INFINITY)
                                     .hint_text("context");
 
-                                ui.add_sized(ui.available_size(), widget)
-                                    .on_hover_text("Background context");
+                                squelch(
+                                    ui.add_sized(ui.available_size(), widget)
+                                        .on_hover_text("Background context"),
+                                );
                             });
                             self.ghost_pin(ValueKind::Text.color())
                         } else {
@@ -603,7 +609,7 @@ impl UiNode for InvokeTool {
             }
             2 => {
                 if remote.is_none() {
-                    ui.add(TextEdit::singleline(&mut self.tool_name));
+                    squelch(ui.add(TextEdit::singleline(&mut self.tool_name)));
                 } else {
                     ui.label("tool name");
                 }

@@ -1,7 +1,6 @@
 use arc_swap::{ArcSwap, ArcSwapOption};
 use clap::Parser as _;
 use eframe::egui;
-use egui::KeyboardShortcut;
 use egui_commonmark::*;
 use egui_tiles::{LinearDir, TileId};
 use std::{
@@ -19,14 +18,9 @@ use aerie::{
     AgentFactory, LogChannelLayer, LogEntry, Settings,
     chat::ChatSession,
     config::{Args, Command, ConfigExt, SessionCommand},
-    ui::{AppState, Pane, state::WorkflowState},
+    ui::{AppState, Pane, shortcuts::SHORTCUT_QUIT, state::WorkflowState},
     utils::ErrorDistiller as _,
     workflow::store::WorkflowStoreDir,
-};
-
-const SHORTCUT_QUIT: KeyboardShortcut = KeyboardShortcut {
-    modifiers: egui::Modifiers::CTRL,
-    logical_key: egui::Key::Q,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -210,15 +204,15 @@ fn main() -> anyhow::Result<()> {
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         ctx.set_fonts(fonts);
 
-        if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_QUIT)) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-
         egui::CentralPanel::default().show(ctx, |ui| {
             tree.ui(&mut behavior, ui);
         });
 
         behavior.handle_events();
+
+        if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_QUIT)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
 
         let errors = behavior.errors.load();
         if !errors.is_empty() {
