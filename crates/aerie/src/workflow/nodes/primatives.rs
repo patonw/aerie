@@ -9,7 +9,7 @@ use serde_with::skip_serializing_none;
 
 use crate::{
     ChatContent,
-    ui::{resizable_frame, tiles::chat::render_message_width},
+    ui::{resizable_frame, shortcuts::squelch, tiles::chat::render_message_width},
     utils::{message_party, message_text},
     workflow::{GraphId, WorkflowError},
 };
@@ -125,7 +125,7 @@ impl UiNode for Text {
                     .desired_width(f32::INFINITY)
                     .hint_text("Enter text \u{1F64B}");
 
-                ui.add_sized(ui.available_size(), widget);
+                squelch(ui.add_sized(ui.available_size(), widget));
             });
         });
     }

@@ -29,6 +29,12 @@ pub enum Pane {
     Outputs,
 }
 
+#[derive(Debug, Clone)]
+pub enum ShowHelp {
+    All,
+    Workflow,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum AppEvent {
     EnterSubgraph(NodeId),
@@ -46,6 +52,10 @@ pub enum AppEvent {
     UserRunWorkflow,
 
     SetPrompt(String),
+
+    Freeze(Option<bool>),
+    Undo,
+    Redo,
 }
 
 impl AppEvent {

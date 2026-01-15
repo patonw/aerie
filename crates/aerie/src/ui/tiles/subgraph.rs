@@ -13,6 +13,7 @@ use crate::ui::AppEvent;
 use crate::ui::runner::play_button;
 use crate::ui::runner::stop_button;
 use crate::ui::shortcuts::SHORTCUT_RUN;
+use crate::ui::shortcuts::ShortcutHandler;
 use crate::ui::workflow::get_snarl_style;
 
 impl super::AppState {
@@ -29,7 +30,6 @@ impl super::AppState {
             // Forces new widget state in children after switching or undos so that
             // Snarl will draw our persisted positions and sizes.
             let mut snarl = self.workflows.view_stack.leaf_snarl().unwrap();
-            let frozen = self.workflows.frozen;
 
             let shadow = self.workflows.view_stack.leaf();
             let viewer = self.workflow_viewer();
@@ -49,12 +49,12 @@ impl super::AppState {
             // iterate through the whole collection to find moved nodes.
             viewer.cast_positions(&snarl);
 
-            // TODO: only when inside canvas
-            viewer.handle_copy(ui, widget);
+            let mut shortcuts = ShortcutHandler::builder()
+                .snarl(&mut snarl)
+                .viewer(viewer)
+                .build();
 
-            if !frozen {
-                viewer.handle_paste(&mut snarl, ui, widget);
-            }
+            shortcuts.viewer_shortcuts(ui, widget);
 
             let shadow = viewer.shadow.clone();
             self.workflows

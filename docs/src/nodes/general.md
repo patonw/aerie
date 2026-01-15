@@ -16,6 +16,17 @@ These nodes provide scaffolding for the workflow.
 - The conversation must be an extension of the input
 - Other nodes may continue to run after Finish if not on its path
 
+## Subgraph
+
+- See [Subgraphs](../workflows.md#subgraphs) section in the Workflows page
+- Contains an embedded workflow
+- Double-click icon to edit
+- Control palette shows subgraph stack instead of workflow selector
+  - Click on a higher level to navigate back
+  - Level names from subgraph titles
+- Double-click subgraph title to change
+- Can customize inputs/outputs via Start and Finish nodes
+
 ## Preview
 
 - Transient display for wire values

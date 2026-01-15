@@ -8,7 +8,12 @@ use rig::{
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-use crate::{ChatContent, ui::resizable_frame, utils::EVec2, workflow::WorkflowError};
+use crate::{
+    ChatContent,
+    ui::{resizable_frame, shortcuts::squelch},
+    utils::EVec2,
+    workflow::WorkflowError,
+};
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 
@@ -334,8 +339,10 @@ impl UiNode for CreateMessage {
                                 .id_salt("message content")
                                 .desired_width(f32::INFINITY);
 
-                            ui.add_sized(ui.available_size(), widget)
-                                .on_hover_text("message content");
+                            squelch(
+                                ui.add_sized(ui.available_size(), widget)
+                                    .on_hover_text("message content"),
+                            );
                         });
                     });
                 } else {

@@ -43,6 +43,7 @@
   - Appear as yellow sticky notes
   - Serve no purpose other than communicating with people viewing workflow
   - Can be collapsed if distracting
+- Press '?' for a list of keyboard shortcuts
 
 ![Workflow tab](./images/workflow-running-2.png)
 

@@ -5,7 +5,7 @@ use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
-    ui::resizable_frame,
+    ui::{resizable_frame, shortcuts::squelch},
     utils::message_text,
     workflow::{DynNode, EditContext, RunContext, UiNode, Value, WorkflowError},
 };
@@ -48,7 +48,7 @@ impl UiNode for CommentNode {
                         .background_color(Self::bg_color())
                         .text_color_opt(Some(egui::Color32::BLACK))
                         .hint_text("Comment body\u{1F64B}");
-                    ui.add_sized(ui.available_size(), widget);
+                    squelch(ui.add_sized(ui.available_size(), widget));
                 });
             });
         });
@@ -158,7 +158,7 @@ impl UiNode for TemplateNode {
                                     .desired_width(f32::INFINITY)
                                     .hint_text("Template body\u{1F64B}");
 
-                                ui.add_sized(ui.available_size(), widget);
+                                squelch(ui.add_sized(ui.available_size(), widget));
                             });
                         });
                     });
