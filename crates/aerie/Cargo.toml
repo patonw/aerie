@@ -4,6 +4,10 @@ version = "0.2.0"
 edition = "2024"
 default-run = "aerie"
 
+[[bin]]
+name = "migrate-workflow"
+required-features = ["migration"]
+
 [patch.crates-io]
 # egui-snarl = { path = "/code/upstream/rust/egui-snarl/" }
 egui-snarl = { git = "https://github.com/patonw/egui-snarl", branch = "update-selection" }
@@ -72,8 +76,7 @@ jaq-core = "2.2.1"
 jaq-json = { version = "1.1.3", features = ["serde_json"] }
 jaq-std = "2.1.2"
 jsonschema = "0.37.4"
-rfd = { version = "0.16.0", default-features = false, features = [
-  "tokio",
+rfd = { version = "0.17.2", default-features = false, features = [
   "xdg-portal",
 ] }
 chrono = "0.4.42"

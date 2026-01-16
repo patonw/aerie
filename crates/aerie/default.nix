@@ -22,6 +22,7 @@ let
     zlib
     openssl
     wayland
+    dbus
   ];
   nixGL = nixgl.auto.nixGLDefault; # Necessary for running glutin on non-Nixos distros
   build-aerie = { features ? [] } : naersk.buildPackage {

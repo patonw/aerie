@@ -25,7 +25,7 @@ use crate::{
     chat::ChatSession,
     transmute::Transmuter,
     ui::{AppEvent, ShowHelp, tiles::messages::MessageGraph, workflow::WorkflowViewer},
-    utils::ErrorList,
+    utils::{ErrorDistiller as _, ErrorList},
     workflow::{
         EditContext, PreviewData, ShadowGraph, WorkNode,
         runner::{NodeStateMap, WorkflowRun},
@@ -319,13 +319,25 @@ impl<W: WorkflowStore> WorkflowState<W> {
             return;
         }
 
+        let Some(target) = self.store.get(workflow_name) else {
+            tracing::warn!("Could not load workflow {workflow_name}");
+            if let Some(viewer) = &self.viewer {
+                viewer
+                    .edit_ctx
+                    .errors
+                    .push(anyhow::anyhow!("Could not load workflow {workflow_name}"));
+            }
+
+            return;
+        };
+
         // Stash current editee to preserve unsaved changes
         self.undo_stack
             .entry(self.editing.clone())
             .or_default()
             .push_front((self.modtime, self.shadow.clone()));
 
-        self.baseline = self.store.get(workflow_name).unwrap_or_default();
+        self.baseline = target;
         if let Some(undos) = self.undo_stack.get_mut(workflow_name)
             && let Some((mt, sg)) = undos.pop_front()
         {

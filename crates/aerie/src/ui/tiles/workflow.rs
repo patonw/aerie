@@ -18,6 +18,7 @@ use crate::{
         workflow::get_snarl_style,
     },
     utils::ErrorDistiller as _,
+    workflow::store::WorkflowStore as _,
 };
 
 impl super::AppState {
@@ -211,6 +212,7 @@ impl super::AppState {
                                         let timestamp = datetime
                                             .format("unnamed-%Y-%m-%dT%H:%M:%S")
                                             .to_string();
+                                        self.workflows.store.put(&timestamp, Default::default());
                                         self.workflows.switch(&timestamp);
                                     }
                                 });
