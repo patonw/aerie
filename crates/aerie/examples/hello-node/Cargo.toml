@@ -1,0 +1,16 @@
+[package]
+name = "hello-node"
+version = "0.1.0"
+edition = "2024"
+
+[patch.crates-io]
+egui-snarl = { git = "https://github.com/patonw/egui-snarl", branch = "update-selection" }
+rig-core = { git = "https://github.com/patonw/rig", branch = "fix-tool_choice" }
+
+[dependencies]
+aerie = { path = "../.." }
+anyhow = "1.0.100"
+clap = "4.5.54"
+dirs = "6.0.0"
+dotenvy = "0.15.7"
+serde = { version = "1.0.228", features = ["derive"] }

@@ -209,8 +209,23 @@ impl WorkflowStoreDir {
                 continue;
             };
 
-            let reader = OpenOptions::new().read(true).open(&path)?;
-            workflows.insert(name, serde_yml::from_reader(reader)?);
+            let reader = match OpenOptions::new().read(true).open(&path) {
+                Ok(reader) => reader,
+                Err(err) => {
+                    tracing::error!("Could not open workflow at {path:?}:\n{err:?}");
+                    continue;
+                }
+            };
+
+            let value = match serde_yml::from_reader(reader) {
+                Ok(it) => it,
+                Err(err) => {
+                    tracing::error!("Could not parse workflow at {path:?}:\n{err:?}");
+                    continue;
+                }
+            };
+
+            workflows.insert(name, value);
         }
 
         let mut this = Self {

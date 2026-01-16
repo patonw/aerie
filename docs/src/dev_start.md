@@ -35,3 +35,18 @@
     --config <path-to-config> \
     tutorial/workflows/toolhead.yml
   ```
+
+## Customization
+
+- Can add custom nodes by using this crate as a library
+- Build and run an `App` in your binary
+- Configurable hooks provide some degree of customization
+- See the `hello-node` example project
+
+### Custom Nodes
+
+- Custom nodes must implement three traits: `DynNode`, `UiNode` and `FlexNode`
+- `DynNode` determines behavior of the node under the graph runner
+- `UiNode` allows for interactive editing of the node beyond connecting its pins
+- `FlexNode` is marker trait that registers the node for deserialization
+  - Must include the `#[typetag::serde]` attribute
