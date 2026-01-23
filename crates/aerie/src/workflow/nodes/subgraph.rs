@@ -18,7 +18,7 @@ use crate::workflow::{
 // "serializing nested enums in YAML is not supported yet"
 // So we'll embed the enum into the node struct instead
 /// Controls execution behavior
-#[derive(Debug, Default, Clone, Hash, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Flavor {
     #[default]
     Simple,
@@ -196,10 +196,10 @@ impl Subgraph {
                     .outputs
                     .iter()
                     .map(|it| match it {
-                        Some(Text(_)) => TextList(vector![]),
-                        Some(Integer(_)) => IntList(vector![]),
-                        Some(Number(_)) => FloatList(vector![]),
-                        Some(Message(_)) => MsgList(vector![]),
+                        Some(Text(_)) | Some(TextList(_)) => TextList(vector![]),
+                        Some(Integer(_)) | Some(IntList(_)) => IntList(vector![]),
+                        Some(Number(_)) | Some(FloatList(_)) => FloatList(vector![]),
+                        Some(Message(_)) | Some(MsgList(_)) => MsgList(vector![]),
                         Some(Json(_)) => Json(Arc::new(serde_json::Value::Array(vec![]))),
                         Some(value) => value.clone(),
                         None => Default::default(),
@@ -212,21 +212,37 @@ impl Subgraph {
                     (TextList(items), Some(Text(value))) => {
                         items.push_back(value);
                     }
+                    (TextList(items), Some(TextList(values))) => {
+                        items.extend(values);
+                    }
                     (IntList(items), Some(Integer(value))) => {
                         items.push_back(value);
+                    }
+                    (IntList(items), Some(IntList(values))) => {
+                        items.extend(values);
                     }
                     (FloatList(items), Some(Number(value))) => {
                         items.push_back(value);
                     }
+                    (FloatList(items), Some(FloatList(values))) => {
+                        items.extend(values);
+                    }
                     (MsgList(items), Some(Message(value))) => {
                         items.push_back(Arc::new(value));
+                    }
+                    (MsgList(items), Some(MsgList(values))) => {
+                        items.extend(values);
                     }
                     (Json(arr), Some(Json(value))) => {
                         let serde_json::Value::Array(items) = Arc::make_mut(arr) else {
                             unreachable!();
                         };
 
-                        items.push((*value).clone());
+                        if let serde_json::Value::Array(values) = &*value {
+                            items.extend(values.iter().cloned());
+                        } else {
+                            items.push((*value).clone());
+                        }
                     }
                     (result, Some(value)) => {
                         *result = value;
@@ -256,6 +272,10 @@ impl DynNode for Subgraph {
             return Cow::Borrowed(&[]);
         };
 
+        if self.flavor.is_simple() {
+            return Cow::Owned(vec![start.out_kind(in_pin)]);
+        }
+
         match start.out_kind(in_pin) {
             Text => Cow::Owned(vec![TextList, Text]),
             Integer => Cow::Owned(vec![IntList, Integer]),
@@ -282,6 +302,8 @@ impl DynNode for Subgraph {
 
         if out_pin == finish.inputs() {
             ValueKind::Failure
+        } else if self.flavor.is_simple() {
+            finish.in_kinds(out_pin)[0]
         } else {
             match finish.in_kinds(out_pin)[0] {
                 Text => TextList,

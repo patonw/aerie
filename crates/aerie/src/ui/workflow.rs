@@ -22,7 +22,7 @@ use crate::{
     workflow::{
         EditContext, GraphId, MetaNode, ShadowGraph, WorkNode,
         nodes::{
-            AgentNode, ChatContext, ChatNode, CommentNode, Demote, Fallback, GraphSubmenu,
+            AgentNode, ChatContext, ChatNode, CommentNode, Demote, Fallback, Flavor, GraphSubmenu,
             InvokeTool, Matcher, Number, OutputNode, Panic, Preview, Select, StructuredChat,
             Subgraph, TemplateNode, Text, Tools,
         },
@@ -56,6 +56,8 @@ pub struct ViewStack {
 
     pub path: im::Vector<NodeId>,
 
+    pub flavor: im::Vector<Flavor>,
+
     pub levels: im::Vector<ShadowGraph<WorkNode>>,
 }
 
@@ -64,6 +66,7 @@ impl ViewStack {
         let mut me = Self {
             root_id: egui::Id::new(root_graph.uuid),
             path: Default::default(),
+            flavor: Default::default(),
             levels: vector![root_graph],
         };
 
@@ -133,6 +136,13 @@ impl ViewStack {
             Some((self.levels[1].uuid, self.path[0]))
         }
     }
+    pub fn flavor(&self) -> Option<Flavor> {
+        if self.is_empty() {
+            None
+        } else {
+            Some(self.flavor[0])
+        }
+    }
 
     pub fn view_id(&self) -> egui::Id {
         self.root_id.with(&self.path)
@@ -140,7 +150,10 @@ impl ViewStack {
 
     pub fn exit(&mut self, levels: usize) -> anyhow::Result<()> {
         for _ in 0..levels {
-            if self.path.pop_front().is_none() || self.levels.pop_front().is_none() {
+            if self.path.pop_front().is_none()
+                || self.flavor.pop_front().is_none()
+                || self.levels.pop_front().is_none()
+            {
                 anyhow::bail!("stack is empty")
             }
         }
@@ -149,23 +162,24 @@ impl ViewStack {
     }
 
     pub fn enter(&mut self, node: NodeId) -> anyhow::Result<()> {
-        let parent = self
+        let meta = self
             .leaf()
             .nodes
             .get(&node)
             .cloned()
             .context("No such node in parent graph")?;
 
-        let graph = parent.value;
-        if !graph.is_subgraph() {
+        let container = meta.value;
+        if !container.is_subgraph() {
             anyhow::bail!("Not a subgraph");
         }
 
-        let Some(subgraph) = graph.0.downcast_ref::<Subgraph>() else {
+        let Some(subgraph) = container.0.downcast_ref::<Subgraph>() else {
             anyhow::bail!("Could not extract subgraph");
         };
 
         self.path.push_front(node);
+        self.flavor.push_front(subgraph.flavor);
         self.levels.push_front(subgraph.graph.clone());
 
         Ok(())

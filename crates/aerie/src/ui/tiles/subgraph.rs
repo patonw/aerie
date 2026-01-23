@@ -43,18 +43,20 @@ impl super::AppState {
                 .id(viewer.view_id)
                 .style(get_snarl_style());
 
-            widget.show(&mut snarl, viewer, ui);
+            let pointee = widget.show(&mut snarl, viewer, ui).contains_pointer();
 
             // Unfortunately, there's no event for node movement so we have to
             // iterate through the whole collection to find moved nodes.
             viewer.cast_positions(&snarl);
 
-            let mut shortcuts = ShortcutHandler::builder()
-                .snarl(&mut snarl)
-                .viewer(viewer)
-                .build();
+            if pointee {
+                let mut shortcuts = ShortcutHandler::builder()
+                    .snarl(&mut snarl)
+                    .viewer(viewer)
+                    .build();
 
-            shortcuts.viewer_shortcuts(ui, widget);
+                shortcuts.viewer_shortcuts(ui, widget);
+            }
 
             let shadow = viewer.shadow.clone();
             self.workflows

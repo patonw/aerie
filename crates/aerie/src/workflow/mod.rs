@@ -38,7 +38,7 @@ use crate::{
     ui::AppEvents,
     utils::{AtomicBuffer, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
     workflow::{
-        nodes::{Finish, Start},
+        nodes::{Finish, Flavor, Start},
         runner::{ExecState, NodeStateMap},
     },
 };
@@ -192,6 +192,9 @@ pub struct EditContext {
     /// Ids of the parent graph and subgraph container node
     #[builder(default)]
     pub parent_id: Option<(GraphId, NodeId)>,
+
+    #[builder(default)]
+    pub flavor: Option<Flavor>,
 
     #[builder(default)]
     pub previews: PreviewData,

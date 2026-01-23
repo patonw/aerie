@@ -229,21 +229,43 @@ impl UiNode for Start {
         if ctx.parent_id.is_some() {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                 ui.menu_button("+new", |ui| {
-                    let kinds = [
-                        ValueKind::Text,
-                        ValueKind::Number,
-                        ValueKind::Integer,
-                        ValueKind::Json,
-                        ValueKind::Agent,
-                        ValueKind::Tools,
-                        ValueKind::Chat,
-                        ValueKind::Message,
-                    ];
+                    let kinds = if let Some(flavor) = ctx.flavor
+                        && flavor.is_simple()
+                    {
+                        &[
+                            ValueKind::Text,
+                            ValueKind::TextList,
+                            ValueKind::Number,
+                            ValueKind::FloatList,
+                            ValueKind::Integer,
+                            ValueKind::IntList,
+                            ValueKind::Json,
+                            ValueKind::Agent,
+                            ValueKind::Tools,
+                            ValueKind::Chat,
+                            ValueKind::Message,
+                            ValueKind::MsgList,
+                        ][..]
+                    } else {
+                        &[
+                            ValueKind::Text,
+                            ValueKind::Number,
+                            ValueKind::Integer,
+                            ValueKind::Json,
+                            ValueKind::Agent,
+                            ValueKind::Tools,
+                            ValueKind::Chat,
+                            ValueKind::Message,
+                        ][..]
+                    };
                     for kind in kinds {
-                        let label = kind.to_string().to_lowercase();
+                        let mut label = kind.to_string().to_lowercase();
+                        if kind.is_list() {
+                            label = format!("[{label}]");
+                        }
                         if ui.button(&label).clicked() {
                             self.fields = self.fields.clone();
-                            self.fields.push_back((label, kind));
+                            self.fields.push_back((label, *kind));
                         }
                     }
                 });
@@ -442,21 +464,24 @@ impl UiNode for Finish {
                 // TODO: implement flattening in subgraph
                 let kinds = [
                     ValueKind::Text,
+                    ValueKind::TextList,
                     ValueKind::Number,
+                    ValueKind::FloatList,
                     ValueKind::Integer,
-                    // ValueKind::TextList,
-                    // ValueKind::FloatList,
-                    // ValueKind::IntList,
+                    ValueKind::IntList,
                     ValueKind::Json,
                     ValueKind::Agent,
                     ValueKind::Tools,
                     ValueKind::Chat,
                     ValueKind::Message,
-                    // ValueKind::MsgList,
+                    ValueKind::MsgList,
                 ];
 
                 for kind in kinds {
-                    let label = kind.to_string().to_lowercase();
+                    let mut label = kind.to_string().to_lowercase();
+                    if kind.is_list() {
+                        label = format!("[{label}]");
+                    }
                     if ui.button(&label).clicked() {
                         self.fields = self.fields.clone();
                         self.fields.push_back((label, kind));
