@@ -79,7 +79,7 @@ impl UiNode for Tools {
 
                     ui.separator();
 
-                    for (name, provider) in &ctx.toolbox.providers {
+                    for (name, provider) in ctx.toolbox.providers.load().iter() {
                         egui::collapsing_header::CollapsingState::load_with_default_open(
                             ui.ctx(),
                             ui.id().with(name),

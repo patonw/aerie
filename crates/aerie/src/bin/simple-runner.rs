@@ -52,12 +52,15 @@ struct Args {
     #[arg(short, long)]
     model: Option<String>,
 
-    #[arg(short, long)]
+    #[arg(short = 'T', long)]
     temperature: Option<f64>,
 
     /// Initial user prompt if required by the workflow.
     #[arg(short, long, visible_alias("prompt"))]
     input: Option<String>,
+
+    #[arg(short = 'I', long)]
+    input_file: Option<PathBuf>,
 
     /// Save outputs as individual files in a directory
     #[arg(short, long)]
@@ -158,7 +161,29 @@ fn main() -> anyhow::Result<()> {
 
     agent_factory.reload_tools()?;
 
+    // TODO: better synchronization mechanism for waiting on tools to load
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let num_tasks = agent_factory
+            .task_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if num_tasks < 1 {
+            break;
+        }
+
+        tracing::info!("Waiting for {num_tasks} tools to load...");
+    }
+
     let mut prompt = args.input.as_ref().cloned().unwrap_or_default();
+    if &prompt == "-" {
+        prompt = std::io::read_to_string(std::io::stdin())?;
+    }
+
+    if let Some(path) = &args.input_file {
+        prompt = std::fs::read_to_string(path)?;
+    }
+
     let workflow_path = args.workflow.as_path();
     let mut shadow: ShadowGraph<WorkNode> = if workflow_path.is_file() {
         let reader = OpenOptions::new().read(true).open(workflow_path)?;

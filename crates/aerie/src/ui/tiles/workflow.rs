@@ -27,10 +27,12 @@ impl super::AppState {
         let running = self
             .workflows
             .running
-            .load(std::sync::atomic::Ordering::Relaxed);
+            .load(std::sync::atomic::Ordering::Relaxed)
+            || self.task_count.load(Ordering::Relaxed) > 0;
 
+        let busy = self.task_count.load(Ordering::Relaxed) > 0;
         // Shortcuts at the start of the fn will run even if other widget focused
-        if !running && ui.ctx().input_mut(|i| i.consume_shortcut(&SHORTCUT_RUN)) {
+        if !busy && !running && ui.ctx().input_mut(|i| i.consume_shortcut(&SHORTCUT_RUN)) {
             self.events.insert(AppEvent::UserRunWorkflow);
         }
 
@@ -169,6 +171,7 @@ impl super::AppState {
             .workflows
             .running
             .load(std::sync::atomic::Ordering::Relaxed);
+        let busy = self.task_count.load(Ordering::Relaxed) > 0;
 
         ui.set_max_width(150.0);
         ui.vertical_centered_justified(|ui| {
@@ -380,7 +383,7 @@ impl super::AppState {
                             self.workflows.interrupt.store(true, Ordering::Relaxed);
                         }
                     });
-                } else if ui.add(play_button()).clicked() {
+                } else if ui.add_enabled(!busy, play_button()).clicked() {
                     self.events.insert(AppEvent::UserRunWorkflow);
                 }
             });

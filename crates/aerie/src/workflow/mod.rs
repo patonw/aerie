@@ -191,7 +191,7 @@ impl AnyPin {
 
 #[derive(Clone, TypedBuilder)]
 pub struct EditContext {
-    pub toolbox: Arc<Toolbox>,
+    pub toolbox: Toolbox,
 
     pub events: Arc<AppEvents>,
 

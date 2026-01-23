@@ -23,7 +23,7 @@ use crate::{
     chat::ChatSession,
     config::{Args, Command, ConfigExt, SessionCommand},
     ui::{AppState, Pane, shortcuts::SHORTCUT_QUIT, state::WorkflowState},
-    utils::ErrorDistiller as _,
+    utils::{ErrorDistiller as _, ErrorList},
     workflow::store::WorkflowStoreDir,
 };
 
@@ -221,10 +221,13 @@ impl App {
         let flow_store = (self.workstore_fn)(WorkflowStoreDir::load_all(workflow_dir, true)?);
         let flow_state = WorkflowState::new(flow_store.clone(), flow_name);
 
+        let errors: ErrorList<anyhow::Error> = Default::default();
         let mut agent_factory = (self.agent_factory_fn)(
             AgentFactory::builder()
                 .rt(rt.handle().to_owned())
                 .settings(settings.clone())
+                .errors(errors.clone())
+                .task_count(task_count.clone())
                 .store(Some(flow_store.clone()))
                 .next_workflow(next_workflow.clone())
                 .next_prompt(next_prompt.clone())
@@ -237,6 +240,7 @@ impl App {
                 .settings(settings.clone())
                 .log_history(log_history.clone())
                 .task_count(task_count.clone())
+                .errors(errors.clone())
                 .session(session)
                 .cache(cache)
                 .rt(rt.handle().clone())
