@@ -7,7 +7,6 @@ use crate::{
     ToolProvider, ToolSpec,
     config::ConfigExt as _,
     ui::{state::ToolEditorState, toggled_field},
-    utils::ErrorDistiller as _,
 };
 
 impl super::AppState {
@@ -124,7 +123,7 @@ impl super::AppState {
                     })
                 .body(|ui| {
                         // TODO: Show any errors connecting to provider
-                        if let Some(provider) = self.agent_factory.toolbox.providers.get(name) {
+                        if let Some(provider) = self.agent_factory.toolbox.providers.load().get(name) {
 
                             let ToolProvider::MCP { tools, .. } = provider else { unreachable!() };
                             for item in tools {
@@ -302,17 +301,7 @@ impl super::AppState {
                     settings.tools.provider.insert(name.clone(), value);
                 });
 
-                // TODO: Spawn thread
-                if let Err(err) = self.agent_factory.reload_tools() {
-                    self.errors.push(err);
-                    self.settings.update(|conf| {
-                        conf.tools
-                            .provider
-                            .get_mut(&name)
-                            .expect("Newly created provider should exist")
-                            .set_enabled(false)
-                    })
-                }
+                self.agent_factory.reload_provider(&name);
             }
             if ui.button("Cancel").clicked() {
                 self.tool_editor = None;

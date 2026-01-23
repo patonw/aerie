@@ -8,11 +8,22 @@ use rig::{
     client::{builder::DynClientBuilder, completion::CompletionModelHandle},
     completion::ToolDefinition,
 };
+use scopeguard::defer;
 use serde::{Deserialize, Serialize};
-use std::{hash::Hash, sync::Arc};
+use std::{
+    hash::Hash,
+    sync::{
+        Arc,
+        atomic::{AtomicU16, Ordering},
+    },
+};
 use typed_builder::TypedBuilder;
 
-use crate::{config::ConfigExt as _, workflow::store::WorkflowStoreDir};
+use crate::{
+    config::ConfigExt as _,
+    utils::{ErrorDistiller as _, ErrorList},
+    workflow::store::WorkflowStoreDir,
+};
 
 pub use super::chat::{ChatContent, ChatEntry, ChatHistory, ChatSession};
 pub use super::config::{Settings, ToolSelector, ToolSpec};
@@ -68,10 +79,16 @@ pub struct AgentFactory {
     pub settings: Arc<ArcSwap<Settings>>,
 
     #[builder(default)]
+    pub errors: ErrorList<anyhow::Error>,
+
+    #[builder(default)]
+    pub task_count: Arc<AtomicU16>,
+
+    #[builder(default)]
     pub store: Option<WorkflowStoreDir>,
 
     #[builder(default)]
-    pub toolbox: Arc<Toolbox>,
+    pub toolbox: Toolbox,
 
     #[builder(default)]
     pub cache: Arc<ArcSwap<im::HashMap<AgentSpec, AgentT>>>,
@@ -174,29 +191,62 @@ impl AgentFactory {
         builder.build()
     }
 
+    pub fn reload_provider(&mut self, name: &str) {
+        let task_count = self.task_count.clone();
+        let name = name.to_owned();
+        let rt = self.rt.clone();
+        let toolbox = self.toolbox.clone();
+        let settings = self.settings.clone();
+        let errors = self.errors.clone();
+
+        rt.spawn(async move {
+            task_count.fetch_add(1, Ordering::Relaxed);
+
+            defer! {
+                task_count.fetch_sub(1, Ordering::Relaxed);
+            };
+
+            let Some(spec) = settings.view(|settings| {
+                settings
+                    .tools
+                    .provider
+                    .iter()
+                    .filter(|(provider, spec)| provider.as_str() == name && spec.enabled())
+                    .map(|(_, spec)| spec.clone())
+                    .next()
+            }) else {
+                settings.update(|conf| {
+                    conf.tools
+                        .provider
+                        .get_mut(&name)
+                        .expect("provider should exist")
+                        .set_enabled(false);
+                });
+                return;
+            };
+
+            match ToolProvider::from_spec(&spec).await {
+                Ok(toolkit) => {
+                    toolbox.with_provider(&name, toolkit);
+                }
+                err => {
+                    errors.distil(err.context(format!("Could not load provider {name}")));
+                    settings.update(|conf| {
+                        conf.tools
+                            .provider
+                            .get_mut(&name)
+                            .expect("provider should exist")
+                            .set_enabled(false);
+                    });
+                }
+            }
+        });
+    }
+
     // TODO: Let's save errors to display in tool tab instead of aborting
     pub fn reload_tools(&mut self) -> anyhow::Result<()> {
-        let mut toolbox = Toolbox::default();
-
-        let providers = self.settings.view(|settings| {
-            settings
-                .tools
-                .provider
-                .iter()
-                .filter(|(_, spec)| spec.enabled())
-                .map(|(name, spec)| (name.clone(), spec.clone()))
-                .collect_vec()
-        });
-
-        for (provider, spec) in providers {
-            let toolkit = self
-                .rt
-                .block_on(ToolProvider::from_spec(&spec))
-                .with_context(|| format!("Could not load tools for {provider}: {spec:?}"))?;
-
-            toolbox.with_provider(&provider, toolkit);
-        }
-
+        let toolbox = Toolbox::default();
+        self.toolbox = toolbox.clone();
         if let Some(store) = &self.store {
             toolbox.with_provider(
                 "chainer",
@@ -208,7 +258,19 @@ impl AgentFactory {
             );
         }
 
-        self.toolbox = Arc::new(toolbox);
+        let providers = self.settings.view(|settings| {
+            settings
+                .tools
+                .provider
+                .iter()
+                .filter(|(_, spec)| spec.enabled())
+                .map(|(name, _)| name.clone())
+                .collect_vec()
+        });
+
+        for provider in providers {
+            self.reload_provider(&provider);
+        }
 
         Ok(())
     }

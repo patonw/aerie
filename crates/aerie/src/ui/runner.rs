@@ -7,6 +7,7 @@ use std::{
 use arc_swap::ArcSwap;
 use egui::RichText;
 use egui_phosphor::regular::{PLAY, STOP};
+use scopeguard::defer;
 
 use crate::{
     config::ConfigExt as _,
@@ -96,6 +97,10 @@ impl super::AppState {
             let started = SystemTime::now();
             task_count_.fetch_add(1, Ordering::Relaxed);
             running.store(true, std::sync::atomic::Ordering::Relaxed);
+            defer! {
+                task_count_.fetch_sub(1, Ordering::Relaxed);
+                running.store(false, std::sync::atomic::Ordering::Relaxed);
+            };
 
             loop {
                 if interrupt.load(Ordering::Relaxed) {
@@ -128,8 +133,6 @@ impl super::AppState {
 
             duration.store(Arc::new(started.elapsed().unwrap_or_default()));
             errors.distil(session.save());
-            running.store(false, std::sync::atomic::Ordering::Relaxed);
-            task_count_.fetch_sub(1, Ordering::Relaxed);
 
             if errors.load().is_empty()
                 && let Some(scratch) = exec.run_ctx.scratch
