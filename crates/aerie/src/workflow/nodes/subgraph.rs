@@ -119,6 +119,8 @@ impl Subgraph {
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
         use Value::*;
+        use rayon::prelude::*;
+
         if inputs.iter().flatten().all(|it| !it.kind().is_list()) {
             return self.exec_simple(ctx, inputs);
         }
@@ -143,121 +145,80 @@ impl Subgraph {
             )))?;
         }
 
-        let mut results = vec![];
+        let results = (0..self.outputs() - 1)
+            .map(|i| match self.out_kind(i) {
+                ValueKind::TextList => TextList(vector![]),
+                ValueKind::IntList => IntList(vector![]),
+                ValueKind::FloatList => FloatList(vector![]),
+                ValueKind::MsgList => MsgList(vector![]),
+                ValueKind::Json => Json(Arc::new(serde_json::Value::Array(vec![]))),
+                _ => todo!(),
+            })
+            .collect_vec();
 
-        for i in 0..lengths[0] {
-            let sliced = inputs
-                .iter()
-                .map(|it| match it {
-                    Some(TextList(items)) => Some(Text(items[i].clone())),
-                    Some(FloatList(items)) => Some(Number(items[i])),
-                    Some(IntList(items)) => Some(Integer(items[i])),
-                    Some(MsgList(items)) => Some(Message((*items[i]).clone())),
-                    Some(Json(arr)) if matches!(**arr, serde_json::Value::Array(_)) => {
-                        let serde_json::Value::Array(items) = arr.as_ref() else {
-                            unreachable!()
-                        };
-                        Some(Json(Arc::new(items[i].clone())))
-                    }
-                    value => value.clone(),
-                })
-                .collect_vec();
+        let num_iters = lengths[0];
 
-            let mut exec = WorkflowRunner::builder()
-                .inputs(sliced)
-                .run_ctx(ctx.clone())
-                .state_view(ctx.node_state.view(&self.graph.uuid))
-                .build();
+        let all_out = (0..num_iters)
+            .into_par_iter()
+            .map(|i| {
+                let sliced = par_slice(&inputs, i);
+                let mut exec = WorkflowRunner::builder()
+                    .inputs(sliced)
+                    .run_ctx(ctx.clone())
+                    .state_view(ctx.node_state.view(&self.graph.uuid).pass(i))
+                    .build();
 
-            exec.init(&self.graph);
-            let interrupt = ctx.interrupt.clone();
+                exec.init(&self.graph);
+                exec
+            })
+            .map(|mut exec| -> Result<Vec<Option<Value>>, WorkflowError> {
+                let interrupt = ctx.interrupt.clone();
 
-            let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
-            tracing::info!("About to execute subgraph");
+                let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
+                tracing::info!("About to execute subgraph");
 
-            loop {
-                if interrupt.load(Ordering::Relaxed) {
-                    break;
-                }
-
-                match exec.step(&mut target) {
-                    Ok(false) => {
+                loop {
+                    if interrupt.load(Ordering::Relaxed) {
                         break;
                     }
-                    Ok(true) => {
-                        tracing::trace!("Stepped subgraph");
-                    }
-                    Err(err) => Err(WorkflowError::Subgraph(err))?,
-                }
-            }
 
-            if results.is_empty() {
-                results = exec
-                    .outputs
-                    .iter()
-                    .map(|it| match it {
-                        Some(Text(_)) | Some(TextList(_)) => TextList(vector![]),
-                        Some(Integer(_)) | Some(IntList(_)) => IntList(vector![]),
-                        Some(Number(_)) | Some(FloatList(_)) => FloatList(vector![]),
-                        Some(Message(_)) | Some(MsgList(_)) => MsgList(vector![]),
-                        Some(Json(_)) => Json(Arc::new(serde_json::Value::Array(vec![]))),
-                        Some(value) => value.clone(),
-                        None => Default::default(),
-                    })
-                    .collect_vec();
-            }
-
-            for (res, val) in results.iter_mut().zip(exec.outputs.into_iter()) {
-                match (res, val) {
-                    (TextList(items), Some(Text(value))) => {
-                        items.push_back(value);
-                    }
-                    (TextList(items), Some(TextList(values))) => {
-                        items.extend(values);
-                    }
-                    (IntList(items), Some(Integer(value))) => {
-                        items.push_back(value);
-                    }
-                    (IntList(items), Some(IntList(values))) => {
-                        items.extend(values);
-                    }
-                    (FloatList(items), Some(Number(value))) => {
-                        items.push_back(value);
-                    }
-                    (FloatList(items), Some(FloatList(values))) => {
-                        items.extend(values);
-                    }
-                    (MsgList(items), Some(Message(value))) => {
-                        items.push_back(Arc::new(value));
-                    }
-                    (MsgList(items), Some(MsgList(values))) => {
-                        items.extend(values);
-                    }
-                    (Json(arr), Some(Json(value))) => {
-                        let serde_json::Value::Array(items) = Arc::make_mut(arr) else {
-                            unreachable!();
-                        };
-
-                        if let serde_json::Value::Array(values) = &*value {
-                            items.extend(values.iter().cloned());
-                        } else {
-                            items.push((*value).clone());
+                    match exec.step(&mut target) {
+                        Ok(false) => {
+                            break;
                         }
+                        Ok(true) => {
+                            tracing::trace!("Stepped subgraph");
+                        }
+                        Err(err) => Err(WorkflowError::Subgraph(err))?,
                     }
-                    (result, Some(value)) => {
-                        *result = value;
-                    }
-                    (_, None) => {}
                 }
-            }
-        }
+                Ok(exec.outputs)
+            })
+            .try_fold(
+                || results.clone(),
+                |mut acc: Vec<Value>, item| -> Result<_, WorkflowError> {
+                    for (res, val) in acc.iter_mut().zip(item?.into_iter()) {
+                        push_values(res, val);
+                    }
+                    Ok(acc)
+                },
+            )
+            .try_reduce(
+                || results.clone(),
+                |mut left, right| {
+                    for (acc, items) in left.iter_mut().zip(right.into_iter()) {
+                        concat_values(acc, items);
+                    }
+                    Ok(left)
+                },
+            );
 
+        let mut results = all_out?;
         results.push(Value::Placeholder(ValueKind::Failure));
 
         Ok(results)
     }
 }
-
 impl DynNode for Subgraph {
     fn inputs(&self) -> usize {
         self.graph
@@ -449,6 +410,95 @@ impl UiNode for Subgraph {
     }
 }
 
+/// Appends individual values to a value list or flat concats two lists together
+fn push_values(res: &mut Value, val: Option<Value>) {
+    use Value::*;
+    match (res, val) {
+        (TextList(items), Some(Text(value))) => {
+            items.push_back(value);
+        }
+        (TextList(items), Some(TextList(values))) => {
+            items.extend(values);
+        }
+        (IntList(items), Some(Integer(value))) => {
+            items.push_back(value);
+        }
+        (IntList(items), Some(IntList(values))) => {
+            items.extend(values);
+        }
+        (FloatList(items), Some(Number(value))) => {
+            items.push_back(value);
+        }
+        (FloatList(items), Some(FloatList(values))) => {
+            items.extend(values);
+        }
+        (MsgList(items), Some(Message(value))) => {
+            items.push_back(Arc::new(value));
+        }
+        (MsgList(items), Some(MsgList(values))) => {
+            items.extend(values);
+        }
+        (Json(arr), Some(Json(value))) => {
+            let serde_json::Value::Array(items) = Arc::make_mut(arr) else {
+                unreachable!();
+            };
+
+            if let serde_json::Value::Array(values) = &*value {
+                items.extend(values.iter().cloned());
+            } else {
+                items.push((*value).clone());
+            }
+        }
+        (result, Some(value)) => {
+            *result = value;
+        }
+        (_, None) => {}
+    }
+}
+
+fn concat_values(acc: &mut Value, items: Value) {
+    use Value::*;
+    match (acc, items) {
+        (TextList(a), TextList(b)) => a.append(b),
+        (IntList(a), IntList(b)) => a.append(b),
+        (FloatList(a), FloatList(b)) => a.append(b),
+        (MsgList(a), MsgList(b)) => a.append(b),
+        (Json(a), Json(b)) => {
+            let serde_json::Value::Array(items) = Arc::make_mut(a) else {
+                unreachable!();
+            };
+
+            let serde_json::Value::Array(mut values) = Arc::unwrap_or_clone(b) else {
+                // tracing::error!("Error reducing JSON values {a:?} and {b:?}");
+                unreachable!();
+            };
+
+            items.append(&mut values)
+        }
+        (a, b) => *a = b,
+    }
+}
+
+fn par_slice(inputs: &[Option<Value>], i: usize) -> Vec<Option<Value>> {
+    use Value::*;
+    inputs
+        .iter()
+        .map(|it| match it {
+            Some(TextList(items)) => Some(Text(items[i].clone())),
+            Some(FloatList(items)) => Some(Number(items[i])),
+            Some(IntList(items)) => Some(Integer(items[i])),
+            Some(MsgList(items)) => Some(Message((*items[i]).clone())),
+            Some(Json(arr)) if matches!(**arr, serde_json::Value::Array(_)) => {
+                let serde_json::Value::Array(items) = arr.as_ref() else {
+                    unreachable!()
+                };
+                Some(Json(Arc::new(items[i].clone())))
+            }
+            value => value.clone(),
+        })
+        .collect_vec()
+}
+
 fn subgraph_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
     ui.menu_button("Subgraph", |ui| {
         if ui.button("Simple").clicked() {
@@ -466,4 +516,95 @@ fn subgraph_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos
 
 inventory::submit! {
     super::GraphSubmenu("subgraph", subgraph_menu)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use Value::*;
+
+    #[test]
+    fn test_slice_empty() {
+        let inputs = vec![];
+        let sliced = par_slice(&inputs, 0);
+        assert_eq!(sliced, vec![]);
+    }
+
+    #[test]
+    fn test_slice_unconnected() {
+        let inputs = vec![None];
+        let sliced = par_slice(&inputs, 0);
+        assert_eq!(sliced, vec![None]);
+    }
+
+    #[test]
+    fn test_slice_singleton() {
+        let inputs = vec![Some(Value::text_list(["hello", "goodbye"]))];
+        assert_eq!(par_slice(&inputs, 0), vec![Some(Value::text("hello"))]);
+    }
+
+    #[test]
+    fn test_slice_broadcast() {
+        let inputs = vec![
+            Some(Value::text_list(["hello", "goodbye"])),
+            None,
+            Some(Integer(42)),
+        ];
+
+        assert_eq!(
+            par_slice(&inputs, 1),
+            vec![Some(Value::text("goodbye")), None, Some(Integer(42))]
+        );
+    }
+
+    #[test]
+    fn test_push_replace() {
+        let mut acc = Value::Placeholder(ValueKind::Integer);
+        push_values(&mut acc, Some(Integer(3)));
+
+        assert_eq!(acc, Value::Integer(3))
+    }
+
+    #[test]
+    fn test_push_first_value() {
+        let mut acc = Value::int_list(Vec::<i64>::new());
+        push_values(&mut acc, Some(Integer(3)));
+
+        assert_eq!(acc, Value::int_list([3]))
+    }
+
+    #[test]
+    fn test_push_second_value() {
+        let mut acc = Value::int_list(vec![0]);
+        push_values(&mut acc, Some(Integer(5)));
+
+        assert_eq!(acc, Value::int_list([0, 5]))
+    }
+
+    #[test]
+    fn test_concat_empties() {
+        let mut left = Value::int_list(Vec::<i64>::new());
+        let right = Value::int_list(Vec::<i64>::new());
+
+        concat_values(&mut left, right);
+        assert_eq!(left, Value::int_list(Vec::<i64>::new()));
+    }
+
+    #[test]
+    fn test_concat_first() {
+        let mut left = Value::int_list(Vec::<i64>::new());
+        let right = Value::int_list(vec![0]);
+
+        concat_values(&mut left, right);
+        assert_eq!(left, Value::int_list(vec![0]));
+    }
+
+    #[test]
+    fn test_concat_more() {
+        let mut left = Value::int_list(vec![24]);
+        let right = Value::int_list(vec![7]);
+
+        concat_values(&mut left, right);
+        assert_eq!(left, Value::int_list(vec![24, 7]));
+    }
 }

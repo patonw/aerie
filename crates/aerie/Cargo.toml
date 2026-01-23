@@ -1,6 +1,6 @@
 [package]
 name = "aerie"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 default-run = "aerie"
 
@@ -97,6 +97,8 @@ rhai = { version = "1.23.6", optional = true, features = [
   "serde",
   "serde_json",
 ] }
+scopeguard = "1.2.0"
+rayon = "1.11.0"
 
 [features]
 default = ["scripting"]
