@@ -7,7 +7,7 @@ use std::{borrow::Cow, sync::Arc, time::Duration};
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 use crate::{
-    ChatContent, ToolProvider, ToolSelector,
+    ToolProvider, ToolSelector,
     config::Ternary,
     ui::{resizable_frame, resizable_frame_opt, shortcuts::squelch},
     workflow::{FlexNode, WorkflowError},
@@ -670,10 +670,11 @@ impl InvokeTool {
         self.validate(&inputs)?;
 
         let chat = match &inputs[0] {
-            Some(Value::Chat(history)) => history,
-            None => Err(WorkflowError::Required(vec![
-                "Chat history required".into(),
-            ]))?,
+            Some(Value::Chat(history)) => Some(history),
+            None => None,
+            // None => Err(WorkflowError::Required(vec![
+            //     "Chat history required".into(),
+            // ]))?,
             _ => unreachable!(),
         };
 
@@ -721,20 +722,17 @@ impl InvokeTool {
             };
 
         let msg = Message::tool_result(tool_name, &tool_output);
-        let chat = chat.extend(vec![Ok(msg).into()])?;
-        let history = Arc::new(chat.into_owned());
 
-        let msg = if let Some(entry) = history.last()
-            && let ChatContent::Message(message) = &entry.content
-        {
-            Value::Message(message.clone())
+        let history = if let Some(chat) = chat {
+            let chat = chat.extend(vec![Ok(msg.clone()).into()])?;
+            Value::Chat(Arc::new(chat.into_owned()))
         } else {
-            Value::Placeholder(ValueKind::Message)
+            Value::Placeholder(ValueKind::Chat)
         };
 
         Ok(vec![
-            Value::Chat(history.clone()),
-            msg,
+            history,
+            Value::Message(msg),
             Value::Text(Arc::new(tool_output.clone())),
             Value::Placeholder(ValueKind::Failure),
         ])

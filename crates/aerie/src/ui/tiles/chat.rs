@@ -312,8 +312,18 @@ pub fn render_message_width(
                                             ui.style(),
                                         );
 
-                                            egui_extras::syntax_highlighting::code_view_ui(
-                                                ui, &theme, &text, language,
+                                            let layout_job =
+                                                egui_extras::syntax_highlighting::highlight(
+                                                    ui.ctx(),
+                                                    ui.style(),
+                                                    &theme,
+                                                    &text,
+                                                    language,
+                                                );
+                                            ui.add(
+                                                egui::Label::new(layout_job)
+                                                    .selectable(true)
+                                                    .wrap(),
                                             );
                                         },
                                     );
