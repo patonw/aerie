@@ -127,12 +127,14 @@ impl UiNode for Text {
     fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
         egui::Frame::new().inner_margin(4).show(ui, |ui| {
             resizable_frame(&mut self.size, ui, |ui| {
-                let text = Arc::make_mut(&mut self.value);
-                let widget = egui::TextEdit::multiline(text)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("Enter text \u{1F64B}");
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    let text = Arc::make_mut(&mut self.value);
+                    let widget = egui::TextEdit::multiline(text)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Enter text \u{1F64B}");
 
-                squelch(ui.add_sized(ui.available_size(), widget));
+                    squelch(ui.add_sized(ui.available_size(), widget));
+                });
             });
         });
     }

@@ -23,6 +23,7 @@ use crate::{
 
 impl super::AppState {
     pub fn workflow_ui(&mut self, ui: &mut egui::Ui) {
+        let mut pointee = false;
         let running = self
             .workflows
             .running
@@ -47,7 +48,7 @@ impl super::AppState {
                 let widget = SnarlWidget::new()
                     .id(viewer.view_id)
                     .style(get_snarl_style());
-                widget.show(&mut snarl, viewer, ui);
+                pointee = widget.show(&mut snarl, viewer, ui).contains_pointer();
 
                 // Unfortunately, there's no event for node movement so we have to
                 // iterate through the whole collection to find moved nodes.
@@ -106,22 +107,9 @@ impl super::AppState {
                     });
                 });
 
-            let shadow = {
-                // Must trigger other shortcuts after editor otherwise spurious activations
-                let viewer = self.workflow_viewer();
-                viewer.shadow = shadow.clone();
-                let mut shortcuts = ShortcutHandler::builder()
-                    .snarl(&mut snarl)
-                    .viewer(viewer)
-                    .build();
-
-                shortcuts.viewer_shortcuts(ui, widget);
-                viewer.shadow.clone()
-            };
-
             self.workflows
                 .view_stack
-                .propagate(shadow, identity)
+                .propagate(shadow.clone(), identity)
                 .unwrap();
 
             egui::Area::new(egui::Id::new("workflow controls"))
@@ -138,6 +126,25 @@ impl super::AppState {
                             self.workflow_controls(ui);
                         });
                 });
+
+            if pointee {
+                let shadow = {
+                    // Must trigger other shortcuts after editor otherwise spurious activations
+                    let viewer = self.workflow_viewer();
+                    let mut shortcuts = ShortcutHandler::builder()
+                        .snarl(&mut snarl)
+                        .viewer(viewer)
+                        .build();
+
+                    shortcuts.viewer_shortcuts(ui, widget);
+                    viewer.shadow.clone()
+                };
+
+                self.workflows
+                    .view_stack
+                    .propagate(shadow, identity)
+                    .unwrap();
+            }
         });
 
         if ui.ctx().input_mut(|i| i.consume_shortcut(&SHORTCUT_HELP)) {
@@ -191,7 +198,7 @@ impl super::AppState {
                 });
 
             if let Some(renaming) = self.workflows.renaming.as_mut() {
-                let editor = ui.text_edit_singleline(renaming);
+                let editor = squelch(ui.text_edit_singleline(renaming));
                 if editor.lost_focus() {
                     errors.distil(self.workflows.rename());
                 }

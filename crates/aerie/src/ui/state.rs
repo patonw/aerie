@@ -114,6 +114,7 @@ impl AppState {
                 .events(self.events.clone())
                 .current_graph(shadow.uuid)
                 .parent_id(stack.parent_id())
+                .flavor(stack.flavor())
                 .errors(self.errors.clone())
                 .previews(self.workflows.previews.clone())
                 .build();

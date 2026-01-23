@@ -258,15 +258,18 @@ impl super::UiNode for RhaiNode {
             ui.menu_button("+in", |ui| {
                 let kinds = [
                     ValueKind::Text,
-                    ValueKind::Number,
-                    ValueKind::Integer,
                     ValueKind::TextList,
+                    ValueKind::Number,
                     ValueKind::FloatList,
+                    ValueKind::Integer,
                     ValueKind::IntList,
                     ValueKind::Json,
                 ];
                 for kind in kinds {
-                    let label = kind.to_string().to_lowercase();
+                    let mut label = kind.to_string().to_lowercase();
+                    if kind.is_list() {
+                        label = format!("[{label}]");
+                    }
                     if ui.button(&label).clicked() {
                         self.inputs = self.inputs.clone();
                         self.inputs.push_back((label, kind));
@@ -503,15 +506,18 @@ impl super::UiNode for RhaiNode {
             ui.menu_button("+out", |ui| {
                 let kinds = [
                     ValueKind::Text,
-                    ValueKind::Number,
-                    ValueKind::Integer,
                     ValueKind::TextList,
+                    ValueKind::Number,
                     ValueKind::FloatList,
+                    ValueKind::Integer,
                     ValueKind::IntList,
                     ValueKind::Json,
                 ];
                 for kind in kinds {
-                    let label = kind.to_string().to_lowercase();
+                    let mut label = kind.to_string().to_lowercase();
+                    if kind.is_list() {
+                        label = format!("[{label}]");
+                    }
                     if ui.button(&label).clicked() {
                         self.outputs = self.outputs.clone();
                         self.outputs.push_back((label, kind));
