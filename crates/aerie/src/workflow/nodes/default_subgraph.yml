@@ -5,7 +5,7 @@ nodes:
       Start:
         fields:
           - - input
-            - Json
+            - Text
     pos:
       x: 0
       y: 0
@@ -15,7 +15,7 @@ nodes:
       Finish:
         fields:
           - - output
-            - Json
+            - Text
     pos:
       x: 2000
       y: 0
@@ -23,3 +23,4 @@ nodes:
 wires: []
 start: 0
 finish: 1
+

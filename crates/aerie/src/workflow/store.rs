@@ -359,7 +359,9 @@ impl WorkflowStore for WorkflowStoreDir {
 
         let old_path = self.path.join(old_name).with_extension("yml");
         let new_path = self.path.join(new_name).with_extension("yml");
-        std::fs::rename(old_path, new_path)?;
+        if old_path.exists() {
+            std::fs::rename(old_path, new_path)?;
+        }
 
         Ok(())
     }

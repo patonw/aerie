@@ -61,9 +61,11 @@ impl std::fmt::Debug for ExecState {
     }
 }
 
+type GraphNodePass = (GraphId, NodeId, usize);
+
 /// A global cache of node execution states across all graphs and subgraphs
 #[derive(Default, Clone, Debug)]
-pub struct NodeStateMap(pub Arc<ArcSwap<im::OrdMap<(GraphId, NodeId), ExecState>>>);
+pub struct NodeStateMap(pub Arc<ArcSwap<im::OrdMap<GraphNodePass, ExecState>>>);
 
 impl NodeStateMap {
     pub fn clear(&self) {
@@ -75,6 +77,7 @@ impl NodeStateMap {
         NodeStateView {
             data,
             graph_id: *graph_id,
+            pass: 0,
         }
     }
 }
@@ -84,6 +87,7 @@ impl NodeStateMap {
 pub struct NodeStateView {
     pub data: NodeStateMap,
     pub graph_id: GraphId,
+    pub pass: usize,
 }
 
 impl NodeStateView {
@@ -95,19 +99,29 @@ impl NodeStateView {
                     .as_ref()
                     .clone()
                     .into_iter()
-                    .filter(|it| it.0.0 != self.graph_id),
+                    .filter(|it| it.0.0 != self.graph_id || it.0.2 != self.pass),
             )
         });
+    }
+    pub fn pass(&self, pass: usize) -> Self {
+        Self {
+            pass,
+            ..self.clone()
+        }
     }
 
     pub fn insert(&self, node: NodeId, value: ExecState) {
         self.data
             .0
-            .rcu(|states| states.update((self.graph_id, node), value.clone()));
+            .rcu(|states| states.update((self.graph_id, node, self.pass), value.clone()));
     }
 
     pub fn get(&self, node: &NodeId) -> Option<ExecState> {
-        self.data.0.load().get(&(self.graph_id, *node)).cloned()
+        self.data
+            .0
+            .load()
+            .get(&(self.graph_id, *node, self.pass))
+            .cloned()
     }
 }
 
@@ -335,7 +349,13 @@ impl WorkflowRunner {
                         EitherOrBoth::Left(i) => {
                             blacklist.extend(&out_remotes[i]);
                         }
-                        EitherOrBoth::Right(_) => unreachable!(),
+                        EitherOrBoth::Right(_) => {
+                            tracing::warn!(
+                                "Expected {num_outs} outputs, but got {}: {values:?}",
+                                values.len()
+                            );
+                            unreachable!()
+                        }
                     }
                 }
 

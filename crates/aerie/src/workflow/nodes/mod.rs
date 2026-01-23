@@ -3,7 +3,6 @@ use egui::Ui;
 use egui_snarl::{NodeId, Snarl};
 use serde::{Deserialize, Serialize};
 use std::{
-    any::type_name_of_val,
     hash::Hash,
     ops::{Deref, DerefMut},
 };
@@ -76,8 +75,9 @@ impl WorkNode {
         }
     }
 
-    pub fn kind(&self) -> &'static str {
-        type_name_of_val(self)
+    pub fn kind(&self) -> &str {
+        // type_name_of_val(self)
+        self.as_ui().title()
     }
 
     #[inline]
