@@ -1218,3 +1218,91 @@ impl UiNode for Demote {
             .on_hover_text("priority");
     }
 }
+
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
+pub struct GateNode {
+    kind: ValueKind,
+}
+
+#[typetag::serde]
+impl FlexNode for GateNode {}
+
+impl DynNode for GateNode {
+    fn inputs(&self) -> usize {
+        2
+    }
+
+    fn out_kind(&self, _out_pin: usize) -> ValueKind {
+        self.kind
+    }
+
+    fn connect(&mut self, in_pin: usize, kind: ValueKind, ctx: &EditContext) -> Result<(), String> {
+        dbg!((&in_pin, kind));
+        if in_pin == 1 {
+            if self.kind != kind {
+                ctx.reset_out_pin(OutPinId {
+                    node: ctx.current_node,
+                    output: 0,
+                });
+            }
+
+            self.kind = kind;
+        }
+        Ok(())
+    }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        let value = inputs
+            .get(1)
+            .and_then(|v| v.as_ref())
+            .cloned()
+            .unwrap_or_default();
+        Ok(vec![value])
+    }
+}
+
+impl UiNode for GateNode {
+    fn title(&self) -> &str {
+        "Gate"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Delays propagation of data until the control wire is ready."
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+        _remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        match pin_id {
+            0 => {
+                ui.label("control");
+                ValueKind::Placeholder.default_pin()
+            }
+            1 => {
+                ui.label("data");
+                self.kind.default_pin()
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn show_output(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        _pin_id: usize,
+    ) -> egui_snarl::ui::PinInfo {
+        ui.label("data");
+
+        self.kind.default_pin()
+    }
+}

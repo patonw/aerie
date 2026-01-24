@@ -900,7 +900,8 @@ pub trait DynNode {
         ValueKind::Placeholder
     }
 
-    fn connect(&self, in_pin: usize, kind: ValueKind) -> Result<(), String> {
+    fn connect(&mut self, in_pin: usize, kind: ValueKind, ctx: &EditContext) -> Result<(), String> {
+        let _ = ctx;
         if !self.in_kinds(in_pin).contains(&kind) {
             tracing::warn!(
                 "Refusing to connect {kind:?} to {in_pin:?} accepting {:?}",

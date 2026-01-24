@@ -40,6 +40,12 @@ Nodes for controlling the flow of execution
   - Fallback to an unstructured completion
   - Select them into the Context for a downstream agent
 
+## Gate
+
+- Delays a data wire until the control node finishes
+- Data passes through unchanged
+- Generalized version of Fallback without error handling semantics
+
 ## Demote
 
 - Adjust the priority of a path so it runs later than it would

@@ -37,3 +37,10 @@
   - Transform JSON value into arguments for [Invoke Tool](tools.md#invoke-tool)
   - Create templating context for [Template](value.md#template) nodes
   - Filter and restructure data from tool results
+
+## Unwrap JSON
+
+- Convert a JSON value into a native wire type
+- If JSON input is not compatible, node will emit a failure
+- Use Parse/Transform/Unwrap to extract data from (semi-) structured text
+  - e.g. parse a tool result, transform to a single value, then unwrap
