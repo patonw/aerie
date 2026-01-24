@@ -22,9 +22,9 @@ use crate::{
     workflow::{
         EditContext, GraphId, MetaNode, ShadowGraph, WorkNode,
         nodes::{
-            AgentNode, ChatContext, ChatNode, CommentNode, Demote, Fallback, Flavor, GraphSubmenu,
-            InvokeTool, Matcher, Number, OutputNode, Panic, Preview, Select, StructuredChat,
-            Subgraph, TemplateNode, Text, Tools,
+            AgentNode, ChatContext, ChatNode, CommentNode, Demote, Fallback, Flavor, GateNode,
+            GraphSubmenu, InvokeTool, Matcher, Number, OutputNode, Panic, Preview, Select,
+            StructuredChat, Subgraph, TemplateNode, Text, Tools,
         },
         runner::{ExecState, NodeStateMap},
     },
@@ -691,6 +691,11 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                 ui.close();
             }
 
+            if ui.button("Gate").clicked() {
+                snarl.insert_node(pos, GateNode::default().into());
+                ui.close();
+            }
+
             if ui.button("Demote").clicked() {
                 snarl.insert_node(pos, Demote::default().into());
                 ui.close();
@@ -837,13 +842,24 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
     ) {
         // TODO: cycle check
         if self.can_edit() {
+            self.edit_ctx.current_node = to.id.node;
+
             let remote = &snarl[from.id.node];
             let wire_kind = remote.as_dyn().out_kind(from.id.output);
-            let recipient = &snarl[to.id.node];
-            if recipient.as_dyn().connect(to.id.input, wire_kind).is_ok() {
+            let recipient = &mut snarl[to.id.node];
+            if recipient
+                .as_dyn_mut()
+                .connect(to.id.input, wire_kind, &self.edit_ctx)
+                .is_ok()
+            {
                 self.drop_inputs(to, snarl);
                 snarl.connect(from.id, to.id);
-                self.shadow = self.shadow.with_wire(from.id, to.id);
+
+                let node_id = to.id.node;
+                self.shadow = self
+                    .shadow
+                    .with_node(&node_id, snarl.get_node_info(node_id))
+                    .with_wire(from.id, to.id);
             }
         }
     }

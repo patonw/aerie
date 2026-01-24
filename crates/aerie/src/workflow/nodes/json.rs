@@ -1,5 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
+use egui_snarl::OutPinId;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -115,7 +116,7 @@ fn json_editor(
         .id_salt("json text")
         .font(egui::TextStyle::Monospace) // for cursor height
         .code_editor()
-        .desired_rows(10)
+        .desired_rows(1)
         .lock_focus(true)
         .desired_width(f32::INFINITY)
         .layouter(&mut layouter);
@@ -160,7 +161,9 @@ impl UiNode for ParseJson {
             0 => {
                 if remote.is_none() {
                     resizable_frame(&mut self.size, ui, |ui| {
-                        json_editor(ui, &mut self.text, None);
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            json_editor(ui, &mut self.text, None);
+                        });
                     });
                 } else {
                     ui.label("JSON text");
@@ -580,6 +583,137 @@ impl UiNode for GatherJson {
     }
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnwrapJson {
+    kind: ValueKind,
+}
+
+#[typetag::serde]
+impl FlexNode for UnwrapJson {}
+
+impl Default for UnwrapJson {
+    fn default() -> Self {
+        Self {
+            kind: ValueKind::Text,
+        }
+    }
+}
+
+impl DynNode for UnwrapJson {
+    fn in_kinds(&'_ self, _in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(&[ValueKind::Json])
+    }
+
+    fn outputs(&self) -> usize {
+        2
+    }
+
+    fn out_kind(&self, out_pin: usize) -> ValueKind {
+        if out_pin == 0 {
+            self.kind
+        } else {
+            ValueKind::Failure
+        }
+    }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+        use serde_json::Value as JVal;
+
+        let json = match &inputs[0] {
+            Some(Value::Json(value)) => value.clone(),
+            None => Err(WorkflowError::Required(vec![
+                "JSON input is required".into(),
+            ]))?,
+            _ => unreachable!(),
+        };
+
+        let value = match (self.kind, &*json) {
+            (ValueKind::Text, JVal::String(text)) => Value::text(text.clone()),
+            (ValueKind::TextList, JVal::Array(values)) if values.iter().all(|t| t.is_string()) => {
+                let texts = values
+                    .iter()
+                    .map(|t| t.as_str().unwrap().to_string())
+                    .collect_vec();
+                Value::text_list(texts)
+            }
+            (ValueKind::Number, JVal::Number(value)) if value.is_f64() || value.is_i64() => {
+                Value::float(value.as_f64().unwrap())
+            }
+            (ValueKind::FloatList, JVal::Array(values))
+                if values.iter().all(|t| t.is_f64() || t.is_i64()) =>
+            {
+                let values = values.iter().map(|t| t.as_f64().unwrap()).collect_vec();
+                Value::float_list(values)
+            }
+            (ValueKind::Integer, JVal::Number(value)) if value.is_i64() => {
+                Value::Integer(value.as_i64().unwrap())
+            }
+            (ValueKind::IntList, JVal::Array(values)) if values.iter().all(|t| t.is_i64()) => {
+                let values = values.iter().map(|t| t.as_i64().unwrap()).collect_vec();
+                Value::int_list(values)
+            }
+            _ => Err(WorkflowError::Conversion(format!(
+                "Could not convert {json:?} into a {:?}",
+                self.kind
+            )))?,
+        };
+
+        Ok(vec![value])
+    }
+}
+
+impl UiNode for UnwrapJson {
+    fn title(&self) -> &str {
+        "Unwrap JSON"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Converts a JSON value into a workflow value"
+    }
+
+    fn has_body(&self) -> bool {
+        true
+    }
+
+    fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
+        let old_kind = self.kind;
+        egui::ComboBox::from_id_salt("UnwrapJsonKind")
+            .selected_text(self.kind.to_string().to_ascii_lowercase())
+            .show_ui(ui, |ui| {
+                let kinds = [
+                    ValueKind::Text,
+                    ValueKind::TextList,
+                    ValueKind::Number,
+                    ValueKind::FloatList,
+                    ValueKind::Integer,
+                    ValueKind::IntList,
+                ];
+
+                for kind in kinds {
+                    let mut label = kind.to_string().to_lowercase();
+                    if kind.is_list() {
+                        label = format!("[{label}]");
+                    }
+
+                    ui.selectable_value(&mut self.kind, kind, label);
+                }
+            });
+
+        if old_kind != self.kind {
+            ctx.reset_out_pin(OutPinId {
+                node: ctx.current_node,
+                output: 0,
+            });
+        }
+    }
+}
+
 fn json_node_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
     ui.menu_button("JSON", |ui| {
         if ui.button("Parse JSON").clicked() {
@@ -599,6 +733,11 @@ fn json_node_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, po
 
         if ui.button("Transform JSON").clicked() {
             snarl.insert_node(pos, TransformJson::default().into());
+            ui.close();
+        }
+
+        if ui.button("Unwrap JSON").clicked() {
+            snarl.insert_node(pos, UnwrapJson::default().into());
             ui.close();
         }
     });
