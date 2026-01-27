@@ -1,0 +1,11 @@
+type: Stdio
+env: |-
+  REDIS_PORT=6379
+  LEADERBOARD=books
+command: nix-shell
+args:
+- -p
+- uv
+- --run
+- uvx --from git+https://github.com/patonw/leaderboard-mcp leaderboard-mcp
+timeout: 30

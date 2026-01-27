@@ -1,0 +1,8 @@
+type: Stdio
+command: nix-shell
+args:
+- -p
+- uv
+- --run
+- uvx --from git+https://github.com/patonw/rerank-mcp rerank-mcp
+timeout: 30

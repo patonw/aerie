@@ -1,4 +1,7 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -11,6 +14,14 @@ use crate::{
 };
 
 use super::ValueKind;
+
+static ENV_JSON: LazyLock<Arc<serde_json::Value>> = LazyLock::new(|| {
+    let entries = std::env::vars()
+        .map(|(k, v)| (k, serde_json::Value::String(v)))
+        .collect();
+
+    Arc::new(serde_json::Value::Object(entries))
+});
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,5 +233,42 @@ impl UiNode for TemplateNode {
             _ => unreachable!(),
         }
         self.out_kind(pin_id).default_pin()
+    }
+}
+
+/// Returns the current environment as a key-value object
+#[skip_serializing_none]
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentNode {}
+
+#[typetag::serde]
+impl FlexNode for EnvironmentNode {}
+
+impl DynNode for EnvironmentNode {
+    fn inputs(&self) -> usize {
+        0
+    }
+
+    fn out_kind(&self, _out_pin: usize) -> ValueKind {
+        ValueKind::Json
+    }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        _inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        Ok(vec![Value::Json(ENV_JSON.clone())])
+    }
+}
+
+impl UiNode for EnvironmentNode {
+    fn title(&self) -> &str {
+        "Environment"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Gets the current set of environment variables"
     }
 }

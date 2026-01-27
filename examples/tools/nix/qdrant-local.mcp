@@ -1,0 +1,12 @@
+type: Stdio
+env: |-
+  EMBEDDING_MODEL=mixedbread-ai/mxbai-embed-large-v1
+  FASTEMBED_CACHE_PATH=$HOME/.local/share/fastembed/cache
+  QDRANT_LOCAL_PATH=/tmp/aerie/qdrant
+command: nix-shell
+args:
+- -p
+- uv
+- --run
+- uvx mcp-server-qdrant
+timeout: 30

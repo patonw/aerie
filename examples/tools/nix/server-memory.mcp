@@ -1,0 +1,8 @@
+type: Stdio
+command: nix-shell
+args:
+- -p
+- nodejs_22
+- --run
+- npx -y @modelcontextprotocol/server-memory
+timeout: 30

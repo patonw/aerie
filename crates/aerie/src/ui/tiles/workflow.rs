@@ -262,6 +262,8 @@ impl super::AppState {
                                             .on_hover_text("Import")
                                             .clicked()
                                             && let Some(path) = rfd::FileDialog::new()
+                                                .add_filter("workflow", &["yml", "yaml"])
+                                                .add_filter("all", &[""])
                                                 .set_directory(
                                                     settings.view(|s| s.last_export_dir.clone()),
                                                 )
@@ -280,6 +282,8 @@ impl super::AppState {
                                 strip.cell(|ui| {
                                     if ui.button(UPLOAD_SIMPLE).on_hover_text("Export").clicked()
                                         && let Some(path) = rfd::FileDialog::new()
+                                            .add_filter("workflow", &["yml", "yaml"])
+                                            .add_filter("all", &[""])
                                             .set_directory(
                                                 settings.view(|s| s.last_export_dir.clone()),
                                             )

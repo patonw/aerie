@@ -1,0 +1,3 @@
+type: HTTP
+uri: https://mcp.tavily.com/mcp/?tavilyApiKey={{api_key}}
+auth_var: TAVILY_API_KEY

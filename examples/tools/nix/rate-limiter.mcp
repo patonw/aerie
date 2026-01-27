@@ -1,0 +1,8 @@
+type: Stdio
+env: BUCKET_foobar=2/10c
+command: nix-shell
+args:
+- -p
+- uv
+- --run
+- uvx --from git+https://github.com/patonw/rate-limit-mcp rate-limit-mcp

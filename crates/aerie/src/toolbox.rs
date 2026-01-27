@@ -188,6 +188,19 @@ impl McpClient {
             McpClient::HTTP(client) => client.peer(),
         }
     }
+
+    pub fn cancel(&self) {
+        match self {
+            McpClient::Stdio(running_service) => {
+                let token = running_service.cancellation_token();
+                token.cancel();
+            }
+            McpClient::HTTP(running_service) => {
+                let token = running_service.cancellation_token();
+                token.cancel();
+            }
+        }
+    }
 }
 
 impl ToolProvider {
@@ -376,7 +389,12 @@ impl ToolProvider {
                             }
 
                             for (k, v) in env.split("\n").filter_map(|s| s.split_once('=')) {
-                                cmd.env(k, v);
+                                let value = subst::substitute(v, &subst::Env)
+                                    .map(Cow::Owned)
+                                    .unwrap_or(Cow::Borrowed(v));
+
+                                tracing::trace!("Env substitution: '{v}' => '{value}");
+                                cmd.env(k, &*value);
                             }
                         },
                     ))?)
@@ -464,6 +482,21 @@ impl Toolbox {
     pub fn with_provider(&self, name: &str, provider: ToolProvider) -> &Self {
         self.providers
             .rcu(|providers| providers.update(name.into(), provider.clone()));
+        self
+    }
+
+    pub fn without_provider(&self, name: &str) -> &Self {
+        self.providers.rcu(|providers| {
+            if let Some(provider) = providers.get(name) {
+                if let ToolProvider::MCP { client, .. } = provider {
+                    client.cancel();
+                }
+                providers.without(name)
+            } else {
+                providers.as_ref().clone()
+            }
+        });
+
         self
     }
 

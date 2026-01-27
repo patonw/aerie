@@ -1,0 +1,8 @@
+type: Stdio
+command: nix-shell
+args:
+- -p
+- uv
+- --run
+- uvx mcp-server-git
+timeout: 30

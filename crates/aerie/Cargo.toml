@@ -99,6 +99,7 @@ rhai = { version = "1.23.6", optional = true, features = [
 ] }
 scopeguard = "1.2.0"
 rayon = "1.11.0"
+subst = { version = "0.3.8", features = ["preserve-order"] }
 
 [features]
 default = ["scripting"]

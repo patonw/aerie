@@ -191,6 +191,10 @@ impl AgentFactory {
         builder.build()
     }
 
+    pub fn stop_provider(&mut self, name: &str) {
+        self.toolbox.clone().without_provider(name);
+    }
+
     pub fn reload_provider(&mut self, name: &str) {
         let task_count = self.task_count.clone();
         let name = name.to_owned();
