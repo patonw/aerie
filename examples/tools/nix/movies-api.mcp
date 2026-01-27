@@ -1,0 +1,15 @@
+type: Stdio
+env: |-
+  API_BASE_URL=https://www.omdbapi.com/
+  API_SPEC_URL=https://raw.githubusercontent.com/zuplo-samples/OMDb-OpenAPI/refs/heads/main/omdb-v3.json
+  AUTH_TYPE=api_key
+  AUTH_API_KEY_IN=query
+  AUTH_API_KEY_NAME=apiKey
+  AUTH_API_KEY=$OMDB_API_KEY
+command: nix-shell
+args:
+- -p
+- uv
+- --run
+- 'uvx awslabs.openapi-mcp-server@latest  --log-level DEBUG '
+timeout: 30

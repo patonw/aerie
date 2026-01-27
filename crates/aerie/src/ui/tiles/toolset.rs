@@ -1,16 +1,24 @@
-use std::path::PathBuf;
+use std::{
+    fs::OpenOptions,
+    path::{Path, PathBuf},
+};
 
+use anyhow::Context as _;
 use eframe::egui;
+use egui_phosphor::regular::DOWNLOAD_SIMPLE;
 use itertools::Itertools;
 
 use crate::{
     ToolProvider, ToolSpec,
     config::ConfigExt as _,
     ui::{state::ToolEditorState, toggled_field},
+    utils::ErrorDistiller as _,
 };
 
 impl super::AppState {
     pub fn toolset_ui(&mut self, ui: &mut egui::Ui) {
+        let settings = self.settings.clone();
+        let errors = self.errors.clone();
         let language = "json";
         let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
 
@@ -87,12 +95,28 @@ impl super::AppState {
                         ),
                     });
                 }
+
+                if ui.button(DOWNLOAD_SIMPLE).on_hover_text("Import").clicked()
+                    && let Some(path) = rfd::FileDialog::new()
+                        .set_directory(settings.view(|s| s.last_export_dir.clone()))
+                        .add_filter("mcp", &["mcp"])
+                        .add_filter("all", &[""])
+                        .pick_file()
+                {
+                    settings.update(|s| {
+                        s.last_export_dir =
+                            path.parent().map(|p| p.to_path_buf()).unwrap_or_default()
+                    });
+                    errors.distil(self.import_tool_spec(&path));
+                }
             });
             self.tool_tree(ui);
         });
     }
 
     fn tool_tree(&mut self, ui: &mut egui::Ui) {
+        let settings = self.settings.clone();
+        let errors = self.errors.clone();
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             let names_with_status = self.settings.view(|settings|
                 settings.tools.provider.iter()
@@ -113,7 +137,54 @@ impl super::AppState {
 
                         let name_text = egui::RichText::new(name);
                         let name_text = if *enabled {name_text} else {name_text.weak()};
-                        if ui.selectable_label(selected, name_text).clicked() {
+                        let resp = ui.selectable_label(selected, name_text);
+                        resp.context_menu(|ui| {
+                            ui.menu_button("Delete", |ui| {
+                                if ui.button("OK").clicked() {
+                                    self
+                                        .settings
+                                        .update(|settings_rw| settings_rw.tools.provider.remove(name));
+                                }
+                            });
+
+                            if ui.button("Export").clicked()
+                                && let Some(path) = rfd::FileDialog::new()
+                                                    .add_filter("mcp", &["mcp"])
+                                                    .add_filter("all", &[""])
+                                                    .set_directory(
+                                                        settings
+                                                            .view(|s| s.last_export_dir.clone()),
+                                                    )
+                                                    .set_file_name(format!(
+                                                        "{name}.mcp",
+                                                    ))
+                                                    .save_file()
+                                {
+                                    settings.update(|s| {
+                                        s.last_export_dir = path
+                                            .parent()
+                                            .map(|p| p.to_path_buf())
+                                            .unwrap_or_default()
+                                    });
+
+                                    if let Ok(writer) = OpenOptions::new()
+                                        .write(true)
+                                        .create(true)
+                                        .truncate(true)
+                                        .open(&path) {
+
+
+                                        let mut tool_spec = self
+                                            .settings
+                                            .view(|settings_rw| settings_rw.tools.provider.get(name).cloned()).unwrap();
+
+                                        tool_spec.set_enabled(false);
+                                        errors.distil(serde_yml::to_writer(writer, &tool_spec).context(format!("While writing {path:?}")));
+                                    }
+
+                                }
+                        });
+                        if resp.clicked() {
                             let tool_spec = self
                                 .settings
                                 .view(|settings_rw| settings_rw.tools.provider.get(name).cloned()).unwrap();
@@ -227,6 +298,7 @@ impl super::AppState {
                             uri,
                             auth_var,
                             timeout,
+                            ..
                         } => {
                             ui.label("Enabled");
                             ui.checkbox(enabled, "");
@@ -288,6 +360,7 @@ impl super::AppState {
 
                 // Is there any way we can keep existing tool filters from breaking on renames?
                 let old_name = if let Some((old_name, _)) = original {
+                    self.agent_factory.stop_provider(&old_name);
                     Some(old_name)
                 } else {
                     None
@@ -307,5 +380,40 @@ impl super::AppState {
                 self.tool_editor = None;
             }
         });
+    }
+
+    fn import_tool_spec(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+        let path = path.as_ref();
+        if !path.is_file() {
+            anyhow::bail!("Invalid file: {path:?}");
+        }
+
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_os_string().into_string().ok())
+            .unwrap_or_default();
+
+        let exists = self
+            .settings
+            .view(|settings| settings.tools.provider.contains_key(&name));
+        let name = if name.is_empty() || exists {
+            let datetime = chrono::offset::Local::now();
+            let timestamp = datetime.format("%Y-%m-%dT%H:%M:%S").to_string();
+            std::iter::chain([name], [timestamp]).join("-")
+        } else {
+            name
+        };
+
+        let reader = OpenOptions::new().read(true).open(path)?;
+        // Very confusing behavior when keys aren't alphabetic
+        let data: serde_json::Value = serde_yml::from_reader(reader)?;
+        let mut data: ToolSpec = serde_json::from_value(data)?;
+        data.set_enabled(false);
+        tracing::debug!("Imported data {data:?}");
+
+        self.settings
+            .update(|settings_rw| settings_rw.tools.provider.insert(name, data));
+
+        Ok(())
     }
 }

@@ -1,0 +1,12 @@
+type: Stdio
+env: |-
+  API_BASE_URL=https://openlibrary.org
+  #API_SPEC_URL=https://raw.githubusercontent.com/internetarchive/openlibrary/refs/heads/master/static/openapi.json
+  API_SPEC_URL=https://gist.githubusercontent.com/patonw/c6dbeebdfe00bd7879f3f0a68df94656/raw/0a6407c485805b005d8f261a5908411d9f9c901c/openlibrary-oas3.json
+command: nix-shell
+args:
+- -p
+- uv
+- --run
+- 'uvx awslabs.openapi-mcp-server@latest  --log-level DEBUG '
+timeout: 30

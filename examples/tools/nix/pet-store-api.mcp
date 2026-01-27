@@ -1,0 +1,11 @@
+type: Stdio
+env: |-
+  API_BASE_URL=https://petstore3.swagger.io/api/v3
+  API_SPEC_URL=https://petstore3.swagger.io/api/v3/openapi.json
+command: nix-shell
+args:
+- -p
+- uv
+- --run
+- uvx awslabs.openapi-mcp-server@latest
+timeout: 30
