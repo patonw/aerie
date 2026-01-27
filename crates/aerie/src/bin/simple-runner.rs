@@ -16,6 +16,7 @@ use egui_snarl::Snarl;
 use itertools::Itertools as _;
 use serde::Serializer as _;
 use serde_json::json;
+use serde_yaml_ng as serde_yml;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 /// A minimalist workflow runner that dumps outputs to the console as a JSON object.

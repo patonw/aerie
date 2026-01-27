@@ -9,6 +9,7 @@ use std::{
 
 use arc_swap::ArcSwap;
 use itertools::Itertools;
+use serde_yaml_ng as serde_yml;
 
 use crate::workflow::ShadowGraph;
 

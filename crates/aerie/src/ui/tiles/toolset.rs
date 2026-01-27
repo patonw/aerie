@@ -7,6 +7,7 @@ use anyhow::Context as _;
 use eframe::egui;
 use egui_phosphor::regular::DOWNLOAD_SIMPLE;
 use itertools::Itertools;
+use serde_yaml_ng as serde_yml;
 
 use crate::{
     ToolProvider, ToolSpec,
@@ -405,11 +406,8 @@ impl super::AppState {
         };
 
         let reader = OpenOptions::new().read(true).open(path)?;
-        // Very confusing behavior when keys aren't alphabetic
-        let data: serde_json::Value = serde_yml::from_reader(reader)?;
-        let mut data: ToolSpec = serde_json::from_value(data)?;
+        let mut data: ToolSpec = serde_yml::from_reader(reader)?;
         data.set_enabled(false);
-        tracing::debug!("Imported data {data:?}");
 
         self.settings
             .update(|settings_rw| settings_rw.tools.provider.insert(name, data));

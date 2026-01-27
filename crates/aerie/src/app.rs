@@ -4,6 +4,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use eframe::{NativeOptions, egui};
 use egui_commonmark::*;
 use egui_tiles::{LinearDir, TileId, Tree};
+use serde_yaml_ng as serde_yml;
 use std::{
     convert::identity,
     path::{Path, PathBuf},

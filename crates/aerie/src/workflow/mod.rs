@@ -20,6 +20,7 @@ use rig::{
 };
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use serde_yaml_ng as serde_yml;
 use std::{
     borrow::Cow,
     fmt::Debug,
