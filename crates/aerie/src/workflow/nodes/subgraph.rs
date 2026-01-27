@@ -9,6 +9,7 @@ use im::vector;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use serde_yaml_ng as serde_yml;
 
 use crate::{
     ui::AppEvent,
