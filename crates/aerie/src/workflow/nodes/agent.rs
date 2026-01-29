@@ -9,6 +9,7 @@ use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 use crate::{
     ToolProvider, ToolSelector,
     config::Ternary,
+    toolbox::{ChainBreaker, ChainTool},
     ui::{resizable_frame, resizable_frame_opt, shortcuts::squelch},
     utils::message_text,
     workflow::{FlexNode, WorkflowError},
@@ -36,9 +37,36 @@ impl DynNode for Tools {
         assert_eq!(out_pin, 0);
         ValueKind::Tools
     }
+
     fn value(&self, out_pin: usize) -> Value {
         assert_eq!(out_pin, 0);
         Value::Tools(self.toolset.clone())
+    }
+
+    fn execute(
+        &mut self,
+        ctx: &RunContext,
+        node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        use rig::tool::Tool as _;
+        let _ = (ctx, node_id, inputs);
+        let toolbox = &ctx.agent_factory.toolbox;
+        let mut toolset = self.toolset.as_ref().clone();
+        if ctx.is_subgraph {
+            toolset = toolbox.toggle_provider(&toolset, ChainTool::NAME, Ternary::None);
+        } else {
+            let providers = toolbox.providers.load();
+            if let Some(chainer) = providers.get(ChainTool::NAME) {
+                for tool in chainer.all_tool_names() {
+                    if tool != ChainBreaker::NAME && !ctx.metadata.chain.contains(&*tool) {
+                        toolset = toolbox.toggle_tool(&toolset, ChainTool::NAME, &tool, false);
+                    }
+                }
+            }
+        }
+
+        Ok(vec![Value::Tools(Arc::new(toolset))])
     }
 }
 
@@ -80,10 +108,18 @@ impl UiNode for Tools {
                     ui.separator();
 
                     for (name, provider) in ctx.toolbox.providers.load().iter() {
+                        if matches!(provider, ToolProvider::Chainer { .. })
+                            && (ctx.parent_id.is_some() || ctx.metadata.chain.is_empty())
+                        {
+                            continue;
+                        }
+                        let select_some =
+                            matches!(self.toolset.provider_selection(name), Ternary::Some(_));
+
                         egui::collapsing_header::CollapsingState::load_with_default_open(
                             ui.ctx(),
                             ui.id().with(name),
-                            false,
+                            select_some,
                         )
                         .show_header(ui, |ui| {
                             let (mut checked, maybe) = {
@@ -130,7 +166,14 @@ impl UiNode for Tools {
                                 }
                             }
                             ToolProvider::Chainer { .. } => {
+                                use rig::tool::Tool as _;
                                 for tool in provider.all_tool_names() {
+                                    if tool != ChainBreaker::NAME
+                                        && !ctx.metadata.chain.contains(&*tool)
+                                    {
+                                        continue;
+                                    }
+
                                     let mut active = self.toolset.apply(name, &tool);
                                     let desc = provider.tool_description(&tool);
 

@@ -1,6 +1,6 @@
 use std::{borrow::Cow, convert::identity, sync::atomic::Ordering, time::Duration};
 
-use egui::{Align2, ComboBox};
+use egui::{Align2, Color32, ComboBox};
 use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular::{
     ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, DOWNLOAD_SIMPLE, INFO, MAGIC_WAND, PENCIL, TRASH,
@@ -15,6 +15,7 @@ use crate::{
         AppEvent, ShowHelp,
         runner::{play_button, stop_button},
         shortcuts::{SHORTCUT_HELP, SHORTCUT_RUN, ShortcutHandler, show_shortcuts, squelch},
+        state::MetaEdit,
         workflow::get_snarl_style,
     },
     utils::ErrorDistiller as _,
@@ -41,11 +42,13 @@ impl super::AppState {
             // Snarl will draw our persisted positions and sizes.
             let mut snarl = self.workflows.view_stack.root_snarl().unwrap();
 
-            let (mut shadow, widget) = {
+            let (shadow, widget) = {
+                let meta = self.workflows.shadow.metadata.clone();
                 let shadow = self.workflows.view_stack.leaf();
                 let viewer = self.workflow_viewer();
                 // Needed for preserving changes by events, but is there a better way?
                 viewer.shadow = shadow;
+                viewer.edit_ctx.metadata = meta;
 
                 let widget = SnarlWidget::new()
                     .id(viewer.view_id)
@@ -67,18 +70,24 @@ impl super::AppState {
                 .default_size(egui::vec2(200.0, 100.0))
                 .movable(true)
                 .show(ui.ctx(), |ui| {
+                    use MetaEdit::*;
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
-                        ui.selectable_value(&mut self.workflows.meta_edit, 0, "Description");
-                        ui.selectable_value(&mut self.workflows.meta_edit, 1, "Schema");
+                        ui.selectable_value(
+                            &mut self.workflows.meta_edit,
+                            Description,
+                            "Description",
+                        );
+                        ui.selectable_value(&mut self.workflows.meta_edit, Schema, "Schema");
+                        ui.selectable_value(&mut self.workflows.meta_edit, Chain, "Chain");
                     });
 
                     let size = ui.available_size();
 
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        if self.workflows.meta_edit == 0 {
+                    egui::ScrollArea::vertical().show(ui, |ui| match self.workflows.meta_edit {
+                        Description => {
                             let mut description =
-                                Cow::Borrowed(self.workflows.shadow.description.as_str());
+                                Cow::Borrowed(self.workflows.shadow.metadata.description.as_str());
 
                             squelch(
                                 ui.add_sized(
@@ -89,10 +98,13 @@ impl super::AppState {
                             );
 
                             if let Cow::Owned(desc) = description {
-                                shadow = shadow.with_description(&desc);
+                                self.workflows.shadow =
+                                    self.workflows.shadow.with_description(&desc);
                             }
-                        } else {
-                            let mut schema = Cow::Borrowed(self.workflows.shadow.schema.as_str());
+                        }
+                        Schema => {
+                            let mut schema =
+                                Cow::Borrowed(self.workflows.shadow.metadata.schema.as_str());
 
                             squelch(
                                 ui.add_sized(
@@ -103,8 +115,36 @@ impl super::AppState {
                             );
 
                             if let Cow::Owned(schema) = schema {
-                                shadow = shadow.with_schema(&schema);
+                                self.workflows.shadow = self.workflows.shadow.with_schema(&schema);
                             }
+                        }
+                        Chain => {
+                            egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+                                let meta = self.workflows.shadow.metadata.clone();
+                                let workflows: im::OrdSet<String> =
+                                    self.workflows.names().map(|s| s.to_string()).collect();
+                                for name in &workflows.clone().union(meta.chain.clone()) {
+                                    let mut checked = meta.chain.contains(name);
+
+                                    let mut atom = egui::RichText::new(name);
+                                    if !workflows.contains(name) {
+                                        atom = atom.strikethrough().color(Color32::RED);
+                                    }
+
+                                    let widget = egui::Checkbox::new(&mut checked, atom);
+                                    let description = self.workflows.store.description(name);
+
+                                    if ui.add(widget).on_hover_text(description).clicked() {
+                                        if checked {
+                                            self.workflows.shadow =
+                                                self.workflows.shadow.with_chain(name);
+                                        } else {
+                                            self.workflows.shadow =
+                                                self.workflows.shadow.without_chain(name);
+                                        }
+                                    }
+                                }
+                            });
                         }
                     });
                 });

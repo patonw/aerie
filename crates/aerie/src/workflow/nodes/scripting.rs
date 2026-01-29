@@ -143,7 +143,7 @@ impl super::DynNode for RhaiNode {
         }
 
         let result = engine.eval_with_scope::<Dynamic>(&mut scope, &self.script)?;
-        tracing::info!("Result is {result:?}");
+        tracing::debug!("Result is {result:?}");
 
         let mut output = vec![Value::Placeholder(ValueKind::Placeholder); self.outputs.len()];
 

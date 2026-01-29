@@ -147,7 +147,7 @@ impl DynNode for MaskHistory {
                 .enumerate()
                 .find(|(i, _)| *i == limit)
         {
-            tracing::debug!("Setting base to {entry:?}");
+            tracing::trace!("Setting base to {entry:?}");
             chat.with_base(Some(entry.id))
         } else {
             chat.with_base(None)

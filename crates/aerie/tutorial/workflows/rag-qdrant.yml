@@ -1,18 +1,36 @@
-uuid: '93d431c1-e21b-47fe-8e23-b7f4fb54646b'
+description: |-
+  #advanced-tutorial
+  Two-part workflow with indexing and retrieval augmented generation (RAG) using a vector database (Qdrant via MCP). Showcases Iterative Subgraphs with list values.
+
+  On the first run, it will chunk a source text and add it to the index.
+
+  Subsequent runs will  retrieve context from the index and pass it to the chat model.
+
+  There are many ways you may want to extend this:
+
+  - Generate the query from the prompt using an LLM instead of using the prompt directly
+  - Use an LLM to evaluate if the retrieval is relevant to the prompt and branch the workflow
+  - Use an LLM to score each individual retrieval and use the best one (reranking)
+  - Use an LLM to validate that the response is grounded within the context instead of hallicinated
+  - Recursive chunking as a rhai script, custom node or standalone MCP server tool
+  - Create an MCP server that supports deduplication and reranking models
+chain:
+- rag-qdrant
+uuid: 93d431c1-e21b-47fe-8e23-b7f4fb54646b
 nodes:
   0:
     value:
       Start: {}
     pos:
       x: -474.04282
-      'y': -1474.3953
+      y: -1474.3953
     open: true
   1:
     value:
       Finish: {}
     pos:
-      x: 1887.218
-      'y': -962.04443
+      x: 2253.1553
+      y: -1050.9185
     open: true
   2:
     value:
@@ -21,10 +39,10 @@ nodes:
         extract: true
         size:
           x: 168.0
-          'y': 66.09375
+          y: 66.09375
     pos:
       x: 1309.1783
-      'y': 751.6078
+      y: 759.205
     open: true
   3:
     value:
@@ -33,10 +51,10 @@ nodes:
         - chainer/rag-qdrant
         size:
           x: 250.0
-          'y': 250.0
+          y: 250.0
     pos:
-      x: 1739.8503
-      'y': 49.682587
+      x: 1737.8439
+      y: 102.64288
     open: true
   4:
     value:
@@ -56,7 +74,7 @@ nodes:
                     - Text
               pos:
                 x: -105.65347
-                'y': -188.13844
+                y: -188.13844
               open: true
             1:
               value:
@@ -66,7 +84,7 @@ nodes:
                     - Text
               pos:
                 x: 1924.9948
-                'y': -165.63559
+                y: -165.63559
               open: true
             2:
               value:
@@ -80,10 +98,10 @@ nodes:
                     - Text
                   size:
                     x: 300.0
-                    'y': 150.0
+                    y: 150.0
               pos:
                 x: 364.12808
-                'y': 324.6587
+                y: 324.6587
               open: true
             3:
               value:
@@ -92,10 +110,10 @@ nodes:
                   - qdrant-local/qdrant-store
                   size:
                     x: 250.0
-                    'y': 250.0
+                    y: 250.0
               pos:
                 x: 909.29114
-                'y': -776.10657
+                y: -776.10657
               open: true
             4:
               value:
@@ -107,10 +125,10 @@ nodes:
                     }
                   size:
                     x: 300.0
-                    'y': 150.0
+                    y: 150.0
               pos:
                 x: 756.4009
-                'y': -276.87054
+                y: -276.87054
               open: true
             5:
               value:
@@ -118,7 +136,7 @@ nodes:
                   tool_name: ''
               pos:
                 x: 1380.6583
-                'y': -351.77063
+                y: -351.77063
               open: true
             6:
               value:
@@ -126,7 +144,7 @@ nodes:
                   count: 2
               pos:
                 x: 246.04607
-                'y': -260.7539
+                y: -260.7539
               open: true
           wires:
           - out_pin:
@@ -177,22 +195,22 @@ nodes:
           finish: 1
     pos:
       x: 1294.5316
-      'y': 309.82437
+      y: 309.82437
     open: true
   5:
     value:
       InvokeTool:
         tool_name: ''
     pos:
-      x: 2229.882
-      'y': 271.96872
+      x: 2111.939
+      y: 455.6798
     open: true
   6:
     value:
       Subgraph:
         title: Lookup context
         graph:
-          uuid: '481926f3-bad7-430b-a875-2959b690437e'
+          uuid: 481926f3-bad7-430b-a875-2959b690437e
           nodes:
             0:
               value:
@@ -204,7 +222,7 @@ nodes:
                     - Text
               pos:
                 x: 51.345173
-                'y': 23.274223
+                y: 23.274223
               open: true
             1:
               value:
@@ -214,7 +232,7 @@ nodes:
                     - Text
               pos:
                 x: 3875.726
-                'y': -80.09473
+                y: -80.09473
               open: true
             2:
               value:
@@ -223,10 +241,10 @@ nodes:
                   - qdrant-local/qdrant-find
                   size:
                     x: 250.0
-                    'y': 250.0
+                    y: 250.0
               pos:
                 x: 863.12
-                'y': -499.8619
+                y: -499.8619
               open: true
             3:
               value:
@@ -234,7 +252,7 @@ nodes:
                   tool_name: ''
               pos:
                 x: 1260.076
-                'y': -27.464418
+                y: -27.464418
               open: true
             4:
               value:
@@ -244,10 +262,10 @@ nodes:
                   as_array: true
                   size:
                     x: 300.0
-                    'y': 306.5
+                    y: 306.5
               pos:
                 x: 1681.5187
-                'y': 86.024216
+                y: 86.024216
               open: true
             5:
               value:
@@ -255,7 +273,7 @@ nodes:
                   count: 2
               pos:
                 x: 405.48715
-                'y': 26.101515
+                y: 26.101515
               open: true
             6:
               value:
@@ -267,32 +285,32 @@ nodes:
                     }
                   size:
                     x: 300.0
-                    'y': 150.0
+                    y: 150.0
               pos:
                 x: 767.366
-                'y': 0.8934543
+                y: 0.8934543
               open: true
             7:
               value:
                 TransformJson:
-                  filter: '.[1]'
+                  filter: .[1]
                   size:
                     x: 300.0
-                    'y': 150.0
+                    y: 150.0
               pos:
                 x: 2120.7356
-                'y': 39.902157
+                y: 39.902157
               open: true
             8:
               value:
                 Preview:
                   size:
                     x: 582.71875
-                    'y': 356.53125
-                  uuid: '0305d5db-ac4d-4873-a0b0-7224d2eec3a3'
+                    y: 356.53125
+                  uuid: 0305d5db-ac4d-4873-a0b0-7224d2eec3a3
               pos:
                 x: 3813.6133
-                'y': 542.6436
+                y: 542.6436
               open: true
             9:
               value:
@@ -301,7 +319,7 @@ nodes:
                   - Text
               pos:
                 x: 2113.607
-                'y': 640.332
+                y: 640.332
               open: true
             10:
               value:
@@ -309,7 +327,7 @@ nodes:
                   count: 1
               pos:
                 x: 2450.8203
-                'y': 658.56104
+                y: 658.56104
               open: true
             11:
               value:
@@ -318,7 +336,7 @@ nodes:
                   kind: Json
               pos:
                 x: 2829.461
-                'y': 351.561
+                y: 351.561
               open: true
             12:
               value:
@@ -326,7 +344,7 @@ nodes:
                   kind: Text
               pos:
                 x: 3172.5454
-                'y': 226.98491
+                y: 226.98491
               open: true
             13:
               value:
@@ -336,10 +354,10 @@ nodes:
                     Remaining elements are documents wrapped in XML tags.
                   size:
                     x: 365.375
-                    'y': 315.46875
+                    y: 315.46875
               pos:
                 x: 1259.0765
-                'y': 427.92255
+                y: 427.92255
               open: true
             14:
               value:
@@ -347,10 +365,10 @@ nodes:
                   comment: We could use a regex filter to strip the XML tags, but they're harmless, so we'll leave them alone.
                   size:
                     x: 324.0
-                    'y': 158.53125
+                    y: 158.53125
               pos:
                 x: 2121.3547
-                'y': -280.42136
+                y: -280.42136
               open: true
           wires:
           - out_pin:
@@ -447,18 +465,16 @@ nodes:
           finish: 1
     pos:
       x: 418.11172
-      'y': -866.2053
+      y: -866.2053
     open: true
   7:
     value:
-      Preview:
-        size:
-          x: 728.0625
-          'y': 438.0
-        uuid: '860e8a6a-479a-4567-9ddd-3caa2aeeb8ea'
+      Demote:
+        priority: 0
+        kind: Chat
     pos:
-      x: 2285.422
-      'y': -814.41925
+      x: 1298.2423
+      y: -1389.9406
     open: true
   8:
     value:
@@ -466,40 +482,38 @@ nodes:
         value: rust-book
         size:
           x: 308.0
-          'y': 150.0
+          y: 150.0
     pos:
       x: -175.63843
-      'y': -667.9529
+      y: -667.9529
     open: true
   9:
     value:
       CommentNode:
-        comment: |+
-          To run this, create a tool named `qdrant-local`
+        comment: |-
+          Save this to a file named `qdrant-local.mcp` and import it in the tools tab:
 
-          You'll need to set EMBEDDING_MODEL and QDRANT_LOCAL_PATH environment variables at minimum. Additionally it is a good idea to set FASTEMBED_CACHE_PATH in your user settings to make startup faster.
-
-          You can run the MCP server through uvx.
-
-          Directly,
-          > command: uvx
-          > args: |
-          >   mcp-server-qdrant
-
-          Via nix-shell:
-          > command: nix-shell
-          > args: |
-          >   -p
-          >   uv
-          >   --run
-          >   uvx mcp-server-qdrant
-
+          ```
+          type: Stdio
+          enabled: true
+          env: |-
+            EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+            FASTEMBED_CACHE_PATH=$HOME/.local/share/fastembed/cache
+            QDRANT_LOCAL_PATH=/tmp/aerie/data
+          command: nix-shell
+          args:
+          - '-p'
+          - uv
+          - '--run'
+          - uvx mcp-server-qdrant
+          timeout: 30
+          ```
         size:
-          x: 602.0
-          'y': 455.875
+          x: 844.625
+          y: 575.40625
     pos:
-      x: -868.6349
-      'y': -1133.7756
+      x: -1181.2616
+      y: -1082.4242
     open: true
   10:
     value:
@@ -507,8 +521,8 @@ nodes:
         kinds:
         - Text
     pos:
-      x: 950.9571
-      'y': -515.6218
+      x: 834.4104
+      y: -517.872
     open: true
   11:
     value:
@@ -516,10 +530,10 @@ nodes:
         prompt: ''
         size:
           x: 300.0
-          'y': 150.0
+          y: 150.0
     pos:
       x: 1430.4631
-      'y': -1067.973
+      y: -1067.973
     open: true
   12:
     value:
@@ -536,10 +550,10 @@ nodes:
           The Rust journey has been one of collaboration, learning, and iteration. The growth of the language and its ecosystem is a direct reflection of the vibrant, diverse community behind it. The contributions of thousands of developers, from core language designers to casual contributors, are what make Rust such a unique and powerful tool. By picking up this book, you’re not just learning a new programming language—you’re joining a movement to make software better, safer, and more enjoyable to work with.
         size:
           x: 453.0
-          'y': 330.125
+          y: 330.125
     pos:
       x: 27.935385
-      'y': 185.93399
+      y: 185.93399
     open: true
   13:
     value:
@@ -553,10 +567,10 @@ nodes:
           - TextList
         size:
           x: 303.0
-          'y': 64.0
+          y: 64.0
     pos:
       x: 737.2339
-      'y': 316.51675
+      y: 316.51675
     open: true
   14:
     value:
@@ -564,14 +578,18 @@ nodes:
         kind: Json
     pos:
       x: 1766.4492
-      'y': 540.1148
+      y: 540.1148
     open: true
   15:
     value:
-      AgentNode: {}
+      AgentNode:
+        preamble: Ensure your answers are grounded by the context.Elaborate and explain points from the context, but do not invent new facts and concepts, unrelated to it.
+        size:
+          x: 300.0
+          y: 244.0
     pos:
-      x: 400.01163
-      'y': -1639.8242
+      x: 389.95227
+      y: -1880.4895
     open: true
   16:
     value:
@@ -579,10 +597,10 @@ nodes:
         context_doc: ''
         size:
           x: 300.0
-          'y': 150.0
+          y: 150.0
     pos:
       x: 1008.76154
-      'y': -1253.4617
+      y: -1253.4617
     open: true
   17:
     value:
@@ -590,10 +608,10 @@ nodes:
         comment: 'From: https://doc.rust-lang.org/book/foreword.html'
         size:
           x: 300.0
-          'y': 150.0
+          y: 150.0
     pos:
       x: 97.72559
-      'y': 812.2279
+      y: 812.2279
     open: true
   18:
     value:
@@ -601,17 +619,17 @@ nodes:
         comment: This lower branch populates the database if it is empty then queues the workflow to run again.
         size:
           x: 300.0
-          'y': 150.0
+          y: 150.0
     pos:
       x: -533.97174
-      'y': 379.59824
+      y: 379.59824
     open: true
   19:
     value:
       Subgraph:
         title: Prompt default
         graph:
-          uuid: '05044a4e-82f8-421a-9757-d331fcacd737'
+          uuid: 05044a4e-82f8-421a-9757-d331fcacd737
           nodes:
             0:
               value:
@@ -621,7 +639,7 @@ nodes:
                     - Text
               pos:
                 x: 0.0
-                'y': 0.0
+                y: 0.0
               open: true
             1:
               value:
@@ -631,7 +649,7 @@ nodes:
                     - Text
               pos:
                 x: 2000.0
-                'y': 0.0
+                y: 0.0
               open: true
             2:
               value:
@@ -639,10 +657,10 @@ nodes:
                   value: What makes rust special?
                   size:
                     x: 408.0
-                    'y': 150.0
+                    y: 150.0
               pos:
                 x: 976.7326
-                'y': -226.23512
+                y: -226.23512
               open: true
             3:
               value:
@@ -653,7 +671,7 @@ nodes:
                   exact: true
               pos:
                 x: 526.74335
-                'y': -132.84224
+                y: -132.84224
               open: true
             4:
               value:
@@ -662,7 +680,7 @@ nodes:
                   kind: Text
               pos:
                 x: 1474.6001
-                'y': 120.77542
+                y: 120.77542
               open: true
           wires:
           - out_pin:
@@ -705,7 +723,24 @@ nodes:
           finish: 1
     pos:
       x: -137.6311
-      'y': -1178.9121
+      y: -1178.9121
+    open: true
+  20:
+    value:
+      Select:
+        count: 2
+        kind: Chat
+    pos:
+      x: 1900.0751
+      y: -1101.5693
+    open: true
+  21:
+    value:
+      OutputNode:
+        label: context.txt
+    pos:
+      x: 957.6844
+      y: -846.70264
     open: true
 wires:
 - out_pin:
@@ -714,6 +749,12 @@ wires:
   in_pin:
     node: 15
     input: 1
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 7
+    input: 0
 - out_pin:
     node: 0
     output: 2
@@ -748,19 +789,25 @@ wires:
     node: 6
     output: 0
   in_pin:
-    node: 7
-    input: 0
+    node: 16
+    input: 1
 - out_pin:
     node: 6
     output: 0
   in_pin:
-    node: 16
-    input: 1
+    node: 21
+    input: 0
 - out_pin:
     node: 6
     output: 1
   in_pin:
     node: 10
+    input: 0
+- out_pin:
+    node: 7
+    output: 0
+  in_pin:
+    node: 20
     input: 0
 - out_pin:
     node: 8
@@ -784,8 +831,8 @@ wires:
     node: 11
     output: 0
   in_pin:
-    node: 1
-    input: 0
+    node: 20
+    input: 1
 - out_pin:
     node: 12
     output: 0
@@ -828,19 +875,11 @@ wires:
   in_pin:
     node: 11
     input: 2
-description: |-
-  #advanced-tutorial
-  Indexing and retrieval augmented generation (RAG) using a vector database (Qdrant via MCP). Showcases Iterative Subgraphs with list values.
-
-  On the first run, it will chunk a source text and add it to the index.
-
-  Subsequent runs will  retrieve context from the index and pass it to the chat model.
-
-  There are many ways you may want to extend this:
-
-  - Generate the query from the prompt using an LLM instead of using the prompt directly
-  - Use an LLM to evaluate if the retrieval is relevant to the prompt and branch the workflow
-  - Use an LLM to score each individual retrieval and use the best one (reranking)
-  - Use an LLM to validate that the response is grounded within the context instead of hallicinated
-  - Recursive chunking as a rhai script, custom node or standalone MCP server tool
-  - Create an MCP server that supports deduplication and reranking models
+- out_pin:
+    node: 20
+    output: 0
+  in_pin:
+    node: 1
+    input: 0
+start: 0
+finish: 1

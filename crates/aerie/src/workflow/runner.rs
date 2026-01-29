@@ -524,7 +524,7 @@ impl WorkflowRunner {
         let mut blacklist: BTreeSet<NodeId> = Default::default();
 
         if Some(node_id) == self.graph.finish {
-            tracing::info!("Setting graph {:?} outputs to {inputs:?}", self.graph.uuid);
+            tracing::trace!("Setting graph {:?} outputs to {inputs:?}", self.graph.uuid);
             self.outputs = inputs.clone();
         }
 

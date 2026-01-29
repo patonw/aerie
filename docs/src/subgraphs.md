@@ -5,6 +5,8 @@
 - Output nodes are disabled inside subgraphs
   - Partially to eliminate confusion of outputs hidden deep in subgraph hierarchies
   - Behavior would be undefined when iterative subgraphs are implemented
+- Subgraphs can only trigger chaining with tools passed as input from top-level
+  - Chain execution not available on Tool nodes inside subgraph
 - Failures in a subgraph always captured by the failure pin
   - Regardless of how the failure would be handled at the node level
 
