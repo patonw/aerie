@@ -198,6 +198,8 @@ pub struct EditContext {
 
     pub current_graph: GraphId,
 
+    pub metadata: Arc<ShadowMeta>,
+
     /// Ids of the parent graph and subgraph container node
     #[builder(default)]
     pub parent_id: Option<(GraphId, NodeId)>,
@@ -267,8 +269,13 @@ pub struct RunContext {
 
     pub agent_factory: AgentFactory,
 
+    pub metadata: Arc<ShadowMeta>,
+
     #[builder(default)]
     pub events: Option<Arc<AppEvents>>,
+
+    #[builder(default)]
+    pub is_subgraph: bool,
 
     #[builder(default)]
     pub streaming: bool,
@@ -328,7 +335,7 @@ impl RunContext {
 pub struct RootContext {
     /// A full copy of the current graph
     #[builder(default)]
-    pub graph: ShadowGraph<WorkNode>,
+    pub workflow: Workflow,
 
     #[builder(default)]
     pub model: String,
@@ -347,8 +354,8 @@ pub struct RootContext {
 
 impl RootContext {
     pub fn inputs(&self) -> Result<Vec<Option<Value>>, WorkflowError> {
-        let schema: serde_json::Value = if !self.graph.schema.is_empty() {
-            serde_json::from_str(&self.graph.schema)
+        let schema: serde_json::Value = if !self.workflow.metadata.schema.is_empty() {
+            serde_json::from_str(&self.workflow.metadata.schema)
                 .map_err(|_| WorkflowError::Conversion("Invalid input schema".into()))?
         } else {
             serde_json::json!({})
@@ -437,6 +444,78 @@ impl AsRef<Uuid> for GraphId {
     }
 }
 
+#[skip_serializing_none]
+#[derive(Debug, Default, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowMeta {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: Arc<String>,
+
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub schema: Arc<String>,
+
+    #[serde(default, skip_serializing_if = "im::OrdSet::is_empty")]
+    pub chain: im::OrdSet<String>,
+}
+
+impl ShadowMeta {
+    pub fn is_empty(&self) -> bool {
+        self.description.is_empty() && self.schema.is_empty() && self.chain.is_empty()
+    }
+}
+
+trait ArcMeta {
+    fn with_description(&self, desc: &str) -> Self;
+    fn with_schema(&self, schema: &str) -> Self;
+    fn with_chain(&self, name: &str) -> Self;
+    fn without_chain(&self, name: &str) -> Self;
+}
+
+impl ArcMeta for Arc<ShadowMeta> {
+    fn with_description(&self, desc: &str) -> Self {
+        if desc == self.description.as_str() {
+            self.clone()
+        } else {
+            Arc::new(ShadowMeta {
+                description: Arc::new(desc.to_string()),
+                ..self.as_ref().clone()
+            })
+        }
+    }
+
+    fn with_schema(&self, schema: &str) -> Self {
+        if self.schema.as_str() == schema {
+            self.clone()
+        } else {
+            Arc::new(ShadowMeta {
+                schema: Arc::new(schema.to_string()),
+                ..self.as_ref().clone()
+            })
+        }
+    }
+
+    fn with_chain(&self, name: &str) -> Self {
+        if self.chain.contains(name) {
+            self.clone()
+        } else {
+            Arc::new(ShadowMeta {
+                chain: self.chain.update(name.to_string()),
+                ..self.as_ref().clone()
+            })
+        }
+    }
+
+    fn without_chain(&self, name: &str) -> Self {
+        if !self.chain.contains(name) {
+            self.clone()
+        } else {
+            Arc::new(ShadowMeta {
+                chain: self.chain.without(name),
+                ..self.as_ref().clone()
+            })
+        }
+    }
+}
+
 pub type GraphNodeId = (GraphId, NodeId);
 
 /// The shadow graph is incrementally updated when edits are made through the viewer.
@@ -458,12 +537,6 @@ where
 
     #[serde(default, skip_serializing_if = "im::OrdSet::is_empty")]
     pub disabled: im::OrdSet<NodeId>,
-
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub description: Arc<String>,
-
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub schema: Arc<String>,
 
     pub start: Option<NodeId>,
 
@@ -524,8 +597,6 @@ where
             nodes: Default::default(),
             wires: Default::default(),
             disabled: Default::default(),
-            description: Default::default(),
-            schema: Default::default(),
             start: Default::default(),
             finish: Default::default(),
         }
@@ -538,8 +609,6 @@ where
         self.nodes.ptr_eq(&other.nodes)
             && self.wires.ptr_eq(&other.wires)
             && self.disabled.ptr_eq(&other.disabled)
-            && Arc::ptr_eq(&self.description, &other.description)
-            && Arc::ptr_eq(&self.schema, &other.schema)
     }
 
     #[must_use]
@@ -775,20 +844,6 @@ where
             ..self.clone()
         }
     }
-
-    pub fn with_description(&self, desc: &str) -> Self {
-        Self {
-            description: Arc::new(desc.to_string()),
-            ..self.clone()
-        }
-    }
-
-    pub fn with_schema(&self, schema: &str) -> Self {
-        Self {
-            schema: Arc::new(schema.to_string()),
-            ..self.clone()
-        }
-    }
 }
 
 impl ShadowGraph<WorkNode> {
@@ -867,6 +922,59 @@ impl ShadowGraph<WorkNode> {
             Either::Right((0..finish.inputs()).map(|i| finish.in_kinds(i)[0]))
         } else {
             Either::Left([].into_iter())
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Workflow {
+    #[serde(flatten)]
+    pub metadata: Arc<ShadowMeta>,
+
+    #[serde(flatten)]
+    pub graph: Arc<ShadowGraph<WorkNode>>,
+}
+
+impl Workflow {
+    pub fn fast_eq(&self, other: &Self) -> bool {
+        self.graph.fast_eq(&other.graph) && Arc::ptr_eq(&self.metadata, &other.metadata)
+    }
+
+    pub fn with_description(&self, desc: &str) -> Self {
+        Self {
+            metadata: self.metadata.with_description(desc),
+            ..self.clone()
+        }
+    }
+
+    pub fn with_schema(&self, schema: &str) -> Self {
+        Self {
+            metadata: self.metadata.with_schema(schema),
+            ..self.clone()
+        }
+    }
+
+    pub fn with_chain(&self, name: &str) -> Self {
+        Self {
+            metadata: self.metadata.with_chain(name),
+            ..self.clone()
+        }
+    }
+
+    pub fn without_chain(&self, name: &str) -> Self {
+        Self {
+            metadata: self.metadata.without_chain(name),
+            ..self.clone()
+        }
+    }
+
+    pub fn repair(&self) -> Self {
+        let graph = self.graph.repair();
+        let meta = self.metadata.clone();
+
+        Self {
+            graph: Arc::new(graph),
+            metadata: meta,
         }
     }
 }

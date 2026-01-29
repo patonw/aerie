@@ -11,16 +11,11 @@ use arc_swap::ArcSwap;
 use itertools::Itertools;
 use serde_yaml_ng as serde_yml;
 
-use crate::workflow::ShadowGraph;
-
-use super::WorkNode;
-
-type WorkGraph = ShadowGraph<WorkNode>;
+use crate::workflow::Workflow;
 
 pub trait WorkflowStore {
-    // type Graph: std::fmt::Debug + Clone;
-    fn load(&mut self, name: &str) -> anyhow::Result<WorkGraph>;
-    fn save(&mut self, name: &str, value: WorkGraph) -> anyhow::Result<()>;
+    fn load(&mut self, name: &str) -> anyhow::Result<Workflow>;
+    fn save(&mut self, name: &str, value: Workflow) -> anyhow::Result<()>;
     fn names(&self) -> impl Iterator<Item = Cow<'_, str>>;
     fn exists(&self, key: &str) -> bool;
     fn description(&'_ self, key: &str) -> Cow<'_, str>;
@@ -31,10 +26,10 @@ pub trait WorkflowStore {
     fn backup(&self, name: &str) -> anyhow::Result<()>;
 
     /// Fetches from cache without loading
-    fn get(&self, key: &str) -> Option<WorkGraph>;
+    fn get(&self, key: &str) -> Option<Workflow>;
 
     /// Puts into cache without saving
-    fn put(&mut self, key: &str, value: WorkGraph);
+    fn put(&mut self, key: &str, value: Workflow);
 }
 
 /// Handles persistence of workflows
@@ -43,7 +38,7 @@ pub struct WorkflowStoreFile {
     path: PathBuf,
 
     /// Cache of loaded workflows
-    workflows: BTreeMap<String, WorkGraph>,
+    workflows: BTreeMap<String, Workflow>,
 }
 
 impl WorkflowStoreFile {
@@ -51,21 +46,21 @@ impl WorkflowStoreFile {
     /// Loads all workflows into memory
     pub fn load_all(path: impl AsRef<Path>, tutorial: bool) -> anyhow::Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let workflows: BTreeMap<String, WorkGraph> = if path.is_file() {
+        let workflows: BTreeMap<String, Workflow> = if path.is_file() {
             let reader = OpenOptions::new().read(true).open(&path)?;
             serde_yml::from_reader(reader)?
         } else {
-            let mut result: BTreeMap<String, WorkGraph> = Default::default();
+            let mut result: BTreeMap<String, Workflow> = Default::default();
             result.insert("".into(), Default::default());
 
             if tutorial {
                 let bytes = include_bytes!("../../tutorial/workflows/basic.yml");
-                if let Ok(graph) = serde_yml::from_slice::<WorkGraph>(bytes) {
+                if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
                     result.insert("basic".into(), graph);
                 }
 
                 let bytes = include_bytes!("../../tutorial/workflows/chatty.yml");
-                if let Ok(graph) = serde_yml::from_slice::<WorkGraph>(bytes) {
+                if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
                     result.insert("chatty".into(), graph);
                 }
             }
@@ -94,12 +89,12 @@ impl WorkflowStoreFile {
 impl WorkflowStore for WorkflowStoreFile {
     // type Graph = WorkGraph;
 
-    fn load(&mut self, name: &str) -> anyhow::Result<WorkGraph> {
+    fn load(&mut self, name: &str) -> anyhow::Result<Workflow> {
         // no-op since loaded in bulk
         self.get(name).ok_or(anyhow::anyhow!("Not found"))
     }
 
-    fn save(&mut self, name: &str, value: WorkGraph) -> anyhow::Result<()> {
+    fn save(&mut self, name: &str, value: Workflow) -> anyhow::Result<()> {
         self.put(name, value.clone());
 
         #[allow(deprecated)]
@@ -116,21 +111,21 @@ impl WorkflowStore for WorkflowStoreFile {
 
     fn description(&self, key: &str) -> Cow<'_, str> {
         self.get(key)
-            .map(|g| Cow::Owned(g.description.to_string()))
+            .map(|g| Cow::Owned(g.metadata.description.to_string()))
             .unwrap_or(Cow::Owned(String::new()))
     }
 
     fn schema(&self, key: &str) -> Cow<'_, str> {
         self.get(key)
-            .map(|g| Cow::Owned(g.schema.to_string()))
+            .map(|g| Cow::Owned(g.metadata.schema.to_string()))
             .unwrap_or(Cow::Owned(String::new()))
     }
 
-    fn get(&self, key: &str) -> Option<WorkGraph> {
+    fn get(&self, key: &str) -> Option<Workflow> {
         self.workflows.get(key).cloned()
     }
 
-    fn put(&mut self, key: &str, value: WorkGraph) {
+    fn put(&mut self, key: &str, value: Workflow) {
         self.workflows.insert(key.into(), value);
     }
 
@@ -188,7 +183,7 @@ pub struct WorkflowStoreDir {
     path: PathBuf,
 
     /// Cache of loaded workflows
-    cache: Arc<ArcSwap<im::OrdMap<String, WorkGraph>>>,
+    cache: Arc<ArcSwap<im::OrdMap<String, Workflow>>>,
 }
 
 impl WorkflowStoreDir {
@@ -238,12 +233,12 @@ impl WorkflowStoreDir {
 
         if tutorial && this.names().all(|n| n == "__default__") {
             let bytes = include_bytes!("../../tutorial/workflows/basic.yml");
-            if let Ok(graph) = serde_yml::from_slice::<WorkGraph>(bytes) {
+            if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
                 let _ = this.save("basic", graph);
             }
 
             let bytes = include_bytes!("../../tutorial/workflows/chatty.yml");
-            if let Ok(graph) = serde_yml::from_slice::<WorkGraph>(bytes) {
+            if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
                 let _ = this.save("chatty", graph);
             }
         }
@@ -271,7 +266,7 @@ impl WorkflowStoreDir {
 impl WorkflowStore for WorkflowStoreDir {
     // type Graph = WorkGraph;
 
-    fn load(&mut self, name: &str) -> anyhow::Result<WorkGraph> {
+    fn load(&mut self, name: &str) -> anyhow::Result<Workflow> {
         if let Some(graph) = self.cache.load().get(name) {
             return Ok(graph.clone());
         }
@@ -279,14 +274,15 @@ impl WorkflowStore for WorkflowStoreDir {
         let path = self.path.join(name).with_extension("yml");
         let file = OpenOptions::new().read(true).open(path)?;
 
-        let shadow_graph: WorkGraph = serde_yml::from_reader(file)?;
+        let shadow_graph: Workflow = serde_yml::from_reader(file)?;
         self.cache
             .rcu(|cache| cache.update(name.to_string(), shadow_graph.clone()));
 
         Ok(shadow_graph)
     }
 
-    fn save(&mut self, name: &str, value: WorkGraph) -> anyhow::Result<()> {
+    fn save(&mut self, name: &str, value: Workflow) -> anyhow::Result<()> {
+        let value = value.repair();
         if !name.is_empty() {
             self.cache
                 .rcu(|cache| cache.update(name.to_string(), value.clone()));
@@ -319,22 +315,22 @@ impl WorkflowStore for WorkflowStoreDir {
 
     fn description(&self, key: &str) -> Cow<'_, str> {
         self.get(key)
-            .map(|g| Cow::Owned(g.description.to_string()))
+            .map(|g| Cow::Owned(g.metadata.description.to_string()))
             .unwrap_or(Cow::Owned(String::new()))
     }
 
     fn schema(&self, key: &str) -> Cow<'_, str> {
         self.get(key)
-            .map(|g| Cow::Owned(g.schema.to_string()))
+            .map(|g| Cow::Owned(g.metadata.schema.to_string()))
             .unwrap_or(Cow::Owned(String::new()))
     }
 
     // TODO: deprecate
-    fn get(&self, key: &str) -> Option<WorkGraph> {
+    fn get(&self, key: &str) -> Option<Workflow> {
         self.cache.load().get(key).cloned()
     }
 
-    fn put(&mut self, key: &str, value: WorkGraph) {
+    fn put(&mut self, key: &str, value: Workflow) {
         self.cache
             .rcu(|cache| cache.update(key.into(), value.clone()));
     }

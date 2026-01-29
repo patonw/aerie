@@ -68,17 +68,23 @@
 - Not to be confused with node outputs
 - Not part of the session
 - Can result from tool calls or chat nodes through intermediate processing
+- Cannot be emitted from subgraphs, only top-level workflows
 
 [^inputs]: Loading local documents directly into workflow not supported yet, but can be done with tools
 
 ## Chain execution
 
-- Multiple workflows can run sequentially
-- Workflow must call a chain tool to queue its successor
+- Workflows can be set to run automatically in a sequence
+- One workflow calls a chain tool to queue its successor
+- If the autorun setting is enabled, the next workflow will run automatically
+- Otherwise, you can start the next run manually
 - Runner will output a separate JSON document for each run
   - This is not a JSON array, but a stream of individual documents
   - Use `jq -s` to convert it into an array if needed
-- Chain tools provided automatically
+- Chain tools available from the Tool Selector node
+  - Only when enabled in the chain tab of the workflow metadata
+  - Chain tool selection not available inside subgraphs
+  - Can be passed from root workflow to subgraphs however
   - Can use structured prompts to pass data
   - If schema defined on target workflow it is used in tool definition
 - `autoruns` setting allow UI to automatically run a chain

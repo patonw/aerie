@@ -1,4 +1,13 @@
----
+description: |-
+  I repeat
+  I repeat
+
+  A simple (relatively) example of how to invoke the chain tools to queue other workflows to run after current run finishes.
+
+  Invokes itself until autorun limit is exhausted. Extends the prompt each run.
+chain:
+- drivechain
+uuid: bcd93f1a-1e59-41e8-b1b9-7402b29c0ea2
 nodes:
   0:
     value:
@@ -19,7 +28,7 @@ nodes:
       CommentNode:
         comment: You could use this to route between workflows and/or have a dialog between two agents.
         size:
-          x: 474
+          x: 474.0
           y: 301.59375
     pos:
       x: 1098.9103
@@ -29,9 +38,9 @@ nodes:
     value:
       Tools:
         toolset:
-          - chainer/drivechain
+        - chainer/drivechain
         size:
-          x: 384
+          x: 384.0
           y: 368.09375
     pos:
       x: 431.38168
@@ -57,8 +66,9 @@ nodes:
     value:
       Preview:
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
+        uuid: a5de9c1c-6817-440e-a62b-19e200042045
     pos:
       x: 1550.4734
       y: 182.01042
@@ -68,11 +78,11 @@ nodes:
       TemplateNode:
         template: |-
           {{ value }}
-          
+
           Hello, again!
         size:
-          x: 320
-          y: 150
+          x: 320.0
+          y: 150.0
     pos:
       x: -125.429924
       y: 725.6462
@@ -80,61 +90,56 @@ nodes:
   10:
     value:
       TransformJson:
-        filter: "{\"prompt\": . }"
+        filter: '{"prompt": . }'
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
       x: 479.1796
       y: 760.5454
     open: true
 wires:
-  - out_pin:
-      node: 0
-      output: 2
-    in_pin:
-      node: 5
-      input: 0
-  - out_pin:
-      node: 0
-      output: 4
-    in_pin:
-      node: 4
-      input: 0
-  - out_pin:
-      node: 0
-      output: 4
-    in_pin:
-      node: 8
-      input: 1
-  - out_pin:
-      node: 3
-      output: 0
-    in_pin:
-      node: 5
-      input: 1
-  - out_pin:
-      node: 5
-      output: 2
-    in_pin:
-      node: 7
-      input: 0
-  - out_pin:
-      node: 8
-      output: 0
-    in_pin:
-      node: 10
-      input: 1
-  - out_pin:
-      node: 10
-      output: 0
-    in_pin:
-      node: 5
-      input: 3
-description: |-
-  I repeat
-  I repeat
-  
-  A simple (relatively) example of how to invoke the chain tools to queue other workflows to run after current run finishes.
-  
-  Invokes itself until autorun limit is exhausted. Extends the prompt each run.
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 5
+    input: 0
+- out_pin:
+    node: 0
+    output: 4
+  in_pin:
+    node: 4
+    input: 0
+- out_pin:
+    node: 0
+    output: 4
+  in_pin:
+    node: 8
+    input: 1
+- out_pin:
+    node: 3
+    output: 0
+  in_pin:
+    node: 5
+    input: 1
+- out_pin:
+    node: 5
+    output: 2
+  in_pin:
+    node: 7
+    input: 0
+- out_pin:
+    node: 8
+    output: 0
+  in_pin:
+    node: 10
+    input: 1
+- out_pin:
+    node: 10
+    output: 0
+  in_pin:
+    node: 5
+    input: 3
+start: 0
+finish: 1

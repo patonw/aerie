@@ -1,4 +1,30 @@
----
+description: Refactoring of the table-tennis workflow using subgraphs for organization.
+schema: |-
+  {
+    "type": "object",
+    "properties": {
+      "ping": {
+        "type": "number"
+      },
+      "pong": {
+        "type": "number"
+      }
+    },
+    "oneOf": [
+      {
+        "required": [
+          "ping"
+        ]
+      },
+      {
+        "required": [
+          "pong"
+        ]
+      }
+    ]
+  }
+chain:
+- table-tennis-sg
 uuid: ae93ab94-ac67-4f3c-b24a-d3364bfc6490
 nodes:
   0:
@@ -34,10 +60,10 @@ nodes:
               value:
                 Start:
                   fields:
-                    - - key
-                      - Json
-                    - - data
-                      - Json
+                  - - key
+                    - Json
+                  - - data
+                    - Json
               pos:
                 x: -31.135223
                 y: 11.914485
@@ -46,10 +72,10 @@ nodes:
               value:
                 Finish:
                   fields:
-                    - - workflow
-                      - Text
-                    - - args
-                      - Json
+                  - - workflow
+                    - Text
+                  - - args
+                    - Json
               pos:
                 x: 2523.6797
                 y: -98.72954
@@ -59,8 +85,8 @@ nodes:
                 Text:
                   value: table-tennis-sg
                   size:
-                    x: 300
-                    y: 150
+                    x: 300.0
+                    y: 150.0
               pos:
                 x: 1560.2992
                 y: -1079.2233
@@ -70,8 +96,8 @@ nodes:
                 Matcher:
                   kind: Json
                   patterns:
-                    - ping
-                    - pong
+                  - ping
+                  - pong
                   exact: true
               pos:
                 x: 344.5139
@@ -87,10 +113,10 @@ nodes:
             5:
               value:
                 TransformJson:
-                  filter: "{\"pong\": (.ping // 0) + 1}"
+                  filter: '{"pong": (.ping // 0) + 1}'
                   size:
-                    x: 300
-                    y: 150
+                    x: 300.0
+                    y: 150.0
               pos:
                 x: 1565.2421
                 y: -38.48578
@@ -98,10 +124,10 @@ nodes:
             6:
               value:
                 TransformJson:
-                  filter: "{\"ping\": (.pong // 0) + 1}"
+                  filter: '{"ping": (.pong // 0) + 1}'
                   size:
-                    x: 300
-                    y: 150
+                    x: 300.0
+                    y: 150.0
               pos:
                 x: 1560.9666
                 y: 332.35745
@@ -111,8 +137,8 @@ nodes:
                 Text:
                   value: table-tennis-sg
                   size:
-                    x: 300
-                    y: 150
+                    x: 300.0
+                    y: 150.0
               pos:
                 x: 1562.6094
                 y: -751.79663
@@ -138,10 +164,10 @@ nodes:
             10:
               value:
                 TransformJson:
-                  filter: ".pong"
+                  filter: .pong
                   size:
-                    x: 160
-                    y: 64
+                    x: 160.0
+                    y: 64.0
               pos:
                 x: 685.0865
                 y: 375.56656
@@ -151,7 +177,7 @@ nodes:
                 Matcher:
                   kind: Json
                   patterns:
-                    - 0..=4
+                  - 0..=4
               pos:
                 x: 1136.2461
                 y: 232.49548
@@ -163,8 +189,8 @@ nodes:
                     Conditionally, define the next workflow.
                     These could call different workflows
                   size:
-                    x: 300
-                    y: 150
+                    x: 300.0
+                    y: 150.0
               pos:
                 x: 2068.788
                 y: -892.4019
@@ -172,10 +198,10 @@ nodes:
             14:
               value:
                 ParseJson:
-                  text: ""
+                  text: ''
                   size:
-                    x: 300
-                    y: 150
+                    x: 300.0
+                    y: 150.0
               pos:
                 x: 1799.3737
                 y: 774.89044
@@ -185,8 +211,8 @@ nodes:
                 Text:
                   value: __break__
                   size:
-                    x: 300
-                    y: 150
+                    x: 300.0
+                    y: 150.0
               pos:
                 x: 1566.5305
                 y: -399.25046
@@ -194,141 +220,141 @@ nodes:
             16:
               value:
                 Text:
-                  value: "\"Done\""
+                  value: '"Done"'
                   size:
-                    x: 300
-                    y: 150
+                    x: 300.0
+                    y: 150.0
               pos:
                 x: 1408.7715
                 y: 731.6915
               open: true
           wires:
-            - out_pin:
-                node: 0
-                output: 0
-              in_pin:
-                node: 3
-                input: 0
-            - out_pin:
-                node: 0
-                output: 1
-              in_pin:
-                node: 3
-                input: 1
-            - out_pin:
-                node: 2
-                output: 0
-              in_pin:
-                node: 8
-                input: 0
-            - out_pin:
-                node: 3
-                output: 0
-              in_pin:
-                node: 2
-                input: 0
-            - out_pin:
-                node: 3
-                output: 0
-              in_pin:
-                node: 5
-                input: 1
-            - out_pin:
-                node: 3
-                output: 1
-              in_pin:
-                node: 10
-                input: 1
-            - out_pin:
-                node: 3
-                output: 1
-              in_pin:
-                node: 11
-                input: 1
-            - out_pin:
-                node: 3
-                output: 2
-              in_pin:
-                node: 4
-                input: 0
-            - out_pin:
-                node: 5
-                output: 0
-              in_pin:
-                node: 9
-                input: 0
-            - out_pin:
-                node: 6
-                output: 0
-              in_pin:
-                node: 9
-                input: 1
-            - out_pin:
-                node: 7
-                output: 0
-              in_pin:
-                node: 8
-                input: 1
-            - out_pin:
-                node: 8
-                output: 0
-              in_pin:
-                node: 1
-                input: 0
-            - out_pin:
-                node: 9
-                output: 0
-              in_pin:
-                node: 1
-                input: 1
-            - out_pin:
-                node: 10
-                output: 0
-              in_pin:
-                node: 11
-                input: 0
-            - out_pin:
-                node: 11
-                output: 0
-              in_pin:
-                node: 6
-                input: 1
-            - out_pin:
-                node: 11
-                output: 0
-              in_pin:
-                node: 7
-                input: 0
-            - out_pin:
-                node: 11
-                output: 1
-              in_pin:
-                node: 15
-                input: 0
-            - out_pin:
-                node: 11
-                output: 1
-              in_pin:
-                node: 16
-                input: 0
-            - out_pin:
-                node: 14
-                output: 0
-              in_pin:
-                node: 9
-                input: 2
-            - out_pin:
-                node: 15
-                output: 0
-              in_pin:
-                node: 8
-                input: 2
-            - out_pin:
-                node: 16
-                output: 0
-              in_pin:
-                node: 14
-                input: 0
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 3
+              input: 0
+          - out_pin:
+              node: 0
+              output: 1
+            in_pin:
+              node: 3
+              input: 1
+          - out_pin:
+              node: 2
+              output: 0
+            in_pin:
+              node: 8
+              input: 0
+          - out_pin:
+              node: 3
+              output: 0
+            in_pin:
+              node: 2
+              input: 0
+          - out_pin:
+              node: 3
+              output: 0
+            in_pin:
+              node: 5
+              input: 1
+          - out_pin:
+              node: 3
+              output: 1
+            in_pin:
+              node: 10
+              input: 1
+          - out_pin:
+              node: 3
+              output: 1
+            in_pin:
+              node: 11
+              input: 1
+          - out_pin:
+              node: 3
+              output: 2
+            in_pin:
+              node: 4
+              input: 0
+          - out_pin:
+              node: 5
+              output: 0
+            in_pin:
+              node: 9
+              input: 0
+          - out_pin:
+              node: 6
+              output: 0
+            in_pin:
+              node: 9
+              input: 1
+          - out_pin:
+              node: 7
+              output: 0
+            in_pin:
+              node: 8
+              input: 1
+          - out_pin:
+              node: 8
+              output: 0
+            in_pin:
+              node: 1
+              input: 0
+          - out_pin:
+              node: 9
+              output: 0
+            in_pin:
+              node: 1
+              input: 1
+          - out_pin:
+              node: 10
+              output: 0
+            in_pin:
+              node: 11
+              input: 0
+          - out_pin:
+              node: 11
+              output: 0
+            in_pin:
+              node: 6
+              input: 1
+          - out_pin:
+              node: 11
+              output: 0
+            in_pin:
+              node: 7
+              input: 0
+          - out_pin:
+              node: 11
+              output: 1
+            in_pin:
+              node: 15
+              input: 0
+          - out_pin:
+              node: 11
+              output: 1
+            in_pin:
+              node: 16
+              input: 0
+          - out_pin:
+              node: 14
+              output: 0
+            in_pin:
+              node: 9
+              input: 2
+          - out_pin:
+              node: 15
+              output: 0
+            in_pin:
+              node: 8
+              input: 2
+          - out_pin:
+              node: 16
+              output: 0
+            in_pin:
+              node: 14
+              input: 0
           start: 0
           finish: 1
     pos:
@@ -354,8 +380,8 @@ nodes:
               value:
                 Start:
                   fields:
-                    - - data
-                      - Json
+                  - - data
+                    - Json
               pos:
                 x: -720.43036
                 y: -182.40154
@@ -364,8 +390,8 @@ nodes:
               value:
                 Finish:
                   fields:
-                    - - output
-                      - Json
+                  - - output
+                    - Json
               pos:
                 x: 1279.3782
                 y: -388.33383
@@ -373,7 +399,7 @@ nodes:
             2:
               value:
                 Subgraph:
-                  title: "Won't finish"
+                  title: Won't finish
                   graph:
                     uuid: a7dcaf79-14a3-4962-bb00-4bbdf95a71d5
                     nodes:
@@ -381,10 +407,10 @@ nodes:
                         value:
                           Start:
                             fields:
-                              - - key
-                                - Json
-                              - - input
-                                - Json
+                            - - key
+                              - Json
+                            - - input
+                              - Json
                         pos:
                           x: -430.5202
                           y: 271.34286
@@ -393,12 +419,12 @@ nodes:
                         value:
                           Finish:
                             fields:
-                              - - pong
-                                - Json
-                              - - ping
-                                - Json
-                              - - stop
-                                - Json
+                            - - pong
+                              - Json
+                            - - ping
+                              - Json
+                            - - stop
+                              - Json
                         pos:
                           x: 1973.7543
                           y: 589.1917
@@ -408,8 +434,8 @@ nodes:
                           Matcher:
                             kind: Json
                             patterns:
-                              - ping
-                              - pong
+                            - ping
+                            - pong
                             exact: true
                         pos:
                           x: -73.09923
@@ -425,10 +451,10 @@ nodes:
                       4:
                         value:
                           TransformJson:
-                            filter: "{\"pong\": (.ping // 0) + 1}"
+                            filter: '{"pong": (.ping // 0) + 1}'
                             size:
-                              x: 300
-                              y: 150
+                              x: 300.0
+                              y: 150.0
                         pos:
                           x: 1253.4645
                           y: 227.2987
@@ -436,10 +462,10 @@ nodes:
                       5:
                         value:
                           TransformJson:
-                            filter: "{\"ping\": (.pong // 0) + 1}"
+                            filter: '{"ping": (.pong // 0) + 1}'
                             size:
-                              x: 160
-                              y: 64
+                              x: 160.0
+                              y: 64.0
                         pos:
                           x: 1249.1891
                           y: 598.14154
@@ -447,10 +473,10 @@ nodes:
                       7:
                         value:
                           TransformJson:
-                            filter: ".pong"
+                            filter: .pong
                             size:
-                              x: 162
-                              y: 64
+                              x: 162.0
+                              y: 64.0
                         pos:
                           x: 431.86597
                           y: 608.11005
@@ -460,7 +486,7 @@ nodes:
                           Matcher:
                             kind: Json
                             patterns:
-                              - 0..=4
+                            - 0..=4
                         pos:
                           x: 824.4683
                           y: 498.2799
@@ -468,10 +494,10 @@ nodes:
                       9:
                         value:
                           ParseJson:
-                            text: ""
+                            text: ''
                             size:
-                              x: 300
-                              y: 150
+                              x: 300.0
+                              y: 150.0
                         pos:
                           x: 1487.5966
                           y: 1040.6743
@@ -479,93 +505,93 @@ nodes:
                       10:
                         value:
                           Text:
-                            value: "\"Done\""
+                            value: '"Done"'
                             size:
-                              x: 300
-                              y: 150
+                              x: 300.0
+                              y: 150.0
                         pos:
                           x: 1096.9941
                           y: 997.4754
                         open: true
                     wires:
-                      - out_pin:
-                          node: 0
-                          output: 0
-                        in_pin:
-                          node: 2
-                          input: 0
-                      - out_pin:
-                          node: 0
-                          output: 1
-                        in_pin:
-                          node: 2
-                          input: 1
-                      - out_pin:
-                          node: 2
-                          output: 0
-                        in_pin:
-                          node: 4
-                          input: 1
-                      - out_pin:
-                          node: 2
-                          output: 1
-                        in_pin:
-                          node: 7
-                          input: 1
-                      - out_pin:
-                          node: 2
-                          output: 1
-                        in_pin:
-                          node: 8
-                          input: 1
-                      - out_pin:
-                          node: 2
-                          output: 2
-                        in_pin:
-                          node: 3
-                          input: 0
-                      - out_pin:
-                          node: 4
-                          output: 0
-                        in_pin:
-                          node: 1
-                          input: 0
-                      - out_pin:
-                          node: 5
-                          output: 0
-                        in_pin:
-                          node: 1
-                          input: 1
-                      - out_pin:
-                          node: 7
-                          output: 0
-                        in_pin:
-                          node: 8
-                          input: 0
-                      - out_pin:
-                          node: 8
-                          output: 0
-                        in_pin:
-                          node: 5
-                          input: 1
-                      - out_pin:
-                          node: 8
-                          output: 1
-                        in_pin:
-                          node: 10
-                          input: 0
-                      - out_pin:
-                          node: 9
-                          output: 0
-                        in_pin:
-                          node: 1
-                          input: 2
-                      - out_pin:
-                          node: 10
-                          output: 0
-                        in_pin:
-                          node: 9
-                          input: 0
+                    - out_pin:
+                        node: 0
+                        output: 0
+                      in_pin:
+                        node: 2
+                        input: 0
+                    - out_pin:
+                        node: 0
+                        output: 1
+                      in_pin:
+                        node: 2
+                        input: 1
+                    - out_pin:
+                        node: 2
+                        output: 0
+                      in_pin:
+                        node: 4
+                        input: 1
+                    - out_pin:
+                        node: 2
+                        output: 1
+                      in_pin:
+                        node: 7
+                        input: 1
+                    - out_pin:
+                        node: 2
+                        output: 1
+                      in_pin:
+                        node: 8
+                        input: 1
+                    - out_pin:
+                        node: 2
+                        output: 2
+                      in_pin:
+                        node: 3
+                        input: 0
+                    - out_pin:
+                        node: 4
+                        output: 0
+                      in_pin:
+                        node: 1
+                        input: 0
+                    - out_pin:
+                        node: 5
+                        output: 0
+                      in_pin:
+                        node: 1
+                        input: 1
+                    - out_pin:
+                        node: 7
+                        output: 0
+                      in_pin:
+                        node: 8
+                        input: 0
+                    - out_pin:
+                        node: 8
+                        output: 0
+                      in_pin:
+                        node: 5
+                        input: 1
+                    - out_pin:
+                        node: 8
+                        output: 1
+                      in_pin:
+                        node: 10
+                        input: 0
+                    - out_pin:
+                        node: 9
+                        output: 0
+                      in_pin:
+                        node: 1
+                        input: 2
+                    - out_pin:
+                        node: 10
+                        output: 0
+                      in_pin:
+                        node: 9
+                        input: 0
                     start: 0
                     finish: 1
               pos:
@@ -577,8 +603,8 @@ nodes:
                 Matcher:
                   kind: Json
                   patterns:
-                    - ping
-                    - pong
+                  - ping
+                  - pong
                   exact: true
               pos:
                 x: 297.96942
@@ -594,10 +620,10 @@ nodes:
             5:
               value:
                 TransformJson:
-                  filter: "first(keys[] | select( . == \"ping\" or . == \"pong\"))"
+                  filter: first(keys[] | select( . == "ping" or . == "pong"))
                   size:
-                    x: 305
-                    y: 150
+                    x: 305.0
+                    y: 150.0
               pos:
                 x: -264.9178
                 y: -549.72876
@@ -608,8 +634,8 @@ nodes:
                   comment: |
                     These will subgraph is show what to avoid
                   size:
-                    x: 300
-                    y: 150
+                    x: 300.0
+                    y: 150.0
               pos:
                 x: -746.51776
                 y: -696.33
@@ -617,7 +643,7 @@ nodes:
             17:
               value:
                 Subgraph:
-                  title: "Won't start"
+                  title: Won't start
                   graph:
                     uuid: 1cf6dc63-8330-42c3-a73c-c83d6831057a
                     nodes:
@@ -625,10 +651,10 @@ nodes:
                         value:
                           Start:
                             fields:
-                              - - ping
-                                - Json
-                              - - pong
-                                - Json
+                            - - ping
+                              - Json
+                            - - pong
+                              - Json
                         pos:
                           x: 26.270134
                           y: 79.735825
@@ -637,8 +663,8 @@ nodes:
                         value:
                           Finish:
                             fields:
-                              - - output
-                                - Json
+                            - - output
+                              - Json
                         pos:
                           x: 2218.7952
                           y: 638.57007
@@ -646,10 +672,10 @@ nodes:
                       4:
                         value:
                           TransformJson:
-                            filter: "{\"pong\": (.ping // 0) + 1}"
+                            filter: '{"pong": (.ping // 0) + 1}'
                             size:
-                              x: 300
-                              y: 150
+                              x: 300.0
+                              y: 150.0
                         pos:
                           x: 1219.1879
                           y: 218.58833
@@ -657,10 +683,10 @@ nodes:
                       5:
                         value:
                           TransformJson:
-                            filter: "{\"ping\": (.pong // 0) + 1}"
+                            filter: '{"ping": (.pong // 0) + 1}'
                             size:
-                              x: 300
-                              y: 150
+                              x: 300.0
+                              y: 150.0
                         pos:
                           x: 1214.9125
                           y: 589.43146
@@ -677,10 +703,10 @@ nodes:
                       7:
                         value:
                           TransformJson:
-                            filter: ".pong"
+                            filter: .pong
                             size:
-                              x: 160
-                              y: 64
+                              x: 160.0
+                              y: 64.0
                         pos:
                           x: 304.34283
                           y: 567.3496
@@ -690,7 +716,7 @@ nodes:
                           Matcher:
                             kind: Json
                             patterns:
-                              - 0..=4
+                            - 0..=4
                         pos:
                           x: 729.1603
                           y: 450.73187
@@ -698,10 +724,10 @@ nodes:
                       9:
                         value:
                           ParseJson:
-                            text: ""
+                            text: ''
                             size:
-                              x: 300
-                              y: 150
+                              x: 300.0
+                              y: 150.0
                         pos:
                           x: 1453.3197
                           y: 1031.9644
@@ -709,81 +735,81 @@ nodes:
                       10:
                         value:
                           Text:
-                            value: "\"Done\""
+                            value: '"Done"'
                             size:
-                              x: 300
-                              y: 150
+                              x: 300.0
+                              y: 150.0
                         pos:
                           x: 1062.7174
                           y: 988.7655
                         open: true
                     wires:
-                      - out_pin:
-                          node: 0
-                          output: 0
-                        in_pin:
-                          node: 4
-                          input: 1
-                      - out_pin:
-                          node: 0
-                          output: 1
-                        in_pin:
-                          node: 7
-                          input: 1
-                      - out_pin:
-                          node: 0
-                          output: 1
-                        in_pin:
-                          node: 8
-                          input: 1
-                      - out_pin:
-                          node: 4
-                          output: 0
-                        in_pin:
-                          node: 6
-                          input: 0
-                      - out_pin:
-                          node: 5
-                          output: 0
-                        in_pin:
-                          node: 6
-                          input: 1
-                      - out_pin:
-                          node: 6
-                          output: 0
-                        in_pin:
-                          node: 1
-                          input: 0
-                      - out_pin:
-                          node: 7
-                          output: 0
-                        in_pin:
-                          node: 8
-                          input: 0
-                      - out_pin:
-                          node: 8
-                          output: 0
-                        in_pin:
-                          node: 5
-                          input: 1
-                      - out_pin:
-                          node: 8
-                          output: 1
-                        in_pin:
-                          node: 10
-                          input: 0
-                      - out_pin:
-                          node: 9
-                          output: 0
-                        in_pin:
-                          node: 6
-                          input: 2
-                      - out_pin:
-                          node: 10
-                          output: 0
-                        in_pin:
-                          node: 9
-                          input: 0
+                    - out_pin:
+                        node: 0
+                        output: 0
+                      in_pin:
+                        node: 4
+                        input: 1
+                    - out_pin:
+                        node: 0
+                        output: 1
+                      in_pin:
+                        node: 7
+                        input: 1
+                    - out_pin:
+                        node: 0
+                        output: 1
+                      in_pin:
+                        node: 8
+                        input: 1
+                    - out_pin:
+                        node: 4
+                        output: 0
+                      in_pin:
+                        node: 6
+                        input: 0
+                    - out_pin:
+                        node: 5
+                        output: 0
+                      in_pin:
+                        node: 6
+                        input: 1
+                    - out_pin:
+                        node: 6
+                        output: 0
+                      in_pin:
+                        node: 1
+                        input: 0
+                    - out_pin:
+                        node: 7
+                        output: 0
+                      in_pin:
+                        node: 8
+                        input: 0
+                    - out_pin:
+                        node: 8
+                        output: 0
+                      in_pin:
+                        node: 5
+                        input: 1
+                    - out_pin:
+                        node: 8
+                        output: 1
+                      in_pin:
+                        node: 10
+                        input: 0
+                    - out_pin:
+                        node: 9
+                        output: 0
+                      in_pin:
+                        node: 6
+                        input: 2
+                    - out_pin:
+                        node: 10
+                        output: 0
+                      in_pin:
+                        node: 9
+                        input: 0
                     start: 0
                     finish: 1
               pos:
@@ -791,60 +817,60 @@ nodes:
                 y: -597.09906
               open: true
           wires:
-            - out_pin:
-                node: 0
-                output: 0
-              in_pin:
-                node: 2
-                input: 1
-            - out_pin:
-                node: 0
-                output: 0
-              in_pin:
-                node: 3
-                input: 1
-            - out_pin:
-                node: 0
-                output: 0
-              in_pin:
-                node: 5
-                input: 1
-            - out_pin:
-                node: 3
-                output: 0
-              in_pin:
-                node: 17
-                input: 0
-            - out_pin:
-                node: 3
-                output: 1
-              in_pin:
-                node: 17
-                input: 1
-            - out_pin:
-                node: 3
-                output: 2
-              in_pin:
-                node: 4
-                input: 0
-            - out_pin:
-                node: 5
-                output: 0
-              in_pin:
-                node: 2
-                input: 0
-            - out_pin:
-                node: 5
-                output: 0
-              in_pin:
-                node: 3
-                input: 0
-            - out_pin:
-                node: 17
-                output: 0
-              in_pin:
-                node: 1
-                input: 0
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 2
+              input: 1
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 3
+              input: 1
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 5
+              input: 1
+          - out_pin:
+              node: 3
+              output: 0
+            in_pin:
+              node: 17
+              input: 0
+          - out_pin:
+              node: 3
+              output: 1
+            in_pin:
+              node: 17
+              input: 1
+          - out_pin:
+              node: 3
+              output: 2
+            in_pin:
+              node: 4
+              input: 0
+          - out_pin:
+              node: 5
+              output: 0
+            in_pin:
+              node: 2
+              input: 0
+          - out_pin:
+              node: 5
+              output: 0
+            in_pin:
+              node: 3
+              input: 0
+          - out_pin:
+              node: 17
+              output: 0
+            in_pin:
+              node: 1
+              input: 0
           start: 0
           finish: 1
     pos:
@@ -855,8 +881,8 @@ nodes:
     value:
       Preview:
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
         uuid: eff59fb4-c2cd-4c84-9d3c-2507f56e1d5d
     pos:
       x: 2042.168
@@ -865,10 +891,10 @@ nodes:
   9:
     value:
       TransformJson:
-        filter: "first(keys[] | select( . == \"ping\" or . == \"pong\"))"
+        filter: first(keys[] | select( . == "ping" or . == "pong"))
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
       x: 1087.663
       y: 250.20078
@@ -885,11 +911,11 @@ nodes:
     value:
       Tools:
         toolset:
-          - chainer/__break__
-          - chainer/table-tennis-sg
+        - chainer/__break__
+        - chainer/table-tennis-sg
         size:
-          x: 250
-          y: 250
+          x: 250.0
+          y: 250.0
     pos:
       x: 1677.751
       y: -298.72202
@@ -905,20 +931,20 @@ nodes:
               value:
                 Start:
                   fields:
-                    - - schema
-                      - Json
-                    - - input
-                      - Text
+                  - - schema
+                    - Json
+                  - - input
+                    - Text
               pos:
-                x: 0
-                y: 0
+                x: 0.0
+                y: 0.0
               open: true
             1:
               value:
                 Finish:
                   fields:
-                    - - output
-                      - Json
+                  - - output
+                    - Json
               pos:
                 x: 2159.2795
                 y: 62.90612
@@ -927,7 +953,7 @@ nodes:
               value:
                 Fallback:
                   kinds:
-                    - Json
+                  - Json
               pos:
                 x: 1496.0948
                 y: 507.09616
@@ -935,10 +961,10 @@ nodes:
             3:
               value:
                 ParseJson:
-                  text: "{\"ping\": 0 }"
+                  text: '{"ping": 0 }'
                   size:
-                    x: 300
-                    y: 150
+                    x: 300.0
+                    y: 150.0
               pos:
                 x: 422.61502
                 y: 344.33173
@@ -947,7 +973,7 @@ nodes:
               value:
                 ValidateJson:
                   size:
-                    x: 504
+                    x: 504.0
                     y: 330.03125
               pos:
                 x: 839.33325
@@ -965,10 +991,10 @@ nodes:
             6:
               value:
                 CommentNode:
-                  comment: "Provide a default, if prompt does not conform to schema"
+                  comment: Provide a default, if prompt does not conform to schema
                   size:
-                    x: 300
-                    y: 150
+                    x: 300.0
+                    y: 150.0
               pos:
                 x: 1642.0388
                 y: 723.03253
@@ -976,10 +1002,10 @@ nodes:
             7:
               value:
                 ParseJson:
-                  text: ""
+                  text: ''
                   size:
-                    x: 300
-                    y: 150
+                    x: 300.0
+                    y: 150.0
               pos:
                 x: 414.376
                 y: 86.35454
@@ -988,78 +1014,78 @@ nodes:
               value:
                 Fallback:
                   kinds:
-                    - Json
+                  - Json
               pos:
                 x: 964.9228
                 y: 190.62834
               open: true
           wires:
-            - out_pin:
-                node: 0
-                output: 0
-              in_pin:
-                node: 4
-                input: 0
-            - out_pin:
-                node: 0
-                output: 1
-              in_pin:
-                node: 7
-                input: 0
-            - out_pin:
-                node: 2
-                output: 0
-              in_pin:
-                node: 5
-                input: 2
-            - out_pin:
-                node: 3
-                output: 0
-              in_pin:
-                node: 2
-                input: 1
-            - out_pin:
-                node: 3
-                output: 0
-              in_pin:
-                node: 8
-                input: 1
-            - out_pin:
-                node: 4
-                output: 0
-              in_pin:
-                node: 5
-                input: 0
-            - out_pin:
-                node: 4
-                output: 1
-              in_pin:
-                node: 2
-                input: 0
-            - out_pin:
-                node: 5
-                output: 0
-              in_pin:
-                node: 1
-                input: 0
-            - out_pin:
-                node: 7
-                output: 0
-              in_pin:
-                node: 4
-                input: 1
-            - out_pin:
-                node: 7
-                output: 1
-              in_pin:
-                node: 8
-                input: 0
-            - out_pin:
-                node: 8
-                output: 0
-              in_pin:
-                node: 5
-                input: 1
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 4
+              input: 0
+          - out_pin:
+              node: 0
+              output: 1
+            in_pin:
+              node: 7
+              input: 0
+          - out_pin:
+              node: 2
+              output: 0
+            in_pin:
+              node: 5
+              input: 2
+          - out_pin:
+              node: 3
+              output: 0
+            in_pin:
+              node: 2
+              input: 1
+          - out_pin:
+              node: 3
+              output: 0
+            in_pin:
+              node: 8
+              input: 1
+          - out_pin:
+              node: 4
+              output: 0
+            in_pin:
+              node: 5
+              input: 0
+          - out_pin:
+              node: 4
+              output: 1
+            in_pin:
+              node: 2
+              input: 0
+          - out_pin:
+              node: 5
+              output: 0
+            in_pin:
+              node: 1
+              input: 0
+          - out_pin:
+              node: 7
+              output: 0
+            in_pin:
+              node: 4
+              input: 1
+          - out_pin:
+              node: 7
+              output: 1
+            in_pin:
+              node: 8
+              input: 0
+          - out_pin:
+              node: 8
+              output: 0
+            in_pin:
+              node: 5
+              input: 1
           start: 0
           finish: 1
     pos:
@@ -1070,122 +1096,99 @@ nodes:
     value:
       Preview:
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
         uuid: c1f1c997-69eb-4104-9c67-545a63043c31
     pos:
       x: 2509.2178
       y: 363.0471
     open: true
 wires:
-  - out_pin:
-      node: 0
-      output: 2
-    in_pin:
-      node: 16
-      input: 0
-  - out_pin:
-      node: 0
-      output: 3
-    in_pin:
-      node: 19
-      input: 0
-  - out_pin:
-      node: 0
-      output: 4
-    in_pin:
-      node: 4
-      input: 0
-  - out_pin:
-      node: 0
-      output: 4
-    in_pin:
-      node: 19
-      input: 1
-  - out_pin:
-      node: 3
-      output: 0
-    in_pin:
-      node: 16
-      input: 2
-  - out_pin:
-      node: 3
-      output: 1
-    in_pin:
-      node: 2
-      input: 0
-  - out_pin:
-      node: 3
-      output: 1
-    in_pin:
-      node: 6
-      input: 0
-  - out_pin:
-      node: 3
-      output: 1
-    in_pin:
-      node: 16
-      input: 3
-  - out_pin:
-      node: 9
-      output: 0
-    in_pin:
-      node: 3
-      input: 0
-  - out_pin:
-      node: 16
-      output: 2
-    in_pin:
-      node: 21
-      input: 0
-  - out_pin:
-      node: 17
-      output: 0
-    in_pin:
-      node: 16
-      input: 1
-  - out_pin:
-      node: 19
-      output: 0
-    in_pin:
-      node: 3
-      input: 1
-  - out_pin:
-      node: 19
-      output: 0
-    in_pin:
-      node: 5
-      input: 0
-  - out_pin:
-      node: 19
-      output: 0
-    in_pin:
-      node: 9
-      input: 1
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 16
+    input: 0
+- out_pin:
+    node: 0
+    output: 3
+  in_pin:
+    node: 19
+    input: 0
+- out_pin:
+    node: 0
+    output: 4
+  in_pin:
+    node: 4
+    input: 0
+- out_pin:
+    node: 0
+    output: 4
+  in_pin:
+    node: 19
+    input: 1
+- out_pin:
+    node: 3
+    output: 0
+  in_pin:
+    node: 16
+    input: 2
+- out_pin:
+    node: 3
+    output: 1
+  in_pin:
+    node: 2
+    input: 0
+- out_pin:
+    node: 3
+    output: 1
+  in_pin:
+    node: 6
+    input: 0
+- out_pin:
+    node: 3
+    output: 1
+  in_pin:
+    node: 16
+    input: 3
+- out_pin:
+    node: 9
+    output: 0
+  in_pin:
+    node: 3
+    input: 0
+- out_pin:
+    node: 16
+    output: 2
+  in_pin:
+    node: 21
+    input: 0
+- out_pin:
+    node: 17
+    output: 0
+  in_pin:
+    node: 16
+    input: 1
+- out_pin:
+    node: 19
+    output: 0
+  in_pin:
+    node: 3
+    input: 1
+- out_pin:
+    node: 19
+    output: 0
+  in_pin:
+    node: 5
+    input: 0
+- out_pin:
+    node: 19
+    output: 0
+  in_pin:
+    node: 9
+    input: 1
 disabled:
-  - 5
-description: Refactoring of the table-tennis workflow using subgraphs for organization.
-schema: |-
-  {
-    "type": "object",
-    "properties": {
-      "ping": {
-        "type": "number"
-      },
-      "pong": {
-        "type": "number"
-      }
-    },
-    "oneOf": [
-      {
-        "required": [
-          "ping"
-        ]
-      },
-      {
-        "required": [
-          "pong"
-        ]
-      }
-    ]
-  }
+- 5
+start: 0
+finish: 1

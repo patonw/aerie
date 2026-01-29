@@ -22,7 +22,7 @@ use crate::{
     ui::shortcuts::{ShortcutHandler, squelch},
     utils::ErrorDistiller as _,
     workflow::{
-        EditContext, GraphId, MetaNode, ShadowGraph, WorkNode,
+        EditContext, GraphId, MetaNode, ShadowGraph, WorkNode, Workflow,
         nodes::{
             AgentNode, ChatContext, ChatNode, CommentNode, Demote, EnvironmentNode, Fallback,
             Flavor, GateNode, GraphSubmenu, InvokeTool, Matcher, Number, OutputNode, Panic,
@@ -64,12 +64,12 @@ pub struct ViewStack {
 }
 
 impl ViewStack {
-    pub fn new(root_graph: ShadowGraph<WorkNode>, path: impl Iterator<Item = NodeId>) -> Self {
+    pub fn new(workflow: Workflow, path: impl Iterator<Item = NodeId>) -> Self {
         let mut me = Self {
-            root_id: egui::Id::new(root_graph.uuid),
+            root_id: egui::Id::new(workflow.graph.uuid),
             path: Default::default(),
             flavor: Default::default(),
-            levels: vector![root_graph],
+            levels: vector![workflow.graph.as_ref().clone()],
         };
 
         for id in path {
@@ -81,17 +81,17 @@ impl ViewStack {
         me
     }
 
-    pub fn from_root(root_graph: ShadowGraph<WorkNode>) -> Self {
-        Self::new(root_graph, iter::empty())
+    pub fn from_root(workflow: Workflow) -> Self {
+        Self::new(workflow, iter::empty())
     }
 
     /// Replace root graph with a different version.
     ///
     /// Attempts to preserve path, but will navigate as far as possible
     /// if subgraphs are absent.
-    pub fn switch(&mut self, root_graph: ShadowGraph<WorkNode>) {
+    pub fn switch(&mut self, workflow: Workflow) {
         let path = self.path.clone();
-        *self = Self::new(root_graph, path.into_iter());
+        *self = Self::new(workflow, path.into_iter());
     }
 
     pub fn is_empty(&self) -> bool {

@@ -31,12 +31,13 @@ impl super::AppState {
 
         self.session.scratch.clear();
 
-        let exec_id = self.workflows.shadow.uuid.into();
+        let exec_id = self.workflows.shadow.graph.uuid.into();
         let mut exec = {
             let run_ctx = RunContext::builder()
                 .runtime(self.rt.clone())
                 .exec_id(exec_id)
                 .agent_factory(self.agent_factory.clone())
+                .metadata(self.workflows.shadow.metadata.clone())
                 .events(Some(self.events.clone()))
                 .node_state(self.workflows.node_state.clone())
                 .previews(self.workflows.previews.clone())
@@ -51,7 +52,7 @@ impl super::AppState {
 
             let inputs = RootContext::builder()
                 .history(self.session.history.clone())
-                .graph(self.workflows.shadow.clone())
+                .workflow(self.workflows.shadow.clone())
                 .user_prompt(prompt)
                 .model(self.settings.view(|s| s.llm_model.clone()))
                 .temperature(self.settings.view(|s| s.temperature))
@@ -67,7 +68,7 @@ impl super::AppState {
                 .state_view(self.workflows.node_state.view(exec_id))
                 .build();
 
-            exec.init(&self.workflows.shadow);
+            exec.init(&self.workflows.shadow.graph);
 
             exec
         };
@@ -125,7 +126,7 @@ impl super::AppState {
                     let Ok((label, value)) = rx.recv() else {
                         break;
                     };
-                    tracing::info!("Received output {label}: {value:?}");
+                    tracing::debug!("Received output {label}: {value:?}");
 
                     outputs.rcu(|it| it.update(label.clone(), value.clone()));
                 }
