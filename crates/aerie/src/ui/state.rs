@@ -26,6 +26,7 @@ use crate::{
     AgentFactory, LogEntry, Settings, ToolSpec,
     chat::ChatSession,
     config::ConfigExt as _,
+    toolbox::ToolStore,
     transmute::Transmuter,
     ui::{
         AppEvent, ShowHelp,
@@ -66,6 +67,8 @@ pub struct AppState {
     pub errors: ErrorList<anyhow::Error>,
 
     pub settings: Arc<ArcSwap<Settings>>,
+
+    pub tools: ToolStore,
 
     #[builder(default)]
     pub task_count: Arc<AtomicU16>,

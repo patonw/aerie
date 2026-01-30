@@ -9,7 +9,12 @@ use rig::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{borrow::Cow, iter, sync::Arc};
+use std::{
+    borrow::Cow,
+    iter,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::process::Command;
 
 use rmcp::{
@@ -620,5 +625,40 @@ impl Toolbox {
             }
             _ => selector.clone(),
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct ToolStore {
+    path: PathBuf,
+
+    cache: Arc<ArcSwap<im::OrdMap<String, ToolSpec>>>,
+}
+
+impl ToolStore {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            cache: Default::default(),
+        }
+    }
+}
+
+impl crate::storage::CachedDirStore<ToolSpec> for ToolStore {
+    const EXT: &'static str = "mcp";
+
+    fn base_path(&self) -> &Path {
+        &self.path
+    }
+
+    fn view_cache<R>(&self, cb: impl FnOnce(&im::OrdMap<String, ToolSpec>) -> R) -> R {
+        cb(&self.cache.load())
+    }
+
+    fn update_cache(
+        &self,
+        cb: impl Fn(&im::OrdMap<String, ToolSpec>) -> im::OrdMap<String, ToolSpec>,
+    ) {
+        self.cache.rcu(|cache| cb(cache));
     }
 }

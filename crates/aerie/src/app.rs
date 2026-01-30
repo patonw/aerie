@@ -23,6 +23,8 @@ use crate::{
     AgentFactory, LogChannelLayer, LogEntry, Settings,
     chat::ChatSession,
     config::{Args, Command, ConfigExt, SessionCommand},
+    storage::CachedDirStore as _,
+    toolbox::ToolStore,
     ui::{AppState, Pane, shortcuts::SHORTCUT_QUIT, state::WorkflowState},
     utils::{ErrorDistiller as _, ErrorList},
     workflow::store::WorkflowStoreDir,
@@ -117,9 +119,12 @@ impl App {
             .clone()
             .unwrap_or(data_dir.join("workflows"));
 
+        let tool_dir = args.tool_dir.clone().unwrap_or(data_dir.join("tools"));
+
         std::fs::create_dir_all(settings_path.parent().unwrap())?;
         std::fs::create_dir_all(&session_dir)?;
         std::fs::create_dir_all(&workflow_dir)?;
+        std::fs::create_dir_all(&tool_dir)?;
 
         if let Some(Command::Session {
             subcmd: SessionCommand::List,
@@ -222,11 +227,15 @@ impl App {
         let flow_store = (self.workstore_fn)(WorkflowStoreDir::load_all(workflow_dir, true)?);
         let flow_state = WorkflowState::new(flow_store.clone(), flow_name);
 
+        let tool_store = ToolStore::new(tool_dir);
+        tool_store.preload_all();
+
         let errors: ErrorList<anyhow::Error> = Default::default();
         let mut agent_factory = (self.agent_factory_fn)(
             AgentFactory::builder()
                 .rt(rt.handle().to_owned())
                 .settings(settings.clone())
+                .tools(Some(tool_store.clone()))
                 .errors(errors.clone())
                 .task_count(task_count.clone())
                 .store(Some(flow_store.clone()))
@@ -239,6 +248,7 @@ impl App {
         let mut behavior = (self.appstate_fn)(
             AppState::builder()
                 .settings(settings.clone())
+                .tools(tool_store)
                 .log_history(log_history.clone())
                 .task_count(task_count.clone())
                 .errors(errors.clone())

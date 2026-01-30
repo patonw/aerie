@@ -21,6 +21,8 @@ use typed_builder::TypedBuilder;
 
 use crate::{
     config::ConfigExt as _,
+    storage::CachedDirStore as _,
+    toolbox::ToolStore,
     utils::{ErrorDistiller as _, ErrorList},
     workflow::store::WorkflowStoreDir,
 };
@@ -78,6 +80,9 @@ pub struct AgentFactory {
 
     pub settings: Arc<ArcSwap<Settings>>,
 
+    // #[builder(default, setter(strip_option))]
+    pub tools: Option<ToolStore>,
+
     #[builder(default)]
     pub errors: ErrorList<anyhow::Error>,
 
@@ -102,7 +107,7 @@ pub struct AgentFactory {
 
 impl AgentFactory {
     pub fn agent_builder(&self, provider_model: &str) -> anyhow::Result<AgentBuilderT> {
-        let (preamble, temperature) = self.settings.view(|s| (s.preamble.clone(), s.temperature));
+        let temperature = self.settings.view(|s| s.temperature);
 
         let (provider, model) = self.parse_model(provider_model)?;
 
@@ -113,9 +118,7 @@ impl AgentFactory {
         let handle = CompletionModelHandle {
             inner: Arc::from(completion),
         };
-        Ok(AgentBuilderSimple::new(handle)
-            .preamble(&preamble)
-            .temperature(temperature))
+        Ok(AgentBuilderSimple::new(handle).temperature(temperature))
     }
 
     pub fn spec_to_agent(&self, spec: &AgentSpec) -> anyhow::Result<AgentT> {
@@ -171,26 +174,6 @@ impl AgentFactory {
         Ok((provider, model))
     }
 
-    pub fn agent(&self, step: &Workstep) -> AgentT {
-        let mut builder = self.agent_builder("").unwrap();
-
-        if let Some(temperature) = step.temperature {
-            builder = builder.temperature(temperature);
-        }
-        if let Some(preamble) = &step.preamble {
-            builder = builder.preamble(preamble);
-        }
-
-        if let Some(tools) = &step.tools {
-            let toolset = self.settings.view(|s| s.tools.toolset.get(tools).cloned());
-            if let Some(toolset) = &toolset {
-                builder = self.toolbox.apply(builder, toolset);
-            }
-        }
-
-        builder.build()
-    }
-
     pub fn stop_provider(&mut self, name: &str) {
         self.toolbox.clone().without_provider(name);
     }
@@ -200,7 +183,7 @@ impl AgentFactory {
         let name = name.to_owned();
         let rt = self.rt.clone();
         let toolbox = self.toolbox.clone();
-        let settings = self.settings.clone();
+        let tool_store = self.tools.clone();
         let errors = self.errors.clone();
 
         rt.spawn(async move {
@@ -210,38 +193,23 @@ impl AgentFactory {
                 task_count.fetch_sub(1, Ordering::Relaxed);
             };
 
-            let Some(spec) = settings.view(|settings| {
-                settings
-                    .tools
-                    .provider
-                    .iter()
-                    .filter(|(provider, spec)| provider.as_str() == name && spec.enabled())
-                    .map(|(_, spec)| spec.clone())
-                    .next()
-            }) else {
-                settings.update(|conf| {
-                    conf.tools
-                        .provider
-                        .get_mut(&name)
-                        .expect("provider should exist")
-                        .set_enabled(false);
-                });
+            let Some(spec) = tool_store.as_ref().and_then(|store| store.load(&name).ok()) else {
+                errors.push(anyhow::anyhow!("Could not load tool spec for {name}"));
                 return;
             };
+
+            if !spec.enabled() {
+                return;
+            }
 
             match ToolProvider::from_spec(&spec).await {
                 Ok(toolkit) => {
                     toolbox.with_provider(&name, toolkit);
                 }
                 err => {
-                    errors.distil(err.context(format!("Could not load provider {name}")));
-                    settings.update(|conf| {
-                        conf.tools
-                            .provider
-                            .get_mut(&name)
-                            .expect("provider should exist")
-                            .set_enabled(false);
-                    });
+                    errors.distil(
+                        err.context(format!("Could not load provider {name} with spec {spec:?}")),
+                    );
                 }
             }
         });
@@ -262,15 +230,11 @@ impl AgentFactory {
             );
         }
 
-        let providers = self.settings.view(|settings| {
-            settings
-                .tools
-                .provider
-                .iter()
-                .filter(|(_, spec)| spec.enabled())
-                .map(|(name, _)| name.clone())
-                .collect_vec()
-        });
+        let providers = self
+            .tools
+            .iter()
+            .flat_map(|store| store.cached_names())
+            .collect_vec();
 
         for provider in providers {
             self.reload_provider(&provider);

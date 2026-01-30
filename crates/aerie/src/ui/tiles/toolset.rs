@@ -12,6 +12,7 @@ use serde_yaml_ng as serde_yml;
 use crate::{
     ToolProvider, ToolSpec,
     config::ConfigExt as _,
+    storage::CachedDirStore as _,
     ui::{state::ToolEditorState, toggled_field},
     utils::ErrorDistiller as _,
 };
@@ -119,32 +120,29 @@ impl super::AppState {
         let settings = self.settings.clone();
         let errors = self.errors.clone();
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            let names_with_status = self.settings.view(|settings|
-                settings.tools.provider.iter()
-                    .map(|(a,b)| (a.clone(), b.enabled()))
-                    .collect_vec());
 
-            for (name, enabled) in &names_with_status {
+            for name in self.tools.cached_names() {
+                let Ok(spec) = self.tools.load(&name) else { continue };
+                let enabled = spec.enabled();
+
                 egui::collapsing_header::CollapsingState::load_with_default_open(
                     ui.ctx(),
-                    ui.id().with(name),
+                    ui.id().with(&name),
                     true,
                 )
                 .show_header(ui, |ui| {
                         let selected = matches!(
                             &self.tool_editor,
-                            Some(ToolEditorState::EditProvider { original: Some(original), .. }) if &original.0 == name
+                            Some(ToolEditorState::EditProvider { original: Some(original), .. }) if original.0 == name
                         );
 
-                        let name_text = egui::RichText::new(name);
-                        let name_text = if *enabled {name_text} else {name_text.weak()};
+                        let name_text = egui::RichText::new(&name);
+                        let name_text = if enabled {name_text} else {name_text.weak()};
                         let resp = ui.selectable_label(selected, name_text);
                         resp.context_menu(|ui| {
                             ui.menu_button("Delete", |ui| {
                                 if ui.button("OK").clicked() {
-                                    self
-                                        .settings
-                                        .update(|settings_rw| settings_rw.tools.provider.remove(name));
+                                    self.errors.distil(self.tools.remove(&name));
                                 }
                             });
 
@@ -175,10 +173,7 @@ impl super::AppState {
                                         .open(&path) {
 
 
-                                        let mut tool_spec = self
-                                            .settings
-                                            .view(|settings_rw| settings_rw.tools.provider.get(name).cloned()).unwrap();
-
+                                        let mut tool_spec = self.tools.load(&name).unwrap();
                                         tool_spec.set_enabled(false);
                                         errors.distil(serde_yml::to_writer(writer, &tool_spec).context(format!("While writing {path:?}")));
                                     }
@@ -186,16 +181,14 @@ impl super::AppState {
                                 }
                         });
                         if resp.clicked() {
-                            let tool_spec = self
-                                .settings
-                                .view(|settings_rw| settings_rw.tools.provider.get(name).cloned()).unwrap();
+                            let tool_spec = self.tools.load(&name).unwrap();
 
                             self.tool_editor = Some(ToolEditorState::EditProvider { original: Some((name.to_string(), tool_spec.clone())), modified: (name.to_string(), tool_spec.clone()) })
                         }
                     })
                 .body(|ui| {
                         // TODO: Show any errors connecting to provider
-                        if let Some(provider) = self.agent_factory.toolbox.providers.load().get(name) {
+                        if let Some(provider) = self.agent_factory.toolbox.providers.load().get(&name) {
 
                             let ToolProvider::MCP { tools, .. } = provider else { unreachable!() };
                             for item in tools {
@@ -367,13 +360,11 @@ impl super::AppState {
                     None
                 };
 
-                self.settings.update(|settings| {
-                    if let Some(old_name) = old_name {
-                        settings.tools.provider.remove(&old_name);
-                    }
+                if let Some(old_name) = old_name {
+                    self.errors.distil(self.tools.remove(&old_name));
+                }
 
-                    settings.tools.provider.insert(name.clone(), value);
-                });
+                self.errors.distil(self.tools.save(&name, value));
 
                 self.agent_factory.reload_provider(&name);
             }
@@ -394,9 +385,7 @@ impl super::AppState {
             .and_then(|s| s.to_os_string().into_string().ok())
             .unwrap_or_default();
 
-        let exists = self
-            .settings
-            .view(|settings| settings.tools.provider.contains_key(&name));
+        let exists = self.tools.exists(&name);
         let name = if name.is_empty() || exists {
             let datetime = chrono::offset::Local::now();
             let timestamp = datetime.format("%Y-%m-%dT%H:%M:%S").to_string();
@@ -409,8 +398,7 @@ impl super::AppState {
         let mut data: ToolSpec = serde_yml::from_reader(reader)?;
         data.set_enabled(false);
 
-        self.settings
-            .update(|settings_rw| settings_rw.tools.provider.insert(name, data));
+        self.errors.distil(self.tools.save(&name, data));
 
         Ok(())
     }

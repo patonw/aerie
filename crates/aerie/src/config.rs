@@ -32,6 +32,9 @@ pub struct Args {
     pub workflow_dir: Option<PathBuf>,
 
     #[arg(long)]
+    pub tool_dir: Option<PathBuf>,
+
+    #[arg(long)]
     pub backup_dir: Option<PathBuf>,
 
     #[command(subcommand)]
@@ -84,9 +87,6 @@ pub struct Settings {
     pub prev_models: im::Vector<String>,
 
     #[serde(default)]
-    pub preamble: String,
-
-    #[serde(default)]
     pub temperature: f64,
 
     pub seed: Option<SeedConfig>,
@@ -111,9 +111,6 @@ pub struct Settings {
     pub session: Option<String>,
 
     #[serde(default)]
-    pub tools: ToolSettings,
-
-    #[serde(default)]
     pub last_export_dir: PathBuf,
 
     #[serde(default)]
@@ -126,6 +123,10 @@ pub struct Settings {
 
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub autosave: bool,
+
+    // Don't clobber unknown settings
+    #[serde(flatten)]
+    pub _extra: im::OrdMap<String, serde_json::Value>,
 }
 
 pub trait ConfigExt {
