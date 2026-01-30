@@ -1,0 +1,140 @@
+uuid: dc9ace4e-4297-44f9-84f2-7bcf3aafa297
+nodes:
+  0:
+    value:
+      Start: {}
+    pos:
+      x: -12.5390625
+      'y': -279.58984
+    open: true
+  1:
+    value:
+      Finish: {}
+    pos:
+      x: -14.489147
+      'y': 85.221985
+    open: true
+  2:
+    value:
+      RhaiNode:
+        script: "let x = [];\nfor i in 0..64 {\n\tx.push(i);\n}\nx"
+        outputs:
+        - - '[intlist]'
+          - IntList
+        size:
+          x: 300.0
+          'y': 150.0
+    pos:
+      x: 348.3992
+      'y': -211.45956
+    open: true
+  3:
+    value:
+      Subgraph:
+        title: Sleeper
+        flavor: Iterative
+        parallel: true
+        graph:
+          uuid: '5bbdfbdf-ef99-49d8-b458-f81d2c43f810'
+          nodes:
+            0:
+              value:
+                Start:
+                  fields:
+                  - - integer
+                    - Integer
+              pos:
+                x: -237.69395
+                'y': -51.473614
+              open: true
+            1:
+              value:
+                Finish:
+                  fields:
+                  - - output
+                    - Text
+              pos:
+                x: 691.7089
+                'y': 65.47542
+              open: true
+            7:
+              value:
+                RhaiNode:
+                  script: |-
+                    sleep(1);
+                    `hello #${i}`
+                  inputs:
+                  - - i
+                    - Integer
+                  outputs:
+                  - - output
+                    - Text
+                  size:
+                    x: 300.0
+                    'y': 150.0
+              pos:
+                x: 223.7069
+                'y': -94.26682
+              open: true
+          wires:
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 7
+              input: 0
+          - out_pin:
+              node: 7
+              output: 0
+            in_pin:
+              node: 1
+              input: 0
+          start: 0
+          finish: 1
+    pos:
+      x: 762.96783
+      'y': -123.93638
+    open: true
+  4:
+    value:
+      Preview:
+        size:
+          x: 326.9375
+          'y': 340.625
+        uuid: '3ab1d888-a662-42e3-9816-766dcec8a4f0'
+    pos:
+      x: 1177.4716
+      'y': -122.35755
+    open: true
+  5:
+    value:
+      CommentNode:
+        comment: Try using the Stop button, mid-run to see subgraph interruption in action.
+        size:
+          x: 300.0
+          'y': 150.0
+    pos:
+      x: 759.43243
+      'y': -472.3979
+    open: true
+wires:
+- out_pin:
+    node: 2
+    output: 0
+  in_pin:
+    node: 3
+    input: 0
+- out_pin:
+    node: 3
+    output: 0
+  in_pin:
+    node: 4
+    input: 0
+description: |-
+  Demonstrates data parallelism.
+
+  The subgraph sleeps for one second. Without parallism, this would take  one second for every item or 64 seconds total.
+
+  With parallelism, it will take a fraction of that. The actual number will depend on your processor.
+start: 0
+finish: 1

@@ -41,6 +41,9 @@ pub struct Subgraph {
     #[serde(default, skip_serializing_if = "Flavor::is_simple")]
     pub flavor: Flavor,
 
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub parallel: bool,
+
     pub graph: ShadowGraph<WorkNode>,
 }
 
@@ -54,8 +57,9 @@ impl Default for Subgraph {
 
         Self {
             title: "Subgraph".to_string(),
-            graph,
             flavor: Flavor::Simple,
+            parallel: false,
+            graph,
         }
     }
 }
@@ -113,31 +117,16 @@ impl Subgraph {
         Ok(results)
     }
 
-    fn exec_foreach(
+    fn ser_foreach(
         &mut self,
         ctx: &super::RunContext,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        use Value::*;
-        use rayon::prelude::*;
-
         if inputs.iter().flatten().all(|it| !it.kind().is_list()) {
             return self.exec_simple(ctx, inputs);
         }
 
-        let lengths = inputs
-            .iter()
-            .filter_map(|x| x.clone())
-            .filter(|v| v.kind().is_list())
-            .map(|v| match v {
-                TextList(items) => items.len(),
-                IntList(items) => items.len(),
-                FloatList(items) => items.len(),
-                MsgList(items) => items.len(),
-                Json(inner) if inner.is_array() => inner.as_array().unwrap().len(),
-                _ => unreachable!(),
-            })
-            .collect_vec();
+        let lengths = input_lengths(&inputs);
 
         if !lengths.iter().all(|s| *s == lengths[0]) {
             Err(WorkflowError::Conversion(format!(
@@ -145,16 +134,68 @@ impl Subgraph {
             )))?;
         }
 
-        let results = (0..self.outputs() - 1)
-            .map(|i| match self.out_kind(i) {
-                ValueKind::TextList => TextList(vector![]),
-                ValueKind::IntList => IntList(vector![]),
-                ValueKind::FloatList => FloatList(vector![]),
-                ValueKind::MsgList => MsgList(vector![]),
-                ValueKind::Json => Json(Arc::new(serde_json::Value::Array(vec![]))),
-                _ => todo!(),
-            })
-            .collect_vec();
+        let mut results = self.init_outputs();
+
+        for i in 0..lengths[0] {
+            let sliced = par_slice(&inputs, i);
+            let mut exec = WorkflowRunner::builder()
+                .inputs(sliced)
+                .run_ctx(ctx.clone())
+                .state_view(ctx.node_state.view(&self.graph.uuid))
+                .build();
+
+            exec.init(&self.graph);
+            let interrupt = ctx.interrupt.clone();
+
+            let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
+            tracing::info!("About to execute subgraph");
+
+            loop {
+                if interrupt.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                match exec.step(&mut target) {
+                    Ok(false) => {
+                        break;
+                    }
+                    Ok(true) => {
+                        tracing::trace!("Stepped subgraph");
+                    }
+                    Err(err) => Err(WorkflowError::Subgraph(err))?,
+                }
+            }
+
+            for (res, val) in results.iter_mut().zip(exec.outputs.into_iter()) {
+                push_values(res, val);
+            }
+        }
+
+        results.push(Value::Placeholder(ValueKind::Failure));
+
+        Ok(results)
+    }
+
+    fn par_foreach(
+        &mut self,
+        ctx: &super::RunContext,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        use rayon::prelude::*;
+
+        if inputs.iter().flatten().all(|it| !it.kind().is_list()) {
+            return self.exec_simple(ctx, inputs);
+        }
+
+        let lengths = input_lengths(&inputs);
+
+        if !lengths.iter().all(|s| *s == lengths[0]) {
+            Err(WorkflowError::Conversion(format!(
+                "List inputs are not the same length: {lengths:?}"
+            )))?;
+        }
+
+        let results = self.init_outputs();
 
         let num_iters = lengths[0];
 
@@ -218,7 +259,39 @@ impl Subgraph {
 
         Ok(results)
     }
+
+    fn init_outputs(&mut self) -> Vec<Value> {
+        use Value::*;
+        (0..self.outputs() - 1)
+            .map(|i| match self.out_kind(i) {
+                ValueKind::TextList => TextList(vector![]),
+                ValueKind::IntList => IntList(vector![]),
+                ValueKind::FloatList => FloatList(vector![]),
+                ValueKind::MsgList => MsgList(vector![]),
+                ValueKind::Json => Json(Arc::new(serde_json::Value::Array(vec![]))),
+                _ => Default::default(),
+            })
+            .collect_vec()
+    }
 }
+
+fn input_lengths(inputs: &[Option<Value>]) -> Vec<usize> {
+    use Value::*;
+    inputs
+        .iter()
+        .filter_map(|x| x.clone())
+        .filter(|v| v.kind().is_list())
+        .map(|v| match v {
+            TextList(items) => items.len(),
+            IntList(items) => items.len(),
+            FloatList(items) => items.len(),
+            MsgList(items) => items.len(),
+            Json(inner) if inner.is_array() => inner.as_array().unwrap().len(),
+            _ => unreachable!(),
+        })
+        .collect_vec()
+}
+
 impl DynNode for Subgraph {
     fn inputs(&self) -> usize {
         self.graph
@@ -286,7 +359,8 @@ impl DynNode for Subgraph {
 
         match &self.flavor {
             Flavor::Simple => self.exec_simple(ctx, inputs),
-            Flavor::Iterative => self.exec_foreach(ctx, inputs),
+            Flavor::Iterative if self.parallel => self.par_foreach(ctx, inputs),
+            Flavor::Iterative => self.ser_foreach(ctx, inputs),
         }
     }
 }
@@ -378,35 +452,41 @@ impl UiNode for Subgraph {
     }
 
     fn show_body(&mut self, ui: &mut egui::Ui, ctx: &super::EditContext) {
-        let resp = ui.scope_builder(
-            UiBuilder::new()
-                .id_salt(ctx.current_node)
-                .sense(Sense::click()),
-            |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.set_min_width(250.0);
+        ui.vertical_centered(|ui| {
+            let resp = ui.scope_builder(
+                UiBuilder::new()
+                    .id_salt(ctx.current_node)
+                    .sense(Sense::click()),
+                |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.set_min_width(250.0);
 
-                    ui.style_mut().interaction.selectable_labels = false;
+                        ui.style_mut().interaction.selectable_labels = false;
 
-                    match &self.flavor {
-                        Flavor::Simple => ui
-                            .label(egui::RichText::new(GRAPH).size(128.0))
-                            .interact(egui::Sense::click())
-                            .double_clicked(),
-                        Flavor::Iterative => ui
-                            .label(egui::RichText::new(LINE_SEGMENTS).size(128.0))
-                            .interact(egui::Sense::click())
-                            .double_clicked(),
-                    }
-                })
-                .inner
-            },
-        );
+                        match &self.flavor {
+                            Flavor::Simple => ui
+                                .label(egui::RichText::new(GRAPH).size(128.0))
+                                .interact(egui::Sense::click())
+                                .double_clicked(),
+                            Flavor::Iterative => ui
+                                .label(egui::RichText::new(LINE_SEGMENTS).size(128.0))
+                                .interact(egui::Sense::click())
+                                .double_clicked(),
+                        }
+                    })
+                    .inner
+                },
+            );
 
-        if resp.response.double_clicked() || resp.inner {
-            ctx.events
-                .insert(crate::ui::AppEvent::EnterSubgraph(ctx.current_node));
-        }
+            if resp.response.double_clicked() || resp.inner {
+                ctx.events
+                    .insert(crate::ui::AppEvent::EnterSubgraph(ctx.current_node));
+            }
+
+            if self.flavor == Flavor::Iterative {
+                ui.checkbox(&mut self.parallel, "parallel");
+            }
+        });
     }
 }
 
