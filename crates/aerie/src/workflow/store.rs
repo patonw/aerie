@@ -11,7 +11,7 @@ use arc_swap::ArcSwap;
 use itertools::Itertools;
 use serde_yaml_ng as serde_yml;
 
-use crate::workflow::Workflow;
+use crate::{storage::CachedDirStore, workflow::Workflow};
 
 pub trait WorkflowStore {
     fn load(&mut self, name: &str) -> anyhow::Result<Workflow>;
@@ -188,58 +188,27 @@ pub struct WorkflowStoreDir {
 
 impl WorkflowStoreDir {
     pub fn load_all(dir: impl AsRef<Path>, tutorial: bool) -> anyhow::Result<Self> {
-        let mut workflows = im::OrdMap::default();
         let path = dir.as_ref().to_path_buf();
 
-        let paths = std::fs::read_dir(&path)?
-            .filter_map(|f| f.ok())
-            .map(|f| f.path())
-            .filter(|p| p.is_file())
-            .filter(|p| matches!(p.extension(), Some(x) if x == "yml"));
-
-        for path in paths {
-            let Some(name) = path
-                .file_stem()
-                .and_then(|s| s.to_os_string().into_string().ok())
-            else {
-                continue;
-            };
-
-            let reader = match OpenOptions::new().read(true).open(&path) {
-                Ok(reader) => reader,
-                Err(err) => {
-                    tracing::error!("Could not open workflow at {path:?}:\n{err:?}");
-                    continue;
-                }
-            };
-
-            let value = match serde_yml::from_reader(reader) {
-                Ok(it) => it,
-                Err(err) => {
-                    tracing::error!("Could not parse workflow at {path:?}:\n{err:?}");
-                    continue;
-                }
-            };
-
-            workflows.insert(name, value);
-        }
-
-        let mut this = Self {
+        let this = Self {
             path,
-            cache: Arc::new(ArcSwap::from_pointee(workflows)),
+            cache: Default::default(),
         };
 
-        tracing::info!("Loaded all workflows: {:?}", this.names().collect_vec());
+        this.preload_all();
 
-        if tutorial && this.names().all(|n| n == "__default__") {
+        let names = CachedDirStore::names(&this).collect_vec();
+        tracing::info!("Loaded all workflows: {names:?}");
+
+        if tutorial && names.iter().all(|n| n == "__default__") {
             let bytes = include_bytes!("../../tutorial/workflows/basic.yml");
             if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
-                let _ = this.save("basic", graph);
+                let _ = CachedDirStore::save(&this, "basic", graph);
             }
 
             let bytes = include_bytes!("../../tutorial/workflows/chatty.yml");
             if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
-                let _ = this.save("chatty", graph);
+                let _ = CachedDirStore::save(&this, "chatty", graph);
             }
         }
 
@@ -248,18 +217,24 @@ impl WorkflowStoreDir {
 
         Ok(this)
     }
+}
 
-    #[deprecated]
-    pub fn save_all(&self) -> anyhow::Result<()> {
-        let writer = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&self.path)?;
+impl CachedDirStore<Workflow> for WorkflowStoreDir {
+    const EXT: &'static str = "yml";
 
-        serde_yml::to_writer(writer, &self.cache)?;
+    fn base_path(&self) -> &Path {
+        &self.path
+    }
 
-        Ok(())
+    fn view_cache<R>(&self, cb: impl FnOnce(&im::OrdMap<String, Workflow>) -> R) -> R {
+        cb(&self.cache.load())
+    }
+
+    fn update_cache(
+        &self,
+        cb: impl Fn(&im::OrdMap<String, Workflow>) -> im::OrdMap<String, Workflow>,
+    ) {
+        self.cache.rcu(|cache| cb(cache));
     }
 }
 
@@ -267,50 +242,19 @@ impl WorkflowStore for WorkflowStoreDir {
     // type Graph = WorkGraph;
 
     fn load(&mut self, name: &str) -> anyhow::Result<Workflow> {
-        if let Some(graph) = self.cache.load().get(name) {
-            return Ok(graph.clone());
-        }
-
-        let path = self.path.join(name).with_extension("yml");
-        let file = OpenOptions::new().read(true).open(path)?;
-
-        let shadow_graph: Workflow = serde_yml::from_reader(file)?;
-        self.cache
-            .rcu(|cache| cache.update(name.to_string(), shadow_graph.clone()));
-
-        Ok(shadow_graph)
+        CachedDirStore::load(self, name)
     }
 
     fn save(&mut self, name: &str, value: Workflow) -> anyhow::Result<()> {
-        let value = value.repair();
-        if !name.is_empty() {
-            self.cache
-                .rcu(|cache| cache.update(name.to_string(), value.clone()));
-
-            let path = self.path.join(name).with_extension("yml");
-            tracing::debug!("Saving {name} to {path:?}: {value:?}");
-            let writer = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(path)?;
-
-            serde_yml::to_writer(writer, &value)?;
-        }
-
-        Ok(())
+        CachedDirStore::save(self, name, value)
     }
 
     fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
-        glob::glob(&self.path.join("*.yml").display().to_string())
-            .unwrap()
-            .filter_map(|p| p.ok())
-            .filter_map(|p| p.file_stem().map(|stem| stem.display().to_string()))
-            .map(Cow::Owned)
+        CachedDirStore::names(self)
     }
 
     fn exists(&self, key: &str) -> bool {
-        self.cache.load().contains_key(key) || self.path.join(key).with_extension("yml").exists()
+        CachedDirStore::exists(self, key)
     }
 
     fn description(&self, key: &str) -> Cow<'_, str> {
@@ -327,40 +271,19 @@ impl WorkflowStore for WorkflowStoreDir {
 
     // TODO: deprecate
     fn get(&self, key: &str) -> Option<Workflow> {
-        self.cache.load().get(key).cloned()
+        CachedDirStore::get_transient(self, key)
     }
 
     fn put(&mut self, key: &str, value: Workflow) {
-        self.cache
-            .rcu(|cache| cache.update(key.into(), value.clone()));
+        CachedDirStore::put_cache(self, key, value)
     }
 
     fn remove(&mut self, key: &str) -> anyhow::Result<()> {
-        self.cache.rcu(|cache| cache.without(key));
-        let path = self.path.join(key).with_extension("yml");
-        std::fs::remove_file(path)?;
-
-        Ok(())
+        CachedDirStore::remove(self, key)
     }
 
     fn rename(&mut self, old_name: &str, new_name: &str) -> anyhow::Result<()> {
-        self.cache.rcu(|cache| {
-            if let Some(value) = cache.get(old_name) {
-                cache
-                    .without(old_name)
-                    .update(new_name.to_string(), value.clone())
-            } else {
-                cache.as_ref().clone()
-            }
-        });
-
-        let old_path = self.path.join(old_name).with_extension("yml");
-        let new_path = self.path.join(new_name).with_extension("yml");
-        if old_path.exists() {
-            std::fs::rename(old_path, new_path)?;
-        }
-
-        Ok(())
+        CachedDirStore::rename(self, old_name, new_name)
     }
 
     fn backup(&self, name: &str) -> anyhow::Result<()> {

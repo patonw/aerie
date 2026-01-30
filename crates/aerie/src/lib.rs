@@ -4,6 +4,7 @@ pub mod chat;
 pub mod config;
 pub mod logging;
 pub mod pipeline;
+pub mod storage;
 pub mod toolbox;
 pub mod transmute;
 pub mod ui;

@@ -2,6 +2,8 @@ use std::{fs::OpenOptions, path::PathBuf, sync::Arc};
 
 use aerie::{
     AgentFactory, ChatSession, Settings,
+    storage::CachedDirStore as _,
+    toolbox::ToolStore,
     utils::message_text,
     workflow::{
         RootContext, RunContext, Workflow,
@@ -30,7 +32,10 @@ struct Args {
 
     /// Path to a workflow directory for chain execution
     #[arg(short, long)]
-    workstore: Option<PathBuf>,
+    workflows: Option<PathBuf>,
+
+    #[arg(short, long)]
+    tools: Option<PathBuf>,
 
     /// A session to use in the workflow.
     /// Updates are discarded unless `--update` is also used.
@@ -84,7 +89,7 @@ fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    if args.autoruns > 0 && args.workstore.is_none() {
+    if args.autoruns > 0 && args.workflows.is_none() {
         anyhow::bail!("Cannot use autorun without a workflow store");
     }
 
@@ -93,9 +98,15 @@ fn main() -> anyhow::Result<()> {
     }
 
     let mut workflow_store = args
-        .workstore
+        .workflows
         .map(|p| WorkflowStoreDir::load_all(p, false))
         .transpose()?;
+
+    let tool_store = args.tools.map(|p| {
+        let store = ToolStore::new(p);
+        store.preload_all();
+        store
+    });
 
     let session_dir = args
         .session
@@ -155,6 +166,7 @@ fn main() -> anyhow::Result<()> {
     let mut agent_factory = AgentFactory::builder()
         .rt(rt.handle().clone())
         .settings(Arc::new(ArcSwap::from_pointee(settings.clone())))
+        .tools(tool_store)
         .store(workflow_store.clone())
         .next_workflow(next_workflow.clone())
         .next_prompt(next_prompt.clone())
