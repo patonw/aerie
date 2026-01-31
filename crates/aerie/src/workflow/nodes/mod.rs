@@ -99,10 +99,22 @@ impl WorkNode {
     pub fn is_start(&self) -> bool {
         self.0.as_ref().downcast_ref::<Start>().is_some()
     }
+
     #[inline]
     pub fn is_finish(&self) -> bool {
         self.0.as_ref().downcast_ref::<Finish>().is_some()
     }
+
+    #[inline]
+    pub fn is_output(&self) -> bool {
+        self.0.as_ref().downcast_ref::<OutputNode>().is_some()
+    }
+
+    #[inline]
+    pub fn is_preview(&self) -> bool {
+        self.0.as_ref().downcast_ref::<Preview>().is_some()
+    }
+
     #[inline]
     pub fn is_comment(&self) -> bool {
         self.0.as_ref().downcast_ref::<CommentNode>().is_some()

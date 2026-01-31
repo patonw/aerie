@@ -94,6 +94,7 @@ impl super::AppState {
                                 ui.toggle_value(&mut settings_rw.autosave, "autosave");
                                 ui.toggle_value(&mut settings_rw.autoscroll, "autoscroll");
                                 ui.toggle_value(&mut settings_rw.streaming, "streaming");
+                                ui.toggle_value(&mut settings_rw.cascade, "cascade");
                             });
                         });
                 });

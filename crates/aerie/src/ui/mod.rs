@@ -27,10 +27,11 @@ pub enum Pane {
     Outputs,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ShowHelp {
     All,
     Workflow,
+    Subgraph,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -50,6 +51,9 @@ pub enum AppEvent {
 
     // User requested to run the current workflow
     UserRunWorkflow,
+
+    NodesChanged(GraphId, im::OrdSet<NodeId>),
+    RerunNodes(GraphId, Vec<NodeId>),
 
     SetPrompt(String),
 

@@ -154,7 +154,7 @@ impl super::AppState {
 
         if let Some(ShowHelp::Workflow) = self.show_help {
             let modal = egui::Modal::new(egui::Id::new("Shortcuts")).show(ui.ctx(), |ui| {
-                show_shortcuts(ui);
+                show_shortcuts(ui, ShowHelp::Workflow);
             });
             if modal.should_close() {
                 self.show_help = None;
