@@ -6,7 +6,7 @@ use itertools::Itertools as _;
 use typed_builder::TypedBuilder;
 
 use crate::{
-    ui::{AppEvent, workflow::WorkflowViewer},
+    ui::{AppEvent, ShowHelp, workflow::WorkflowViewer},
     workflow::WorkNode,
 };
 
@@ -39,13 +39,16 @@ pub enum Shortcut {
     #[assoc(key=shortcut(NONE, Key::Backspace))]
     LeaveSubgraph,
 
-    #[assoc(key=shortcut(CTRL, Key::R))]
+    #[assoc(key=shortcut(CTRL_SHIFT, Key::R))]
     RunWorkflow,
+
+    #[assoc(key=shortcut(CTRL, Key::R))]
+    ResetNodes,
 
     #[assoc(key=shortcut(SHIFT, Key::Questionmark))]
     Help,
 
-    #[assoc(key=shortcut(NONE, Key::Space))]
+    #[assoc(key=shortcut(SHIFT, Key::F))]
     FreezeWorkflow,
 
     #[assoc(key=shortcut(CTRL, Key::Z))]
@@ -130,6 +133,17 @@ impl<'a> ShortcutHandler<'a> {
         if !viewer.running {
             if ui.ctx().input_mut(|i| i.consume_shortcut(&SHORTCUT_RUN)) {
                 viewer.events.insert(AppEvent::UserRunWorkflow);
+            }
+
+            if ui
+                .ctx()
+                .input_mut(|i| i.consume_shortcut(&Shortcut::ResetNodes.key()))
+                && viewer.edit_ctx.parent_id.is_none()
+            {
+                let targets = viewer.target_nodes(ui, None);
+                viewer
+                    .events
+                    .insert(AppEvent::RerunNodes(viewer.edit_ctx.current_graph, targets));
             }
 
             if ui.ctx().input_mut(|i| i.consume_shortcut(&SHORTCUT_FREEZE)) {
@@ -224,6 +238,17 @@ impl<'a> ShortcutHandler<'a> {
         {
             viewer.remove_nodes(ui, snarl, Some(node));
         }
+
+        if ui
+            .ctx()
+            .input_mut(|i| i.consume_shortcut(&Shortcut::ResetNodes.key()))
+            && viewer.edit_ctx.parent_id.is_none()
+        {
+            let targets = viewer.target_nodes(ui, Some(node));
+            viewer
+                .events
+                .insert(AppEvent::RerunNodes(viewer.edit_ctx.current_graph, targets));
+        }
     }
 }
 
@@ -241,7 +266,7 @@ fn dumpling(ui: &mut egui::Ui, text: &str) {
     ui.add(egui::Button::new(egui::RichText::new(text).monospace()).sense(Sense::empty()));
 }
 
-pub fn show_shortcuts(ui: &mut egui::Ui) {
+pub fn show_shortcuts(ui: &mut egui::Ui, scope: ShowHelp) {
     ui.set_min_size(egui::vec2(300.0, 400.0));
     ui.vertical_centered(|ui| ui.heading("Help"));
     ui.columns_const(|[col0, col1]| {
@@ -282,8 +307,14 @@ pub fn show_shortcuts(ui: &mut egui::Ui) {
                     ui.end_row();
 
                     render_shortcut(ui, SHORTCUT_RUN);
-                    ui.label("Run the current workflow");
+                    ui.label("(Re)start the workflow");
                     ui.end_row();
+
+                    if scope == ShowHelp::Workflow {
+                        render_shortcut(ui, Shortcut::ResetNodes.key());
+                        ui.label("Reset node(s) & resume");
+                        ui.end_row();
+                    }
 
                     render_shortcut(ui, SHORTCUT_FREEZE);
                     ui.label("Freeze/thaw the workflow editor");
@@ -297,9 +328,11 @@ pub fn show_shortcuts(ui: &mut egui::Ui) {
                     ui.label("Redo undone edits");
                     ui.end_row();
 
-                    render_shortcut(ui, SHORTCUT_EXIT_SUBGRAPH);
-                    ui.label("Leave the subgraph");
-                    ui.end_row();
+                    if scope == ShowHelp::Subgraph {
+                        render_shortcut(ui, SHORTCUT_EXIT_SUBGRAPH);
+                        ui.label("Leave the subgraph");
+                        ui.end_row();
+                    }
 
                     ui.end_row();
 
@@ -361,8 +394,10 @@ pub fn show_shortcuts(ui: &mut egui::Ui) {
 
 pub fn squelch(resp: egui::Response) -> egui::Response {
     if resp.has_focus() {
-        resp.ctx
-            .input_mut(|i| i.events.retain(|ev| !is_shortcut_event(ev)));
+        resp.ctx.input_mut(|i| {
+            i.events
+                .retain(|ev| is_run_event(ev) || !is_shortcut_event(ev))
+        });
     }
     resp
 }
@@ -377,6 +412,20 @@ fn is_shortcut_event(ev: &Event) -> bool {
     }
 
     enum_iterator::all::<Shortcut>().any(|shortcut| {
+        matches!(
+            ev,
+            Event::Key {
+                key,
+                modifiers,
+                ..
+            } if *key == shortcut.key().logical_key && modifiers.matches_logically(shortcut.key().modifiers)
+        )
+    })
+}
+
+#[inline]
+fn is_run_event(ev: &Event) -> bool {
+    [Shortcut::ResetNodes, Shortcut::RunWorkflow].iter().any(|shortcut| {
         matches!(
             ev,
             Event::Key {

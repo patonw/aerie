@@ -10,10 +10,13 @@ use egui_extras::{Size, StripBuilder};
 
 use crate::config::ConfigExt;
 use crate::ui::AppEvent;
+use crate::ui::ShowHelp;
 use crate::ui::runner::play_button;
 use crate::ui::runner::stop_button;
+use crate::ui::shortcuts::SHORTCUT_HELP;
 use crate::ui::shortcuts::SHORTCUT_RUN;
 use crate::ui::shortcuts::ShortcutHandler;
+use crate::ui::shortcuts::show_shortcuts;
 use crate::ui::workflow::get_snarl_style;
 
 impl super::AppState {
@@ -79,6 +82,20 @@ impl super::AppState {
                         });
                 });
         });
+
+        if ui.ctx().input_mut(|i| i.consume_shortcut(&SHORTCUT_HELP)) {
+            tracing::info!("showing help");
+            self.show_help = Some(ShowHelp::Subgraph);
+        }
+
+        if let Some(ShowHelp::Subgraph) = self.show_help {
+            let modal = egui::Modal::new(egui::Id::new("Shortcuts")).show(ui.ctx(), |ui| {
+                show_shortcuts(ui, ShowHelp::Subgraph);
+            });
+            if modal.should_close() {
+                self.show_help = None;
+            }
+        }
     }
 
     pub fn subgraph_controls(&mut self, ui: &mut egui::Ui) {

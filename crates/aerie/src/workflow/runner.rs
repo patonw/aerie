@@ -28,7 +28,7 @@ pub struct WorkflowRun {
     pub outputs: RunOutput,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum ExecState {
     Waiting(im::OrdSet<NodeId>),
     Ready,
@@ -108,6 +108,15 @@ impl NodeStateView {
             pass,
             ..self.clone()
         }
+    }
+
+    pub fn remove(&self, node: NodeId) {
+        self.data.0.rcu(|states| {
+            // nodes.iter().fold(states.as_ref().clone(), |s, n| {
+            //     s.without(&(self.graph_id, *n, self.pass))
+            // })
+            states.without(&(self.graph_id, node, self.pass))
+        });
     }
 
     pub fn insert(&self, node: NodeId, value: ExecState) {
@@ -198,8 +207,15 @@ pub struct WorkflowRunner {
 impl WorkflowRunner {
     pub fn init(&mut self, graph: &ShadowGraph<WorkNode>) {
         self.graph = graph.repair();
-        self.state_view.clear();
 
+        self.calculate_deps();
+        self.reset_emitters();
+        self.init_waiting();
+        self.init_ready();
+    }
+
+    pub fn calculate_deps(&mut self) {
+        let graph = &self.graph;
         for Wire { out_pin, in_pin } in &graph.wires {
             // ignore orphaned inputs/outputs... ideally remove them before saving
             let Some(out_node) = graph.nodes.get(&out_pin.node) else {
@@ -228,27 +244,123 @@ impl WorkflowRunner {
                 .or_default()
                 .insert(in_pin.input, *out_pin);
         }
+    }
 
-        for (key, value) in &self.dependencies {
-            let deps = value.values().map(|it| it.node).collect::<im::OrdSet<_>>();
-            self.state_view.insert(*key, ExecState::Waiting(deps));
-        }
-
-        for ready_node in graph
+    #[inline]
+    pub fn enabled_nodes(&self) -> impl Iterator<Item = NodeId> {
+        self.graph
             .nodes
             .keys()
+            .filter(|id| !self.graph.is_disabled(**id))
             .cloned()
-            .filter(|id| !self.dependencies.contains_key(id))
-            .filter(|id| !graph.is_disabled(*id))
-        {
-            let priority = graph
-                .nodes
-                .get(&ready_node)
-                .map(|n| n.value.as_dyn().priority())
-                .unwrap_or_default();
-            self.state_view.insert(ready_node, ExecState::Ready);
-            self.ready_nodes
-                .push(Prioritized::new(ready_node).priority(priority));
+    }
+
+    #[inline]
+    pub fn live_nodes(&self) -> impl Iterator<Item = NodeId> {
+        self.enabled_nodes().filter(|id| {
+            !matches!(
+                self.state_view.get(id),
+                Some(ExecState::Failed(_)) | Some(ExecState::Done(_))
+            )
+        })
+    }
+
+    pub fn init_waiting(&mut self) {
+        let nodes = self.graph.nodes.keys().cloned().collect_vec();
+        for node in nodes {
+            if self.state_view.get(&node).is_some() {
+                continue;
+            }
+
+            if self.graph.is_disabled(node) {
+                self.state_view.insert(node, ExecState::Disabled);
+            } else if let Some(deps) = self.dependencies.get(&node) {
+                let node_deps = deps.values().map(|it| it.node).collect::<im::OrdSet<_>>();
+                self.state_view.insert(node, ExecState::Waiting(node_deps));
+            } else {
+                self.state_view.insert(node, ExecState::Ready);
+            }
+        }
+    }
+
+    pub fn reset_emitters(&mut self) {
+        let target_nodes = self.enabled_nodes().collect_vec();
+        for node_id in target_nodes {
+            if let Some(meta) = self.graph.nodes.get(&node_id) {
+                let node = &meta.value;
+                if node.is_finish() || node.is_output() || node.is_preview() {
+                    tracing::trace!("Resetting emitter node {node_id:?}: {}", node.kind());
+                    self.state_view.remove(node_id);
+                }
+            }
+        }
+    }
+
+    pub fn init_ready(&mut self) {
+        let live_nodes = self.live_nodes().collect_vec();
+        for node in live_nodes {
+            if self.should_ready(node) {
+                self.mark_ready(node);
+            }
+        }
+    }
+
+    fn should_ready(&self, node: NodeId) -> bool {
+        let Some(state) = self.state_view.get(&node) else {
+            return false;
+        };
+
+        if state == ExecState::Ready {
+            return true;
+        }
+
+        if let ExecState::Waiting(mut deps) = state {
+            for remote in self
+                .dependencies
+                .get(&node)
+                .unwrap_or(&Default::default())
+                .values()
+            {
+                if let Some(ExecState::Done(outputs)) = self.state_view.get(&remote.node)
+                    && remote.output < outputs.len()
+                {
+                    let value = &outputs[remote.output];
+                    if value.kind() != ValueKind::Placeholder {
+                        deps.remove(&remote.node);
+                    }
+                }
+            }
+
+            if deps.is_empty() {
+                self.state_view.insert(node, ExecState::Ready);
+                return true;
+            } else {
+                self.state_view.insert(node, ExecState::Waiting(deps));
+                return false;
+            }
+        }
+
+        false
+    }
+
+    #[inline]
+    fn mark_ready(&mut self, ready_node: NodeId) {
+        let priority = self
+            .graph
+            .nodes
+            .get(&ready_node)
+            .map(|n| n.value.as_dyn().priority())
+            .unwrap_or_default();
+        self.state_view.insert(ready_node, ExecState::Ready);
+        self.ready_nodes
+            .push(Prioritized::new(ready_node).priority(priority));
+    }
+
+    pub fn outputs(&self) -> Vec<Option<Value>> {
+        if let Some(node) = &self.graph.finish {
+            self.gather_inputs(*node)
+        } else {
+            vec![]
         }
     }
 
@@ -259,6 +371,7 @@ impl WorkflowRunner {
         let Some(ready_node) = self.ready_nodes.pop() else {
             // Nothing ready to run, halt
             tracing::info!("No more nodes ready.");
+            self.outputs = self.outputs();
 
             if self.outputs.is_empty() {
                 let finish_state = self
@@ -285,7 +398,7 @@ impl WorkflowRunner {
         let single_out = snarl[node_id].as_dyn().outputs() == 1;
         let num_outs = snarl[node_id].as_dyn().outputs();
 
-        let inputs = self.gather_inputs(snarl, node_id)?;
+        let inputs = self.gather_inputs(node_id);
         let inputs = self.inject_failure(snarl, node_id, inputs);
 
         // Find this node's connected failure output pin
@@ -418,65 +531,54 @@ impl WorkflowRunner {
         // Update state of successors
         for successor in successors {
             tracing::debug!("Updating successor {successor:?}");
-            if let Some(state) = self.state_view.get(successor) {
-                match state {
-                    ExecState::Waiting(deps) => {
-                        let deps = deps
-                            .into_iter()
-                            .filter(|v| *v != node_id)
-                            .collect::<OrdSet<NodeId>>();
+            if let Some(state) = self.state_view.get(successor)
+                && let ExecState::Waiting(deps) = state
+            {
+                let deps = deps
+                    .into_iter()
+                    .filter(|v| *v != node_id)
+                    .collect::<OrdSet<NodeId>>();
 
-                        let is_eager = snarl[*successor].is_eager();
-                        let next_state = if deps.is_empty() || is_eager {
-                            if self.graph.is_disabled(*successor) {
-                                tracing::info!("Node {successor:?} is disabled. Skipping.");
-                                ExecState::Disabled
-                            } else {
-                                let priority = self
-                                    .graph
-                                    .nodes
-                                    .get(successor)
-                                    .map(|n| n.value.as_dyn().priority())
-                                    .unwrap_or_default();
-                                self.ready_nodes
-                                    .push(Prioritized::new(*successor).priority(priority));
+                let is_eager = snarl[*successor].is_eager();
+                let next_state = if deps.is_empty() || is_eager {
+                    if self.graph.is_disabled(*successor) {
+                        tracing::info!("Node {successor:?} is disabled. Skipping.");
+                        ExecState::Disabled
+                    } else {
+                        let priority = self
+                            .graph
+                            .nodes
+                            .get(successor)
+                            .map(|n| n.value.as_dyn().priority())
+                            .unwrap_or_default();
+                        self.ready_nodes
+                            .push(Prioritized::new(*successor).priority(priority));
 
-                                tracing::info!(
-                                    "Node {successor:?} ({}) is now ready with priority {priority}",
-                                    snarl[*successor].kind()
-                                );
+                        tracing::info!(
+                            "Node {successor:?} ({}) is now ready with priority {priority}",
+                            snarl[*successor].kind()
+                        );
 
-                                ExecState::Ready
-                            }
-                        } else {
-                            ExecState::Waiting(deps)
-                        };
-
-                        self.state_view.insert(*successor, next_state);
+                        ExecState::Ready
                     }
-                    ExecState::Disabled => {}
-                    ExecState::Done(_) => {}
-                    _ => {
-                        tracing::warn!("Not implemented for {state:?}");
-                        todo!()
-                    }
-                }
+                } else {
+                    ExecState::Waiting(deps)
+                };
+
+                self.state_view.insert(*successor, next_state);
             }
         }
 
         Ok(true)
     }
 
-    fn gather_inputs(
-        &self,
-        snarl: &Snarl<WorkNode>,
-        node_id: NodeId,
-    ) -> Result<Vec<Option<Value>>, WorkflowError> {
+    fn gather_inputs(&self, node_id: NodeId) -> Vec<Option<Value>> {
         if Some(node_id) == self.graph.start {
-            return Ok(self.inputs.clone());
+            return self.inputs.clone();
         }
 
-        let dyn_node = (snarl[node_id]).as_dyn();
+        let work_node = &self.graph.nodes.get(&node_id).unwrap().value;
+        let dyn_node = (work_node).as_dyn();
         // Gather inputs
         let mut inputs = (0..dyn_node.inputs())
             .map(|_| None::<Value>)
@@ -498,26 +600,26 @@ impl WorkflowRunner {
                 };
             } else {
                 // Unnecessary sanity checking
-                let snode = &snarl[node_id];
-                if snode.as_node::<Fallback>().is_some() {
+                if work_node.as_node::<Fallback>().is_some() {
                     tracing::debug!("Fallback node fail pin {in_pin:?}");
-                } else if snode.as_node::<Select>().is_some() {
+                } else if work_node.as_node::<Select>().is_some() {
                     tracing::debug!("Select node empty pin {in_pin:?}");
                 } else {
                     tracing::warn!(
                         "Falling back on legacy input value for {:?} pin #{:?}",
-                        snarl[node_id].kind(),
+                        work_node.kind(),
                         in_pin
                     );
 
-                    let other = snarl[remote.node].as_dyn();
+                    let other = self.graph.nodes.get(&remote.node).unwrap().value.as_dyn();
                     let value = other.value(remote.output);
 
                     inputs[*in_pin] = Some(value);
                 }
             }
         }
-        Ok(inputs)
+
+        inputs
     }
 
     fn inject_failure(
@@ -580,7 +682,15 @@ impl WorkflowRunner {
                 }
             }
             None => {}
-            _ => unreachable!(),
+            _ => {
+                let finish_state = self
+                    .graph
+                    .finish
+                    .as_ref()
+                    .and_then(|f| self.state_view.get(f))
+                    .unwrap_or(ExecState::Waiting(Default::default()));
+                Err(WorkflowError::Unfinished(finish_state))?;
+            }
         }
 
         Ok(())

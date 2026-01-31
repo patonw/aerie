@@ -95,6 +95,23 @@
   - If the current node is not in the selection, only affects it
   - If current node is part of the selection, all selected nodes affected
 
+#### Incremental execution
+
+- Pressing the Run button will always start the workflow with a blank slate
+- Using the Reset/Resume shortcut (`Ctrl+R`) will trigger an incremental run
+- Only available in a top-level workflow
+  - subgraphs cannot be partially run, yet
+- Useful for developing a workflow in an edit/evaluate loop
+- New nodes will always run during Resume
+- Nodes that have been edited are reset automatically
+  - Edits inside a subgraph reset the container node in the parent up to the root
+  - If `cascade` setting is on, all dependents also reset
+- Reset by shortcut behavior depends on selected nodes, node under pointer, `cascade` setting
+  - If no node under pointer, selection is reset
+  - If node under pointer is not in the selection, only that node is reset
+  - If node under pointer is in selection, then all selected nodes are reset
+  - If cascade is enabled, all nodes downstream from reset nodes are also reset
+
 ## Secondary tabs
 
 ### Settings

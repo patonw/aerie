@@ -79,10 +79,13 @@ impl Subgraph {
     ) -> Result<Vec<Value>, WorkflowError> {
         // TODO: customize context for subgraph
         // What to do about outputs channel?
+        let state_view = ctx.node_state.view(&self.graph.uuid);
+        state_view.clear();
+
         let mut exec = WorkflowRunner::builder()
             .inputs(inputs)
             .run_ctx(ctx.clone())
-            .state_view(ctx.node_state.view(&self.graph.uuid))
+            .state_view(state_view)
             .build();
 
         exec.init(&self.graph);
@@ -141,10 +144,12 @@ impl Subgraph {
         ctx.event(AppEvent::ProgressBegin(graph_id.0, num_iters));
         for i in 0..num_iters {
             let sliced = par_slice(&inputs, i);
+            let state_view = ctx.node_state.view(&self.graph.uuid).pass(i);
+            state_view.clear();
             let mut exec = WorkflowRunner::builder()
                 .inputs(sliced)
                 .run_ctx(ctx.clone())
-                .state_view(ctx.node_state.view(&self.graph.uuid))
+                .state_view(state_view)
                 .build();
 
             exec.init(&self.graph);
@@ -208,10 +213,12 @@ impl Subgraph {
             .into_par_iter()
             .map(|i| {
                 let sliced = par_slice(&inputs, i);
+                let state_view = ctx.node_state.view(&graph_id).pass(i);
+                state_view.clear();
                 let mut exec = WorkflowRunner::builder()
                     .inputs(sliced)
                     .run_ctx(ctx.clone())
-                    .state_view(ctx.node_state.view(&graph_id).pass(i))
+                    .state_view(state_view)
                     .build();
 
                 exec.init(&self.graph);

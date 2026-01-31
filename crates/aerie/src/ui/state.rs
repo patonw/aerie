@@ -2,6 +2,7 @@ use arc_swap::ArcSwap;
 use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
+use egui_snarl::NodeId;
 use egui_tiles::SimplificationOptions;
 use itertools::Itertools;
 use rmcp::model::Tool;
@@ -23,6 +24,7 @@ use super::{Pane, workflow::ViewStack};
 use crate::{
     AgentFactory, LogEntry, Settings, ToolSpec,
     chat::ChatSession,
+    config::ConfigExt as _,
     transmute::Transmuter,
     ui::{
         AppEvent, ShowHelp,
@@ -31,7 +33,7 @@ use crate::{
     },
     utils::{ErrorDistiller as _, ErrorList},
     workflow::{
-        EditContext, PreviewData, ShadowGraph, WorkNode,
+        EditContext, GraphId, PreviewData, ShadowGraph, WorkNode,
         runner::{NodeStateMap, WorkflowRun},
         store::{WorkflowStore, WorkflowStoreDir},
     },
@@ -166,6 +168,24 @@ impl AppState {
                     UserRunWorkflow if !executed => {
                         self.run_count = 0;
                         self.workflows.node_state.clear();
+                        self.exec_workflow();
+                        executed = true;
+                        true
+                    }
+                    NodesChanged(graph_id, nodes) => {
+                        self.workflows.reset_nodes(
+                            *graph_id,
+                            nodes.clone(),
+                            self.settings.view(|s| s.cascade),
+                        );
+                        true
+                    }
+                    RerunNodes(graph_id, nodes) if !executed => {
+                        self.workflows.reset_nodes(
+                            *graph_id,
+                            nodes.into(),
+                            self.settings.view(|s| s.cascade),
+                        );
                         self.exec_workflow();
                         executed = true;
                         true
@@ -459,6 +479,35 @@ impl<W: WorkflowStore> WorkflowState<W> {
 
         self.redo_stack.remove(&self.editing);
 
+        if let Some(viewer) = &self.viewer {
+            let edited = shadow
+                .nodes
+                .iter()
+                .filter(|(id, meta)| {
+                    self.shadow
+                        .nodes
+                        .get(id)
+                        .map(|other| meta.value != other.value)
+                        .unwrap_or_default()
+                })
+                .map(|(id, _)| *id)
+                .collect::<im::OrdSet<_>>();
+
+            let connected = shadow
+                .wires
+                .clone()
+                .difference(self.shadow.wires.clone())
+                .iter()
+                .map(|w| w.in_pin.node)
+                .collect::<im::OrdSet<NodeId>>();
+
+            // TODO: consider wires too
+            viewer.events.insert(AppEvent::NodesChanged(
+                self.shadow.uuid,
+                edited.union(connected),
+            ));
+        }
+
         self.shadow = shadow;
         self.modtime = SystemTime::now();
         tracing::trace!("Updating shadow. stack {}", undo_stack.len());
@@ -586,6 +635,43 @@ impl<W: WorkflowStore> WorkflowState<W> {
         self.store.save(&self.editing, self.shadow.clone()).unwrap();
 
         self.baseline = self.shadow.clone();
+    }
+
+    pub fn reset_nodes(&self, graph_id: GraphId, mut nodes: im::OrdSet<NodeId>, cascade: bool) {
+        if nodes.is_empty() {
+            return;
+        }
+
+        if graph_id != self.shadow.uuid {
+            todo!("Not implemented for subgraphs yet");
+        }
+
+        let graph = self.shadow.clone();
+        if cascade {
+            tracing::debug!("Cascading nodes {nodes:?}");
+
+            let mut frontier = nodes.clone();
+            while !frontier.is_empty() {
+                let expanded = graph
+                    .wires
+                    .iter()
+                    .filter(|w| frontier.contains(&w.out_pin.node))
+                    .map(|w| w.in_pin.node)
+                    .collect();
+
+                let expanded = nodes.clone().union(expanded);
+
+                frontier = expanded.clone().difference(nodes);
+                nodes = expanded;
+            }
+
+            tracing::debug!("Expansion: {nodes:?}");
+        }
+
+        let view = self.node_state.view(&graph_id);
+        for node in nodes {
+            view.remove(node);
+        }
     }
 
     // TODO: collect errors

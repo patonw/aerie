@@ -97,6 +97,10 @@ pub struct Settings {
     #[serde(default)]
     pub autoscroll: bool,
 
+    /// Whether to rerun only changed/selected nodes or all dependents
+    #[serde(default)]
+    pub cascade: bool,
+
     #[serde(default)]
     pub automation: Option<String>,
 

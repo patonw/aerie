@@ -103,7 +103,7 @@ impl super::AppState {
                 duration.store(Arc::new(started.elapsed().unwrap_or_default()));
                 match exec.step(&mut target) {
                     Ok(false) => {
-                        exec.root_finish().unwrap();
+                        errors.distil(exec.root_finish().map_err(|e| e.into()));
                         break;
                     }
                     Ok(true) => {}
