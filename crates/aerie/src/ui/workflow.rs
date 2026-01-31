@@ -746,11 +746,6 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             (cb.1)(ui, snarl, pos);
         }
 
-        if ui.button("Subgraph").clicked() {
-            snarl.insert_node(pos, Subgraph::default().into());
-            ui.close();
-        }
-
         if ui.button("Preview").clicked() {
             snarl.insert_node(pos, Preview::default().into());
             ui.close();

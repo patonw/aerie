@@ -439,16 +439,22 @@ impl UiNode for Finish {
     fn show_footer(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
         if ctx.parent_id.is_some() {
             ui.menu_button("+new", |ui| {
+                // TODO: implement flattening in subgraph
                 let kinds = [
                     ValueKind::Text,
                     ValueKind::Number,
                     ValueKind::Integer,
+                    // ValueKind::TextList,
+                    // ValueKind::FloatList,
+                    // ValueKind::IntList,
                     ValueKind::Json,
                     ValueKind::Agent,
                     ValueKind::Tools,
                     ValueKind::Chat,
                     ValueKind::Message,
+                    // ValueKind::MsgList,
                 ];
+
                 for kind in kinds {
                     let label = kind.to_string().to_lowercase();
                     if ui.button(&label).clicked() {

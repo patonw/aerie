@@ -20,7 +20,7 @@
   - State of external tools and models might affect outcome
   - If LLM providers could honor PRNG seed, results would be reproducible
     - Many accept it in API, but still have non-deterministic results
-
+- Workflows can contain [subgraphs](./subgraphs.md)
 [^cycle]: Creating circular connections is possible (for now), but any nodes in the cycle will never run.
 
 ## Execution model
@@ -86,26 +86,3 @@
   - in the UI simply use the Run or chat buttons to start a new execution
   - From a runner, start your initial run with `--next`
   - This will output an additional JSON object with the next workflow to run
-
-## Subgraphs
-
-- Workflows can be nested inside the [Subgraph](./nodes/general.md#subgraph) node
-- Customizable inputs/outputs
-- Some things to be aware of though
-- The entire subgraph runs from start to finish as the node is evaluated
-  - Execution of nodes inside the subgraph are not interleaved with parent nodes
-  - i.e. Priority of parent nodes irrelevant during subgraph execution
-- Inputs from diverging branches
-  - A subgraph taking inputs from diverging branches will never run
-  - e.g. different cases on a match or success and failure from a falliable node
-  - Either use different subgraphs for each branch
-  - Or include the divergence inside the graph
-- Diverging outputs
-  - A subgraph will diverging outputs will start but never finish
-  - All outputs inside the subgraph must be ready for a subgraph to finish
-  - Use Select nodes to pick outputs or defaults (when combined with Demote)
-- Output nodes are disabled inside subgraphs
-  - Partially to eliminate confusion of outputs hidden deep in subgraph hierarchies
-  - Behavior would be undefined when iterative subgraphs are implemented
-- Failures in a subgraph always captured by the failure pin
-  - Regardless of how the failure would be handled at the node level

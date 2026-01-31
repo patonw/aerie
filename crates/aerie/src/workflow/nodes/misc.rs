@@ -89,6 +89,10 @@ impl DynNode for TemplateNode {
                 ValueKind::Integer,
                 ValueKind::Text,
                 ValueKind::Message,
+                ValueKind::FloatList,
+                ValueKind::IntList,
+                ValueKind::TextList,
+                ValueKind::MsgList,
             ],
             _ => unreachable!(),
         })
@@ -107,6 +111,7 @@ impl DynNode for TemplateNode {
         _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
+        use itertools::Itertools as _;
         self.validate(&inputs)?;
 
         let template = match &inputs[0] {
@@ -124,6 +129,12 @@ impl DynNode for TemplateNode {
             Some(Value::Integer(value)) => json!({"value": value}),
             Some(Value::Text(value)) => json!({"value": value}),
             Some(Value::Message(value)) => json!({"value": message_text(value)}),
+            Some(Value::FloatList(value)) => json!({"value": value}),
+            Some(Value::IntList(value)) => json!({"value": value}),
+            Some(Value::TextList(value)) => json!({"value": value}),
+            Some(Value::MsgList(value)) => {
+                json!({"value": value.iter().map(|m| message_text(m)).collect_vec()})
+            }
             None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
             _ => unreachable!(),
         };

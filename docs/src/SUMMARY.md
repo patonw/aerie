@@ -15,6 +15,7 @@
 - [Agents](agents.md)
 - [Tools](tools.md)
 - [Workflows](workflows.md)
+- [Subgraphs](./subgraphs.md)
 
 # Core Nodes
 

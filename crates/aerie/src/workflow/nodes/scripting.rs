@@ -116,6 +116,26 @@ impl super::DynNode for RhaiNode {
                     let dynamic: Dynamic = serde_json::from_value((**value).clone()).unwrap();
                     scope.push(name, dynamic);
                 }
+                TextList(value) => {
+                    let items = value
+                        .iter()
+                        .map(|s| s.as_str().to_string())
+                        .map(Dynamic::from)
+                        .collect_vec();
+                    scope.push(name, items);
+                }
+                IntList(value) => {
+                    let items = value.iter().cloned().map(Dynamic::from).collect_vec();
+                    scope.push(name, items);
+                }
+                FloatList(value) => {
+                    let items = value
+                        .iter()
+                        .map(|it| it.into_inner())
+                        .map(Dynamic::from)
+                        .collect_vec();
+                    scope.push(name, items);
+                }
                 _ => {
                     scope.push(name, Dynamic::UNIT);
                 }
@@ -183,6 +203,24 @@ fn rhai_to_value(data: &Dynamic, kind: ValueKind) -> Result<Value, &'static str>
         Integer => Value::Integer(data.as_int()?),
         Number => Value::Number(E64::assert(data.as_float()?)),
         Json => Value::Json(Arc::new(serde_json::to_value(data).unwrap())),
+        TextList => {
+            let dyn_arr = data.as_array_ref()?;
+            let items: Result<im::Vector<_>, _> =
+                dyn_arr.iter().map(|v| v.clone().into_string()).collect();
+            let items = items?.into_iter().map(Arc::new).collect();
+            Value::TextList(items)
+        }
+        IntList => {
+            let dyn_arr = data.as_array_ref()?;
+            let items: Result<im::Vector<_>, _> = dyn_arr.iter().map(|v| v.as_int()).collect();
+            Value::IntList(items?)
+        }
+        FloatList => {
+            let dyn_arr = data.as_array_ref()?;
+            let items: Result<im::Vector<_>, _> = dyn_arr.iter().map(|v| v.as_float()).collect();
+            let items = items?.iter().map(|x| E64::assert(*x)).collect();
+            Value::FloatList(items)
+        }
         _ => unreachable!(),
     })
 }
@@ -222,6 +260,9 @@ impl super::UiNode for RhaiNode {
                     ValueKind::Text,
                     ValueKind::Number,
                     ValueKind::Integer,
+                    ValueKind::TextList,
+                    ValueKind::FloatList,
+                    ValueKind::IntList,
                     ValueKind::Json,
                 ];
                 for kind in kinds {
@@ -464,6 +505,9 @@ impl super::UiNode for RhaiNode {
                     ValueKind::Text,
                     ValueKind::Number,
                     ValueKind::Integer,
+                    ValueKind::TextList,
+                    ValueKind::FloatList,
+                    ValueKind::IntList,
                     ValueKind::Json,
                 ];
                 for kind in kinds {

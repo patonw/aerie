@@ -546,7 +546,7 @@ impl StructuredChat {
                         if let Some(schema) = schema.as_ref()
                             && let Err(err) = jsonschema::validate(schema, &tool_func.arguments)
                         {
-                            if attempts > max_attempts {
+                            if attempts >= max_attempts {
                                 break Err(WorkflowError::Validation(err.to_owned()));
                             } else {
                                 if let Some(scratch) = &run_ctx.scratch {
@@ -564,10 +564,12 @@ impl StructuredChat {
                         let tool_name = tool_func.name.clone();
                         let data = Arc::new(tool_func.arguments.clone());
                         break Ok((tool_name, data));
-                    } else if attempts > max_attempts {
+                    } else if attempts >= max_attempts {
                         break Err(WorkflowError::MissingToolCall);
                     } else {
-                        tracing::warn!("No tool calls from LLM response. Retrying...");
+                        tracing::warn!(
+                            "No tool calls from LLM response. Retrying ({attempts}/{max_attempts} attempts)..."
+                        );
                         if let Some(scratch) = &run_ctx.scratch {
                             scratch.push_back(Err(format!("{:?}", WorkflowError::MissingToolCall)));
                         }
@@ -575,11 +577,13 @@ impl StructuredChat {
                         chat = chat.try_moo(|c| c.push_error(WorkflowError::MissingToolCall))?;
                     }
                 }
-                Err(err) if attempts > max_attempts => {
+                Err(err) if attempts >= max_attempts => {
                     break Err(WorkflowError::Provider(err.into()));
                 }
                 Err(err) => {
-                    tracing::warn!("LLM call failed on {err:?}. Retrying");
+                    tracing::warn!(
+                        "LLM call failed on {err:?}. Retrying ({attempts}/{max_attempts} attempts)"
+                    );
                     chat = chat.try_moo(|c| c.push_error(WorkflowError::Provider(err.into())))?;
                 }
             }

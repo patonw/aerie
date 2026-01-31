@@ -18,8 +18,9 @@ These nodes provide scaffolding for the workflow.
 
 ## Subgraph
 
-- See [Subgraphs](../workflows.md#subgraphs) section in the Workflows page
+- See [Subgraphs](../subgraphs.md) page for details
 - Contains an embedded workflow
+- Can be Simple or Iterative
 - Double-click icon to edit
 - Control palette shows subgraph stack instead of workflow selector
   - Click on a higher level to navigate back

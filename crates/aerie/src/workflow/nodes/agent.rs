@@ -424,9 +424,10 @@ impl DynNode for ChatContext {
     }
 
     fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        use ValueKind::*;
         Cow::Borrowed(match in_pin {
-            0 => &[ValueKind::Agent],
-            1 => &[ValueKind::Text],
+            0 => &[Agent],
+            1 => &[Text, TextList, Json],
             _ => ValueKind::all(),
         })
     }
@@ -452,8 +453,20 @@ impl DynNode for ChatContext {
             _ => unreachable!(),
         };
 
+        use itertools::Itertools;
         let context_doc = match &inputs[1] {
             Some(Value::Text(text)) => text.clone(),
+            Some(Value::TextList(texts)) => {
+                let value: String =
+                    Itertools::intersperse(texts.iter().map(|s| s.as_str()), "\n\n---\n\n")
+                        .collect();
+                Arc::new(value)
+            }
+            Some(Value::Json(value)) => {
+                let data = serde_json::to_string(value)
+                    .map_err(|e| WorkflowError::Conversion(format!("Invalid JSON: {e:?}")))?;
+                Arc::new(data)
+            }
             None => self.context_doc.clone(),
             _ => unreachable!(),
         };
