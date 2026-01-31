@@ -301,6 +301,18 @@ async fn console_output(
 
                 mapper.serialize_entry(&label, &text).unwrap();
             }
+            aerie::workflow::Value::TextList(value) => {
+                mapper.serialize_entry(&label, &value).unwrap()
+            }
+            aerie::workflow::Value::FloatList(value) => {
+                mapper.serialize_entry(&label, &value).unwrap()
+            }
+            aerie::workflow::Value::IntList(value) => {
+                mapper.serialize_entry(&label, &value).unwrap()
+            }
+            aerie::workflow::Value::MsgList(value) => {
+                mapper.serialize_entry(&label, &value).unwrap()
+            }
             _ => {
                 mapper.serialize_entry(&label, &value).unwrap();
             }

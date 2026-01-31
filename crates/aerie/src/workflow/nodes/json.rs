@@ -374,6 +374,10 @@ impl DynNode for TransformJson {
                 ValueKind::Integer,
                 ValueKind::Text,
                 ValueKind::Message,
+                ValueKind::FloatList,
+                ValueKind::IntList,
+                ValueKind::TextList,
+                ValueKind::MsgList,
             ],
             _ => unreachable!(),
         })
@@ -402,9 +406,15 @@ impl DynNode for TransformJson {
         let input = match &inputs[1] {
             Some(Value::Json(input)) => input.as_ref().to_owned(),
             Some(Value::Number(value)) => json!(value),
+            Some(Value::FloatList(value)) => json!(value),
             Some(Value::Integer(value)) => json!(value),
+            Some(Value::IntList(value)) => json!(value),
             Some(Value::Text(value)) => json!(value),
+            Some(Value::TextList(value)) => json!(value),
             Some(Value::Message(value)) => json!(message_text(value)),
+            Some(Value::MsgList(value)) => {
+                json!(value.iter().map(|m| message_text(m)).collect_vec())
+            }
             None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
             _ => unreachable!(),
         };
@@ -483,6 +493,10 @@ impl DynNode for GatherJson {
             ValueKind::Number,
             ValueKind::Integer,
             ValueKind::Message,
+            ValueKind::FloatList,
+            ValueKind::IntList,
+            ValueKind::TextList,
+            ValueKind::MsgList,
         ])
     }
 
@@ -514,6 +528,12 @@ impl DynNode for GatherJson {
                     serde_json::Value::Number(Number::from_i128(value as i128).unwrap())
                 }
                 Some(Value::Message(value)) => serde_json::Value::String(message_text(&value)),
+                Some(Value::FloatList(value)) => json!(value),
+                Some(Value::IntList(value)) => json!(value),
+                Some(Value::TextList(value)) => json!(value),
+                Some(Value::MsgList(value)) => {
+                    json!(value.iter().map(|m| message_text(m)).collect_vec())
+                }
                 None => serde_json::Value::Null,
                 _ => unreachable!(),
             })

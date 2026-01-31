@@ -10,7 +10,8 @@ use egui_snarl::{
     ui::{PinInfo, WireStyle},
 };
 use either::Either;
-use itertools::Itertools as _;
+use im::Vector;
+use itertools::Itertools;
 use jsonschema::ValidationError;
 use kinded::Kinded;
 use rig::{
@@ -53,7 +54,7 @@ pub use nodes::WorkNode;
 
 // type DynFuture<T> = Pin<Box<dyn Future<Output = T>>>;
 
-#[derive(Kinded, Debug, Clone, Serialize)]
+#[derive(Kinded, Debug, Clone, PartialEq, Serialize)]
 #[kinded(derive(Hash, Serialize, Deserialize))]
 pub enum Value {
     Placeholder(ValueKind),
@@ -61,16 +62,51 @@ pub enum Value {
     Text(Arc<String>),
     Number(E64),
     Integer(i64),
+    TextList(Vector<Arc<String>>),
+    FloatList(Vector<E64>),
+    IntList(Vector<i64>),
     Json(Arc<serde_json::Value>), // I think this is immutable?
     Agent(Arc<AgentSpec>),
     Tools(Arc<ToolSelector>),
     Chat(Arc<ChatHistory>),
     Message(Message),
+    MsgList(Vector<Arc<Message>>),
 }
 
 impl Default for Value {
     fn default() -> Self {
         Value::Placeholder(ValueKind::Placeholder)
+    }
+}
+
+impl Value {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text(Arc::new(text.into()))
+    }
+
+    pub fn text_list<T>(texts: impl IntoIterator<Item = T>) -> Self
+    where
+        T: Into<String>,
+    {
+        let texts = texts.into_iter().map(|t| Arc::new(t.into())).collect();
+        Self::TextList(texts)
+    }
+
+    pub fn float(num: impl Into<f64>) -> Self {
+        Self::Number(E64::assert(num.into()))
+    }
+
+    pub fn float_list<T: Into<f64>>(nums: impl IntoIterator<Item = T>) -> Self {
+        let values = nums.into_iter().map(|f| E64::assert(f.into()));
+        Self::FloatList(values.collect())
+    }
+
+    pub fn int_list<T: Into<i64>>(nums: impl IntoIterator<Item = T>) -> Self {
+        Self::IntList(nums.into_iter().map(|i| i.into()).collect())
+    }
+
+    pub fn msg_list<M: Into<Message>>(msgs: impl IntoIterator<Item = M>) -> Self {
+        Self::MsgList(msgs.into_iter().map(|m| Arc::new(m.into())).collect())
     }
 }
 
@@ -83,24 +119,35 @@ impl Default for ValueKind {
 
 impl ValueKind {
     pub fn color(&self) -> Color32 {
+        use ValueKind::*;
         match self {
-            ValueKind::Placeholder => Color32::LIGHT_GRAY,
-            ValueKind::Failure => Color32::RED,
-            ValueKind::Text => Color32::CYAN,
-            ValueKind::Number => Color32::from_rgb(0xbb, 0x44, 0x88),
-            ValueKind::Integer => Color32::from_rgb(0xbb, 0x77, 0x00),
-            ValueKind::Json => Color32::from_rgb(0x42, 0xbb, 0x00),
-            ValueKind::Agent => Color32::from_rgb(0x56, 0x78, 0xff),
-            ValueKind::Tools => Color32::PURPLE,
-            ValueKind::Chat => Color32::GOLD,
-            ValueKind::Message => Color32::from_rgb(0xe9, 0x74, 0x51),
+            Placeholder => Color32::LIGHT_GRAY,
+            Failure => Color32::RED,
+            Text | TextList => Color32::CYAN,
+            Number | FloatList => Color32::from_rgb(0xbb, 0x44, 0x88),
+            Integer | IntList => Color32::from_rgb(0xbb, 0x77, 0x00),
+            Json => Color32::from_rgb(0x42, 0xbb, 0x00),
+            Agent => Color32::from_rgb(0x56, 0x78, 0xff),
+            Tools => Color32::PURPLE,
+            Chat => Color32::GOLD,
+            Message | MsgList => Color32::from_rgb(0xe9, 0x74, 0x51),
         }
     }
 
     pub fn default_pin(&self) -> PinInfo {
-        PinInfo::circle()
-            .with_fill(self.color())
-            .with_wire_style(WireStyle::Bezier5)
+        let pin = if self.is_list() {
+            PinInfo::square().with_fill(self.color())
+        } else {
+            PinInfo::circle().with_fill(self.color().gamma_multiply(0.75))
+        };
+
+        // Wish we could have dashed or thick wires instead
+        pin.with_wire_style(WireStyle::Bezier5)
+    }
+
+    pub fn is_list(&self) -> bool {
+        use ValueKind::*;
+        matches!(self, TextList | FloatList | IntList | MsgList)
     }
 }
 
@@ -1002,6 +1049,23 @@ impl Serialize for WorkflowError {
     }
 }
 
+impl PartialEq for WorkflowError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Required(l0), Self::Required(r0)) => l0 == r0,
+            (Self::Conversion(l0), Self::Conversion(r0)) => l0 == r0,
+            (Self::Provider(l0), Self::Provider(r0)) => std::ptr::eq(l0, r0),
+            (Self::ToolCall(l0), Self::ToolCall(r0)) => std::ptr::eq(l0, r0),
+            (Self::ToolServerCall(l0), Self::ToolServerCall(r0)) => std::ptr::eq(l0, r0),
+            (Self::Validation(l0), Self::Validation(r0)) => std::ptr::eq(l0, r0),
+            (Self::Unfinished(l0), Self::Unfinished(r0)) => std::ptr::eq(l0, r0),
+            (Self::Subgraph(l0), Self::Subgraph(r0)) => l0 == r0,
+            (Self::Unknown(l0), Self::Unknown(r0)) => l0 == r0,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
+}
+
 impl From<ToolSetError> for WorkflowError {
     fn from(value: ToolSetError) -> Self {
         WorkflowError::ToolCall(value)
@@ -1064,6 +1128,18 @@ pub fn write_value(mut fh: impl std::io::Write, value: &Value) -> Result<(), any
             let text = message_text(value);
 
             writeln!(fh, "{text}")?;
+        }
+        Value::FloatList(value) => {
+            serde_json::to_writer(fh, value)?;
+        }
+        Value::IntList(value) => {
+            serde_json::to_writer(fh, value)?;
+        }
+        Value::TextList(value) => {
+            serde_json::to_writer(fh, value)?;
+        }
+        Value::MsgList(value) => {
+            serde_json::to_writer(fh, value)?;
         }
         _ => {
             serde_yml::to_writer(fh, &value)?;
