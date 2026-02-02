@@ -1239,7 +1239,7 @@ impl From<Box<rhai::EvalAltResult>> for WorkflowError {
 
 impl From<anyhow::Error> for WorkflowError {
     fn from(value: anyhow::Error) -> Self {
-        WorkflowError::Unknown(format!("anyhow... {value:?}"))
+        WorkflowError::Unknown(format!("{value:?}"))
     }
 }
 

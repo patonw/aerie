@@ -137,15 +137,19 @@ impl UiNode for ChatNode {
                     .vertical(|ui| {
                         if remote.is_none() {
                             resizable_frame(&mut self.size, ui, |ui| {
-                                let widget = egui::TextEdit::multiline(&mut self.prompt)
-                                    .id_salt("prompt")
-                                    .desired_width(f32::INFINITY)
-                                    .hint_text("Prompt");
+                                egui::ScrollArea::vertical()
+                                    .auto_shrink(false)
+                                    .show(ui, |ui| {
+                                        let widget = egui::TextEdit::multiline(&mut self.prompt)
+                                            .id_salt("prompt")
+                                            .desired_width(f32::INFINITY)
+                                            .hint_text("Prompt");
 
-                                squelch(
-                                    ui.add_sized(ui.available_size(), widget)
-                                        .on_hover_text("Prompt"),
-                                );
+                                        squelch(
+                                            ui.add_sized(ui.available_size(), widget)
+                                                .on_hover_text("Prompt"),
+                                        );
+                                    });
                             });
                             self.ghost_pin(ValueKind::Text.color())
                         } else {
@@ -367,15 +371,19 @@ impl UiNode for StructuredChat {
                     .vertical(|ui| {
                         if remote.is_none() {
                             resizable_frame(&mut self.size, ui, |ui| {
-                                let widget = egui::TextEdit::multiline(&mut self.prompt)
-                                    .id_salt("prompt")
-                                    .desired_width(f32::INFINITY)
-                                    .hint_text("Prompt");
+                                egui::ScrollArea::vertical()
+                                    .auto_shrink(false)
+                                    .show(ui, |ui| {
+                                        let widget = egui::TextEdit::multiline(&mut self.prompt)
+                                            .id_salt("prompt")
+                                            .desired_width(f32::INFINITY)
+                                            .hint_text("Prompt");
 
-                                squelch(
-                                    ui.add_sized(ui.available_size(), widget)
-                                        .on_hover_text("Prompt"),
-                                );
+                                        squelch(
+                                            ui.add_sized(ui.available_size(), widget)
+                                                .on_hover_text("Prompt"),
+                                        );
+                                    });
                             });
                             self.ghost_pin(ValueKind::Text.color())
                         } else {
@@ -747,6 +755,12 @@ async fn one_shot_completion(
 
     if !tool_calls.is_empty() {
         contents.extend(tool_calls.into_iter().map(AssistantContent::ToolCall));
+    }
+
+    if contents.is_empty() {
+        Err(WorkflowError::Unknown(
+            "No response or error message from provider".into(),
+        ))?;
     }
 
     Ok(CompletionResponse {

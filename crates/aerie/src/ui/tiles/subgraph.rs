@@ -1,3 +1,4 @@
+use egui::RichText;
 use egui_phosphor::regular::ARROW_CLOCKWISE;
 use egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE;
 use egui_snarl::ui::SnarlWidget;
@@ -17,7 +18,7 @@ use crate::ui::shortcuts::SHORTCUT_HELP;
 use crate::ui::shortcuts::SHORTCUT_RUN;
 use crate::ui::shortcuts::ShortcutHandler;
 use crate::ui::shortcuts::show_shortcuts;
-use crate::ui::workflow::get_snarl_style;
+use crate::ui::workflow::get_subgraph_style;
 
 impl super::AppState {
     pub fn subgraph_ui(&mut self, ui: &mut egui::Ui) {
@@ -45,7 +46,7 @@ impl super::AppState {
 
             let widget = SnarlWidget::new()
                 .id(viewer.view_id)
-                .style(get_snarl_style());
+                .style(get_subgraph_style());
 
             let pointee = widget.show(&mut snarl, viewer, ui).contains_pointer();
 
@@ -110,10 +111,16 @@ impl super::AppState {
 
         ui.set_max_width(150.0);
         ui.vertical_centered_justified(|ui| {
-            ui.label("subgraph:");
+            ui.heading("Subgraph");
 
             let names = self.workflows.view_stack.names().collect_vec();
             for (i, name) in names.iter().enumerate().rev() {
+                let name = if i < names.len() - 1 {
+                    RichText::new(name)
+                } else {
+                    RichText::new(name).monospace()
+                };
+
                 if i == 0 {
                     ui.add_enabled(false, egui::Button::new(name));
                 } else if ui.button(name).clicked() {

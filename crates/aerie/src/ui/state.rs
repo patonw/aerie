@@ -139,11 +139,7 @@ impl AppState {
                 .events(self.events.clone())
                 .build();
 
-            tracing::debug!(
-                "Changing view to node {:?}: {:?}",
-                &viewer.shadow.uuid,
-                &viewer.node_state
-            );
+            tracing::debug!("Changing view to graph {:?}", &viewer.shadow.uuid,);
 
             self.workflows.viewer = Some(viewer);
         }
@@ -325,7 +321,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
 
         let baseline = store.get(edit_workflow.as_ref()).unwrap_or_default();
 
-        let view_stack = ViewStack::from_root(baseline.clone());
+        let view_stack = ViewStack::from_root(&edit_workflow, baseline.clone());
 
         Self {
             view_stack,
@@ -392,7 +388,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         self.editing = workflow_name.to_string();
         self.renaming = None;
         self.switch_count += 1;
-        self.view_stack = ViewStack::from_root(self.shadow.clone());
+        self.view_stack = ViewStack::from_root(workflow_name, self.shadow.clone());
         self.viewer = None;
     }
 
@@ -569,7 +565,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
             self.shadow = shadow.clone();
             self.modtime = modtime;
             self.switch_count += 1;
-            self.view_stack.switch(shadow.clone());
+            self.view_stack.switch(&self.editing, shadow.clone());
             self.viewer = None;
             self.frozen = true;
         }
@@ -594,7 +590,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
             self.shadow = shadow.clone();
             self.modtime = ts;
             self.switch_count += 1;
-            self.view_stack.switch(shadow.clone());
+            self.view_stack.switch(&self.editing, shadow.clone());
             self.frozen = true;
         }
         tracing::debug!(

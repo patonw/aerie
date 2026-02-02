@@ -215,7 +215,7 @@ impl super::AppState {
 
         ui.set_max_width(150.0);
         ui.vertical_centered_justified(|ui| {
-            ui.label("Workflow:");
+            ui.heading("Workflow");
             ComboBox::from_id_salt("workflow")
                 .wrap()
                 .width(ui.available_width())

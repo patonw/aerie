@@ -424,15 +424,19 @@ impl UiNode for AgentNode {
                         &mut self.preamble,
                         |ui, value| {
                             resizable_frame(&mut self.size, ui, |ui| {
-                                let widget = egui::TextEdit::multiline(value)
-                                    .id_salt("sysmesg")
-                                    .desired_width(f32::INFINITY)
-                                    .hint_text("system message");
+                                egui::ScrollArea::vertical()
+                                    .auto_shrink(false)
+                                    .show(ui, |ui| {
+                                        let widget = egui::TextEdit::multiline(value)
+                                            .id_salt("sysmesg")
+                                            .desired_width(f32::INFINITY)
+                                            .hint_text("system message");
 
-                                squelch(
-                                    ui.add_sized(ui.available_size(), widget)
-                                        .on_hover_text(help),
-                                );
+                                        squelch(
+                                            ui.add_sized(ui.available_size(), widget)
+                                                .on_hover_text(help),
+                                        );
+                                    });
                             });
                         },
                     );
@@ -570,16 +574,20 @@ impl UiNode for ChatContext {
                     .vertical(|ui| {
                         if remote.is_none() {
                             resizable_frame(&mut self.size, ui, |ui| {
-                                let buffer = Arc::make_mut(&mut self.context_doc);
-                                let widget = egui::TextEdit::multiline(buffer)
-                                    .id_salt("context")
-                                    .desired_width(f32::INFINITY)
-                                    .hint_text("context");
+                                egui::ScrollArea::vertical()
+                                    .auto_shrink(false)
+                                    .show(ui, |ui| {
+                                        let buffer = Arc::make_mut(&mut self.context_doc);
+                                        let widget = egui::TextEdit::multiline(buffer)
+                                            .id_salt("context")
+                                            .desired_width(f32::INFINITY)
+                                            .hint_text("context");
 
-                                squelch(
-                                    ui.add_sized(ui.available_size(), widget)
-                                        .on_hover_text("Background context"),
-                                );
+                                        squelch(
+                                            ui.add_sized(ui.available_size(), widget)
+                                                .on_hover_text("Background context"),
+                                        );
+                                    });
                             });
                             self.ghost_pin(ValueKind::Text.color())
                         } else {

@@ -199,16 +199,16 @@ impl App {
 
         let mut tiles = egui_tiles::Tiles::default();
         let tabs: Vec<TileId> = vec![
+            tiles.insert_pane(Pane::Workflow),
             tiles.insert_pane(Pane::Chat),
             tiles.insert_pane(Pane::Logs),
             tiles.insert_pane(Pane::Messages),
-            tiles.insert_pane(Pane::Workflow),
         ];
 
         let content_tabs: TileId = tiles.insert_tab_tile(tabs);
         let tabs = vec![
-            tiles.insert_pane(Pane::Navigator),
             tiles.insert_pane(Pane::Tools),
+            tiles.insert_pane(Pane::Navigator),
             tiles.insert_pane(Pane::Settings),
         ];
 
@@ -274,14 +274,27 @@ impl App {
             ..Default::default()
         });
 
+        let mut max_rect = egui::Rect::from_pos(egui::pos2(200.0, 200.0));
+
         eframe::run_simple_native("My egui App", options, move |ctx, _frame| {
+            let content_rect = ctx.content_rect();
             egui_extras::install_image_loaders(ctx);
             let mut fonts = egui::FontDefinitions::default();
             egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
             ctx.set_fonts(fonts);
 
             egui::CentralPanel::default().show(ctx, |ui| {
+                if let Some(size) = min_size {
+                    ui.set_min_size(size);
+                }
+
+                if let Some(size) = max_size {
+                    ui.set_max_size(size);
+                }
+
                 tree.ui(&mut behavior, ui);
+
+                max_rect = ui.min_rect();
             });
 
             behavior.handle_events();
@@ -293,22 +306,33 @@ impl App {
             let errors = behavior.errors.load();
             if !errors.is_empty() {
                 let modal = egui::Modal::new(egui::Id::new("Errors")).show(ctx, |ui| {
-                    if let Some(size) = min_size {
-                        ui.set_min_size(size);
-                    }
-
-                    if let Some(size) = max_size {
-                        ui.set_max_size(size);
-                    }
-
+                    ui.set_max_width(content_rect.width() * 0.8);
+                    ui.set_min_height(content_rect.height() * 0.5);
                     ui.heading("Errors");
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for err in errors.iter() {
-                            ui.collapsing(err.to_string(), |ui| {
-                                ui.label(format!("{err:?}"));
-                            });
-                        }
-                    });
+                    egui::ScrollArea::both()
+                        .auto_shrink(egui::Vec2b::new(true, false))
+                        .show(ui, |ui| {
+                            for (i, err) in errors.iter().enumerate() {
+                                egui::collapsing_header::CollapsingState::load_with_default_open(
+                                    ui.ctx(),
+                                    ui.make_persistent_id(format!("error #{i}")),
+                                    false,
+                                )
+                                .show_header(ui, |ui| {
+                                    let heading = egui::RichText::new(
+                                        err.to_string().lines().next().unwrap_or_default(),
+                                    )
+                                    .strong();
+                                    ui.add(egui::Label::new(heading).wrap());
+                                })
+                                .body(|ui| {
+                                    ui.label(format!("{err:?}"));
+                                    // for line in err.to_string().lines().skip(1) {
+                                    //     ui.label(line);
+                                    // }
+                                });
+                            }
+                        });
                 });
 
                 if modal.should_close() {
