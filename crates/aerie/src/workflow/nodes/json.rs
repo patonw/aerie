@@ -40,7 +40,7 @@ impl FlexNode for ParseJson {}
 impl DynNode for ParseJson {
     fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
         Cow::Borrowed(match in_pin {
-            0 => &[ValueKind::Text],
+            0 => &[ValueKind::Text, ValueKind::Message],
             _ => unreachable!(),
         })
     }
@@ -66,16 +66,17 @@ impl DynNode for ParseJson {
         self.validate(&inputs)?;
 
         let text = match &inputs[0] {
-            Some(Value::Text(text)) => text.as_str(),
-            None => self.text.as_str(),
+            Some(Value::Text(text)) => Cow::Borrowed(text.as_str()),
+            Some(Value::Message(message)) => Cow::Owned(message_text(message)),
+            None => Cow::Borrowed(self.text.as_str()),
             _ => unreachable!(),
         };
 
-        let result = serde_json::from_str::<serde_json::Value>(text);
+        let result = serde_json::from_str::<serde_json::Value>(&text);
         let value = match result {
             Ok(value) => value,
             Err(_) if self.extract => {
-                extract_json(text, self.as_array).ok_or(WorkflowError::Conversion(format!(
+                extract_json(&text, self.as_array).ok_or(WorkflowError::Conversion(format!(
                     "Could not find a JSON {} inside text",
                     if self.as_array { "array" } else { "object" }
                 )))?

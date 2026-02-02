@@ -462,53 +462,56 @@ impl UiNode for Preview {
 
         egui::Frame::new().inner_margin(4).show(ui, |ui| {
             resizable_frame(&mut self.size, ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    match &ctx.previews.value(self.uuid.0).unwrap_or_default() {
-                        Value::Text(text) => {
-                            ui.add(egui::Label::new(text.as_str()).wrap());
-                        }
-                        Value::Chat(history) => {
-                            ui.vertical(|ui| {
-                                for entry in history.iter() {
-                                    if let ChatContent::Message(msg) = &entry.content {
-                                        ui.label(RichText::new(message_party(msg)).strong());
-                                        ui.add(egui::Label::new(message_text(msg)).wrap());
-                                        ui.separator();
+                egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .show(ui, |ui| {
+                        match &ctx.previews.value(self.uuid.0).unwrap_or_default() {
+                            Value::Text(text) => {
+                                ui.add(egui::Label::new(text.as_str()).wrap());
+                            }
+                            Value::Chat(history) => {
+                                ui.vertical(|ui| {
+                                    for entry in history.iter() {
+                                        if let ChatContent::Message(msg) = &entry.content {
+                                            ui.label(RichText::new(message_party(msg)).strong());
+                                            ui.add(egui::Label::new(message_text(msg)).wrap());
+                                            ui.separator();
+                                        }
                                     }
-                                }
-                            });
-                        }
-                        Value::Message(msg) => {
-                            render_message_width(ui, &mut cache, msg, Some(600.0));
-                        }
-                        Value::Json(value) => {
-                            if let Ok(text) = serde_json::to_string_pretty(value) {
-                                let language = "json";
-                                let theme =
-                                    egui_extras::syntax_highlighting::CodeTheme::from_memory(
-                                        ui.ctx(),
-                                        ui.style(),
-                                    );
+                                });
+                            }
+                            Value::Message(msg) => {
+                                render_message_width(ui, &mut cache, msg, Some(600.0));
+                            }
+                            Value::Json(value) => {
+                                if let Ok(text) = serde_json::to_string_pretty(value) {
+                                    let language = "json";
+                                    let theme =
+                                        egui_extras::syntax_highlighting::CodeTheme::from_memory(
+                                            ui.ctx(),
+                                            ui.style(),
+                                        );
 
-                                {
-                                    let layout_job = egui_extras::syntax_highlighting::highlight(
-                                        ui.ctx(),
-                                        ui.style(),
-                                        &theme,
-                                        &text,
-                                        language,
-                                    );
-                                    ui.add(egui::Label::new(layout_job).selectable(true).wrap())
-                                };
-                            } else {
-                                ui.add(egui::Label::new(format!("{:?}", value)).wrap());
+                                    {
+                                        let layout_job =
+                                            egui_extras::syntax_highlighting::highlight(
+                                                ui.ctx(),
+                                                ui.style(),
+                                                &theme,
+                                                &text,
+                                                language,
+                                            );
+                                        ui.add(egui::Label::new(layout_job).selectable(true).wrap())
+                                    };
+                                } else {
+                                    ui.add(egui::Label::new(format!("{:?}", value)).wrap());
+                                }
+                            }
+                            unk => {
+                                ui.add(egui::Label::new(format!("{unk:?}")).wrap());
                             }
                         }
-                        unk => {
-                            ui.add(egui::Label::new(format!("{unk:?}")).wrap());
-                        }
-                    }
-                });
+                    });
             });
         });
     }

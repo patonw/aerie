@@ -52,9 +52,31 @@ pub fn get_snarl_style() -> SnarlStyle {
     }
 }
 
+#[cached]
+pub fn get_subgraph_style() -> SnarlStyle {
+    use egui_snarl::ui::{BackgroundPattern, Grid, NodeLayout, PinPlacement, SnarlStyle};
+    SnarlStyle {
+        crisp_magnified_text: Some(true),
+        bg_pattern: Some(BackgroundPattern::Grid(Grid::new(
+            egui::Vec2::new(100.0, 100.0),
+            0.0,
+        ))),
+        // bg_frame: Some(egui::Frame::default().fill(egui::Color32::from_rgb(0, 16, 4))),
+        bg_pattern_stroke: Some(egui::Stroke::new(1.0, egui::Color32::from_rgb(64, 32, 16))),
+        node_frame: SnarlStyle::default()
+            .node_frame
+            .map(|frame| frame.inner_margin(16.0)),
+        node_layout: Some(NodeLayout::sandwich()),
+        pin_placement: Some(PinPlacement::Edge),
+        ..Default::default()
+    }
+}
+
 #[derive(Clone, TypedBuilder)]
 pub struct ViewStack {
     pub root_id: egui::Id,
+
+    pub root_name: String,
 
     pub path: im::Vector<NodeId>,
 
@@ -64,9 +86,10 @@ pub struct ViewStack {
 }
 
 impl ViewStack {
-    pub fn new(workflow: Workflow, path: impl Iterator<Item = NodeId>) -> Self {
+    pub fn new(name: &str, workflow: Workflow, path: impl Iterator<Item = NodeId>) -> Self {
         let mut me = Self {
             root_id: egui::Id::new(workflow.graph.uuid),
+            root_name: name.into(),
             path: Default::default(),
             flavor: Default::default(),
             levels: vector![workflow.graph.as_ref().clone()],
@@ -81,17 +104,17 @@ impl ViewStack {
         me
     }
 
-    pub fn from_root(workflow: Workflow) -> Self {
-        Self::new(workflow, iter::empty())
+    pub fn from_root(name: &str, workflow: Workflow) -> Self {
+        Self::new(name, workflow, iter::empty())
     }
 
     /// Replace root graph with a different version.
     ///
     /// Attempts to preserve path, but will navigate as far as possible
     /// if subgraphs are absent.
-    pub fn switch(&mut self, workflow: Workflow) {
+    pub fn switch(&mut self, name: &str, workflow: Workflow) {
         let path = self.path.clone();
-        *self = Self::new(workflow, path.into_iter());
+        *self = Self::new(name, workflow, path.into_iter());
     }
 
     pub fn is_empty(&self) -> bool {
@@ -109,7 +132,7 @@ impl ViewStack {
                     .map(|m| m.value.as_ui().title().to_string())
                     .unwrap_or("???".to_string())
             })
-            .chain(std::iter::once("(root)".to_string()))
+            .chain(std::iter::once(self.root_name.clone()))
     }
 
     pub fn root(&self) -> ShadowGraph<WorkNode> {
