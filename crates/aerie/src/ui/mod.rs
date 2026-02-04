@@ -9,6 +9,7 @@ pub mod workflow;
 
 use egui_snarl::{InPinId, NodeId, OutPinId};
 pub use state::AppState;
+use uuid::Uuid;
 
 use crate::{
     utils::PriorityQueue,
@@ -55,6 +56,10 @@ pub enum AppEvent {
     Freeze(Option<bool>),
     Undo,
     Redo,
+
+    ProgressBegin(Uuid, usize),
+    ProgressAdd(Uuid, usize),
+    ProgressEnd(Uuid),
 }
 
 impl AppEvent {

@@ -34,6 +34,7 @@ impl super::AppState {
             let run_ctx = RunContext::builder()
                 .runtime(self.rt.clone())
                 .agent_factory(self.agent_factory.clone())
+                .events(Some(self.events.clone()))
                 .node_state(self.workflows.node_state.clone())
                 .previews(self.workflows.previews.clone())
                 .transmuter(self.transmuter.clone())
