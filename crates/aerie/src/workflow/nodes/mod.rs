@@ -15,6 +15,7 @@ pub mod json;
 pub mod misc;
 pub mod primatives;
 pub mod scaffold;
+pub mod scripting;
 pub mod subgraph;
 
 pub use agent::*;

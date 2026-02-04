@@ -987,6 +987,8 @@ pub enum WorkflowError {
     #[error("Error while executing subgraph")]
     Subgraph(#[source] Arc<WorkflowError>),
 
+    // #[error("Scripting error {0:?}")]
+    // RhaiScript(#[source] Arc<rhai::EvalAltResult>),
     #[error("{0}")]
     Unknown(String),
 }
@@ -1009,6 +1011,12 @@ impl From<ToolSetError> for WorkflowError {
 impl From<ToolServerError> for WorkflowError {
     fn from(value: ToolServerError) -> Self {
         WorkflowError::ToolServerCall(value)
+    }
+}
+
+impl From<Box<rhai::EvalAltResult>> for WorkflowError {
+    fn from(value: Box<rhai::EvalAltResult>) -> Self {
+        WorkflowError::Unknown(value.to_string())
     }
 }
 

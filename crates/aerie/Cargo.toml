@@ -1,6 +1,6 @@
 [package]
 name = "aerie"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 default-run = "aerie"
 
@@ -93,7 +93,12 @@ saphyr = { version = "0.0.6", optional = true }
 dyn-clone = "1.0.20"
 dyn-hash = "1.0.0"
 inventory = "0.3.21"
+rhai = { version = "1.23.6", optional = true, features = [
+  "serde",
+  "serde_json",
+] }
 
 [features]
-default = []
+default = ["scripting"]
 migration = ["dep:saphyr"]
+scripting = ["dep:rhai"]
