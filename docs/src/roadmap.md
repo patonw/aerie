@@ -17,7 +17,7 @@
     - ~Named subgraphs cannot be referenced by another subgraph~
     - ~i.e. only top-level~
     - Subgraphs can contain nested inline subgraphs
-- [ ] rhai script node
+- [x] rhai script node
 - [ ] WASM plugins
 - [ ] Media support
   - Image inputs first

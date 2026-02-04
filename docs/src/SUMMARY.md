@@ -25,6 +25,7 @@
 - [Tools](nodes/tools.md)
 - [History](nodes/history.md)
 - [JSON](nodes/json.md)
+- [Scripting](./nodes/scripting.md)
 
 ---
 
