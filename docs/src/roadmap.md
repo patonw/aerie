@@ -18,6 +18,16 @@
     - ~i.e. only top-level~
     - Subgraphs can contain nested inline subgraphs
 - [x] rhai script node
+- [x] Data parallelism via subgraps
+- [ ] Rate Limiter node
+  - Each node instance is a single bucket
+  - Only useful as an (indirect) child of an iterative subgraph
+  - Multiplexed input/outputs to control multiple branches w/ same bucket
+- [ ] MCP runner
+  - Workflows as tools
+    - Expose description and schema
+    - payload param for workflow input
+  - top-level params for conversation, autorun, temperature, model
 - [ ] WASM plugins
 - [ ] Media support
   - Image inputs first
@@ -35,8 +45,6 @@
   - Can we just leverage lastpass, bitwarden, etc?
   - How about dbus secrets management?
 - [ ] Runner parallelism using rayon on ready nodes
-- [ ] Data parallelism
-  - Implement nodes for filter, partition, group etc
 - [ ] Concurrent LLM calls
   - Need to throttle by provider (use separate pools?)
 - [ ] Sharing/publishing via web

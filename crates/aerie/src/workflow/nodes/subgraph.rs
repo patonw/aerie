@@ -10,9 +10,12 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-use crate::workflow::{
-    DynNode, FlexNode, ShadowGraph, UiNode, Value, ValueKind, WorkNode, WorkflowError,
-    runner::WorkflowRunner,
+use crate::{
+    ui::AppEvent,
+    workflow::{
+        DynNode, FlexNode, ShadowGraph, UiNode, Value, ValueKind, WorkNode, WorkflowError,
+        runner::WorkflowRunner,
+    },
 };
 
 // "serializing nested enums in YAML is not supported yet"
@@ -122,9 +125,7 @@ impl Subgraph {
         ctx: &super::RunContext,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        if inputs.iter().flatten().all(|it| !it.kind().is_list()) {
-            return self.exec_simple(ctx, inputs);
-        }
+        let graph_id = self.graph.uuid;
 
         let lengths = input_lengths(&inputs);
 
@@ -136,7 +137,9 @@ impl Subgraph {
 
         let mut results = self.init_outputs();
 
-        for i in 0..lengths[0] {
+        let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
+        ctx.event(AppEvent::ProgressBegin(graph_id.0, num_iters));
+        for i in 0..num_iters {
             let sliced = par_slice(&inputs, i);
             let mut exec = WorkflowRunner::builder()
                 .inputs(sliced)
@@ -148,11 +151,11 @@ impl Subgraph {
             let interrupt = ctx.interrupt.clone();
 
             let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
-            tracing::info!("About to execute subgraph");
+            tracing::debug!("About to execute subgraph");
 
             loop {
                 if interrupt.load(Ordering::Relaxed) {
-                    break;
+                    Err(WorkflowError::Interrupted)?;
                 }
 
                 match exec.step(&mut target) {
@@ -166,11 +169,14 @@ impl Subgraph {
                 }
             }
 
+            ctx.event(AppEvent::ProgressAdd(graph_id.0, 1));
+
             for (res, val) in results.iter_mut().zip(exec.outputs.into_iter()) {
                 push_values(res, val);
             }
         }
 
+        ctx.event(AppEvent::ProgressEnd(graph_id.0));
         results.push(Value::Placeholder(ValueKind::Failure));
 
         Ok(results)
@@ -183,9 +189,7 @@ impl Subgraph {
     ) -> Result<Vec<Value>, WorkflowError> {
         use rayon::prelude::*;
 
-        if inputs.iter().flatten().all(|it| !it.kind().is_list()) {
-            return self.exec_simple(ctx, inputs);
-        }
+        let graph_id = self.graph.uuid;
 
         let lengths = input_lengths(&inputs);
 
@@ -197,7 +201,8 @@ impl Subgraph {
 
         let results = self.init_outputs();
 
-        let num_iters = lengths[0];
+        let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
+        ctx.event(AppEvent::ProgressBegin(graph_id.0, num_iters));
 
         let all_out = (0..num_iters)
             .into_par_iter()
@@ -206,7 +211,7 @@ impl Subgraph {
                 let mut exec = WorkflowRunner::builder()
                     .inputs(sliced)
                     .run_ctx(ctx.clone())
-                    .state_view(ctx.node_state.view(&self.graph.uuid).pass(i))
+                    .state_view(ctx.node_state.view(&graph_id).pass(i))
                     .build();
 
                 exec.init(&self.graph);
@@ -220,7 +225,7 @@ impl Subgraph {
 
                 loop {
                     if interrupt.load(Ordering::Relaxed) {
-                        break;
+                        Err(WorkflowError::Interrupted)?;
                     }
 
                     match exec.step(&mut target) {
@@ -233,6 +238,8 @@ impl Subgraph {
                         Err(err) => Err(WorkflowError::Subgraph(err))?,
                     }
                 }
+
+                ctx.event(AppEvent::ProgressAdd(graph_id.0, 1));
                 Ok(exec.outputs)
             })
             .try_fold(
@@ -255,6 +262,7 @@ impl Subgraph {
             );
 
         let mut results = all_out?;
+        ctx.event(AppEvent::ProgressEnd(graph_id.0));
         results.push(Value::Placeholder(ValueKind::Failure));
 
         Ok(results)
@@ -280,7 +288,7 @@ fn input_lengths(inputs: &[Option<Value>]) -> Vec<usize> {
     inputs
         .iter()
         .filter_map(|x| x.clone())
-        .filter(|v| v.kind().is_list())
+        .filter(|v| v.is_list())
         .map(|v| match v {
             TextList(items) => items.len(),
             IntList(items) => items.len(),
@@ -293,6 +301,10 @@ fn input_lengths(inputs: &[Option<Value>]) -> Vec<usize> {
 }
 
 impl DynNode for Subgraph {
+    fn uuid(&self) -> Option<uuid::Uuid> {
+        Some(self.graph.uuid.0)
+    }
+
     fn inputs(&self) -> usize {
         self.graph
             .start_node()

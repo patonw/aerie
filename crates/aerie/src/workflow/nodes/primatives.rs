@@ -183,6 +183,10 @@ impl DynNode for Preview {
         9999
     }
 
+    fn uuid(&self) -> Option<uuid::Uuid> {
+        Some(self.uuid.0)
+    }
+
     fn outputs(&self) -> usize {
         0
     }

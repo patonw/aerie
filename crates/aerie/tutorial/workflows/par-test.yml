@@ -5,14 +5,14 @@ nodes:
       Start: {}
     pos:
       x: -12.5390625
-      'y': -279.58984
+      y: -279.58984
     open: true
   1:
     value:
       Finish: {}
     pos:
       x: -14.489147
-      'y': 85.221985
+      y: 85.221985
     open: true
   2:
     value:
@@ -23,10 +23,10 @@ nodes:
           - IntList
         size:
           x: 300.0
-          'y': 150.0
+          y: 150.0
     pos:
       x: 348.3992
-      'y': -211.45956
+      y: -211.45956
     open: true
   3:
     value:
@@ -35,7 +35,7 @@ nodes:
         flavor: Iterative
         parallel: true
         graph:
-          uuid: '5bbdfbdf-ef99-49d8-b458-f81d2c43f810'
+          uuid: 5bbdfbdf-ef99-49d8-b458-f81d2c43f810
           nodes:
             0:
               value:
@@ -45,7 +45,7 @@ nodes:
                     - Integer
               pos:
                 x: -237.69395
-                'y': -51.473614
+                y: -51.473614
               open: true
             1:
               value:
@@ -55,7 +55,7 @@ nodes:
                     - Text
               pos:
                 x: 691.7089
-                'y': 65.47542
+                y: 65.47542
               open: true
             7:
               value:
@@ -71,10 +71,10 @@ nodes:
                     - Text
                   size:
                     x: 300.0
-                    'y': 150.0
+                    y: 150.0
               pos:
                 x: 223.7069
-                'y': -94.26682
+                y: -94.26682
               open: true
           wires:
           - out_pin:
@@ -93,18 +93,18 @@ nodes:
           finish: 1
     pos:
       x: 762.96783
-      'y': -123.93638
+      y: -123.93638
     open: true
   4:
     value:
       Preview:
         size:
           x: 326.9375
-          'y': 340.625
-        uuid: '3ab1d888-a662-42e3-9816-766dcec8a4f0'
+          y: 340.625
+        uuid: 3ab1d888-a662-42e3-9816-766dcec8a4f0
     pos:
       x: 1177.4716
-      'y': -122.35755
+      y: -122.35755
     open: true
   5:
     value:
@@ -112,10 +112,10 @@ nodes:
         comment: Try using the Stop button, mid-run to see subgraph interruption in action.
         size:
           x: 300.0
-          'y': 150.0
+          y: 150.0
     pos:
       x: 759.43243
-      'y': -472.3979
+      y: -472.3979
     open: true
 wires:
 - out_pin:

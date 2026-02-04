@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     iter,
-    sync::Arc,
+    sync::{Arc, atomic::AtomicUsize},
 };
 
 use anyhow::Context as _;
@@ -15,6 +15,7 @@ use egui_snarl::{
 use im::vector;
 use itertools::Itertools;
 use typed_builder::TypedBuilder;
+use uuid::Uuid;
 
 use crate::{
     ui::shortcuts::{ShortcutHandler, squelch},
@@ -266,6 +267,11 @@ impl ViewStack {
     }
 }
 
+#[derive(Default, Clone, Debug)]
+pub struct ProgressEntry(pub usize, pub Arc<AtomicUsize>);
+
+pub type ProgressMap = im::OrdMap<Uuid, ProgressEntry>;
+
 #[derive(Clone, TypedBuilder)]
 pub struct WorkflowViewer {
     #[builder(default = egui::Id::new("default_viewer"))]
@@ -283,6 +289,9 @@ pub struct WorkflowViewer {
 
     #[builder(default)]
     pub node_state: NodeStateMap,
+
+    #[builder(default)]
+    pub progress: ProgressMap,
 
     #[builder(default)]
     pub running: bool,
@@ -482,68 +491,84 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             return;
         }
 
-        egui::Sides::new().show(
-            ui,
-            |ui| {
-                if let Some(title) = snarl[node].as_ui_mut().title_mut() {
-                    if self.rename_node == Some(node) {
-                        let widget = egui::TextEdit::singleline(title).desired_width(200.0);
-                        let resp = squelch(ui.add(widget));
+        ui.vertical_centered_justified(|ui| {
+            egui::Sides::new().show(
+                ui,
+                |ui| {
+                    if let Some(title) = snarl[node].as_ui_mut().title_mut() {
+                        if self.rename_node == Some(node) {
+                            let widget = egui::TextEdit::singleline(title).desired_width(200.0);
+                            let resp = squelch(ui.add(widget));
 
-                        if resp.lost_focus() {
-                            self.rename_node = None;
+                            if resp.lost_focus() {
+                                self.rename_node = None;
+                            }
+
+                            resp.request_focus();
+                        } else {
+                            let widget = egui::Label::new(snarl[node].as_ui().title()).truncate();
+                            if ui
+                                .add(widget)
+                                .interact(egui::Sense::click())
+                                .double_clicked()
+                            {
+                                self.rename_node = Some(node);
+                            }
                         }
-
-                        resp.request_focus();
                     } else {
-                        let widget = egui::Label::new(snarl[node].as_ui().title()).truncate();
+                        let title = snarl[node].as_ui().title();
+                        ui.label(title);
+                    }
+                },
+                |ui| match node_state.get(&node) {
+                    Some(ExecState::Waiting(_)) => {
+                        ui.label(RichText::new(HOURGLASS_MEDIUM).color(Color32::ORANGE))
+                            .on_hover_text("Waiting");
+                    }
+                    Some(ExecState::Ready) => {
+                        ui.label(RichText::new(PLAY_CIRCLE).color(Color32::BLUE))
+                            .on_hover_text("Ready");
+                    }
+                    Some(ExecState::Running) => {
+                        ui.add(egui::Spinner::new().color(Color32::LIGHT_GREEN))
+                            .on_hover_text("Running");
+                    }
+                    Some(ExecState::Done(_)) => {
+                        ui.label(RichText::new(CHECK_CIRCLE).color(Color32::GREEN))
+                            .on_hover_text("Done");
+                    }
+                    Some(ExecState::Disabled) => {
+                        ui.label(HAND_PALM).on_hover_text("Disabled");
+                    }
+                    Some(ExecState::Failed(err)) => {
                         if ui
-                            .add(widget)
+                            .label(RichText::new(WARNING).color(Color32::RED))
+                            .on_hover_text(format!("{err:?}"))
                             .interact(egui::Sense::click())
-                            .double_clicked()
+                            .clicked()
                         {
-                            self.rename_node = Some(node);
+                            let error = err.clone();
+                            self.edit_ctx.errors.push(error.into());
                         }
                     }
-                } else {
-                    let title = snarl[node].as_ui().title();
-                    ui.label(title);
-                }
-            },
-            |ui| match node_state.get(&node) {
-                Some(ExecState::Waiting(_)) => {
-                    ui.label(RichText::new(HOURGLASS_MEDIUM).color(Color32::ORANGE))
-                        .on_hover_text("Waiting");
-                }
-                Some(ExecState::Ready) => {
-                    ui.label(RichText::new(PLAY_CIRCLE).color(Color32::BLUE))
-                        .on_hover_text("Ready");
-                }
-                Some(ExecState::Running) => {
-                    ui.add(egui::Spinner::new().color(Color32::LIGHT_GREEN))
-                        .on_hover_text("Running");
-                }
-                Some(ExecState::Done(_)) => {
-                    ui.label(RichText::new(CHECK_CIRCLE).color(Color32::GREEN))
-                        .on_hover_text("Done");
-                }
-                Some(ExecState::Disabled) => {
-                    ui.label(HAND_PALM).on_hover_text("Disabled");
-                }
-                Some(ExecState::Failed(err)) => {
-                    if ui
-                        .label(RichText::new(WARNING).color(Color32::RED))
-                        .on_hover_text(format!("{err:?}"))
-                        .interact(egui::Sense::click())
-                        .clicked()
-                    {
-                        let error = err.clone();
-                        self.edit_ctx.errors.push(error.into());
-                    }
-                }
-                None => {}
-            },
-        );
+                    None => {}
+                },
+            );
+
+            if let Some(uuid) = snarl[node].as_dyn().uuid()
+                && let Some(progress) = self.progress.get(&uuid)
+                && progress.0 > 0
+            {
+                let ratio = progress.1.load(std::sync::atomic::Ordering::Relaxed) as f32
+                    / progress.0 as f32;
+
+                ui.add(
+                    egui::ProgressBar::new(ratio)
+                        .desired_width(ui.available_width())
+                        .desired_height(8.0),
+                );
+            }
+        });
     }
 
     fn final_node_rect(
