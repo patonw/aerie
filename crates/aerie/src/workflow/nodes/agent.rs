@@ -556,7 +556,14 @@ impl UiNode for ChatContext {
 #[skip_serializing_none]
 #[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
 pub struct InvokeTool {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub tool_name: String,
+
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub arguments: String,
+
+    #[serde(default)]
+    pub size: Option<crate::utils::EVec2>,
 }
 
 #[typetag::serde]
@@ -648,13 +655,23 @@ impl UiNode for InvokeTool {
             }
             2 => {
                 if remote.is_none() {
-                    squelch(ui.add(TextEdit::singleline(&mut self.tool_name)));
+                    squelch(
+                        ui.add(TextEdit::singleline(&mut self.tool_name).hint_text("tool name")),
+                    );
                 } else {
                     ui.label("tool name");
                 }
             }
             3 => {
-                ui.label("arguments");
+                if remote.is_none() {
+                    resizable_frame(&mut self.size, ui, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            super::json::json_editor(ui, &mut self.arguments, Some("arguments"));
+                        });
+                    });
+                } else {
+                    ui.label("arguments");
+                }
             }
             _ => unreachable!(),
         };
@@ -674,9 +691,6 @@ impl InvokeTool {
         let chat = match &inputs[0] {
             Some(Value::Chat(history)) => Some(history),
             None => None,
-            // None => Err(WorkflowError::Required(vec![
-            //     "Chat history required".into(),
-            // ]))?,
             _ => unreachable!(),
         };
 
@@ -707,9 +721,11 @@ impl InvokeTool {
 
         let args = match &inputs[3] {
             Some(Value::Json(value)) => value.clone(),
-            None => Err(WorkflowError::Required(vec![
-                "Tool arguments are required".into(),
-            ]))?,
+            None if !self.arguments.is_empty() => Arc::new(
+                serde_json::from_str(&self.arguments)
+                    .map_err(|e| WorkflowError::Conversion(format!("Invalid JSON: {e:?}")))?,
+            ),
+            None => Arc::new(serde_json::Value::Object(Default::default())),
             _ => unreachable!(),
         };
 
