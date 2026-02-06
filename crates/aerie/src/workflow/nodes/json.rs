@@ -94,7 +94,7 @@ impl DynNode for ParseJson {
     }
 }
 
-fn json_editor(
+pub fn json_editor(
     ui: &mut egui::Ui,
     buffer: &mut dyn egui::TextBuffer,
     hint: Option<&str>,
