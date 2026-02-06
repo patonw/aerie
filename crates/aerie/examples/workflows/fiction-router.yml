@@ -1,0 +1,307 @@
+description: Demonstrates how to use a small LLM to route prompts between unrelated workflows by calling the chain tool.
+chain:
+- book-board
+- cine-bot
+uuid: f5aace42-d4c1-42a3-9ffc-b01953b4e25b
+nodes:
+  0:
+    value:
+      Start: {}
+    pos:
+      x: -218.25482
+      y: 476.99686
+    open: true
+  1:
+    value:
+      Finish: {}
+    pos:
+      x: 1288.3651
+      y: -51.497505
+    open: true
+  2:
+    value:
+      AgentNode:
+        model: openrouter/nvidia/nemotron-nano-9b-v2:free
+        preamble: |-
+          Follow these instructions exactly. Do not deviate from them. Do not hallucinate a response. Do not respond directly to the user's prompt.
+
+          ## Instructions
+          Categorize the user's prompt using the schema.
+
+          If the user mentions a particular novel or book series, classify it as BOOK.
+
+          Likewise for movies and television shows, respectively.
+
+          If nothing in these categories is mentioned, respond with the NONE category.
+        temperature: 0.27
+        size:
+          x: 418.0
+          y: 381.5
+    pos:
+      x: 30.772404
+      y: -419.96246
+    open: true
+  3:
+    value:
+      CommentNode:
+        comment: You can get away with using much smaller models for simple categorization as long as they can follow instructions and output well formed JSON, reliably.
+        size:
+          x: 488.09375
+          y: 291.90625
+    pos:
+      x: 633.5126
+      y: -372.98102
+    open: true
+  4:
+    value:
+      TransformJson:
+        filter: |-
+          {
+           message: .,
+           username: "unknown",
+           timestamp: (now | todateiso8601),
+           tags: []
+          }
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 2245.6875
+      y: 644.5371
+    open: true
+  5:
+    value:
+      Matcher:
+        kind: Text
+        patterns:
+        - BOOK
+        - MOVIE | TV
+        exact: true
+    pos:
+      x: 1730.9945
+      y: 1096.2493
+    open: true
+  6:
+    value:
+      ParseJson:
+        text: |-
+          {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": ["BOOK", "MOVIE", "TV", "NONE"]
+              }
+            },
+            "required": ["category"]
+          }
+        size:
+          x: 706.0
+          y: 325.3125
+    pos:
+      x: -401.31433
+      y: 781.1942
+    open: true
+  7:
+    value:
+      Demote:
+        priority: 5000
+        kind: Text
+    pos:
+      x: 170.85771
+      y: 1472.528
+    open: true
+  8:
+    value:
+      Preview:
+        size:
+          x: 300.0
+          y: 150.0
+        uuid: 23b6631b-998f-4ca5-bddf-661d08af916a
+    pos:
+      x: 1298.5107
+      y: 431.41412
+    open: true
+  9:
+    value:
+      Text:
+        value: Started streaming the Night Manager. Such a contrast to the Bond films.
+        size:
+          x: 301.0
+          y: 150.0
+    pos:
+      x: -392.78973
+      y: 1352.3551
+    open: true
+  10:
+    value:
+      StructuredChat:
+        prompt: ''
+        size:
+          x: 300.0
+          y: 150.0
+        retries: 0
+    pos:
+      x: 690.8852
+      y: 524.25024
+    open: true
+  11:
+    value:
+      TransformJson:
+        filter: .category
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 1272.4531
+      y: 781.3947
+    open: true
+  12:
+    value:
+      InvokeTool:
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 2758.6482
+      y: 523.8154
+    open: true
+  13:
+    value:
+      Tools:
+        toolset:
+        - chainer/book-board
+        size:
+          x: 252.0
+          y: 250.0
+    pos:
+      x: 2373.2983
+      y: 177.21086
+    open: true
+  14:
+    value:
+      TransformJson:
+        filter: '{prompt: .}'
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 2273.3801
+      y: 1435.36
+    open: true
+  15:
+    value:
+      Tools:
+        toolset:
+        - chainer/cine-bot
+        size:
+          x: 251.125
+          y: 250.0
+    pos:
+      x: 2767.308
+      y: 1197.4657
+    open: true
+  16:
+    value:
+      InvokeTool:
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 3116.7107
+      y: 1518.6063
+    open: true
+wires:
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 10
+    input: 1
+- out_pin:
+    node: 2
+    output: 0
+  in_pin:
+    node: 10
+    input: 0
+- out_pin:
+    node: 4
+    output: 0
+  in_pin:
+    node: 12
+    input: 3
+- out_pin:
+    node: 5
+    output: 0
+  in_pin:
+    node: 4
+    input: 1
+- out_pin:
+    node: 5
+    output: 1
+  in_pin:
+    node: 14
+    input: 1
+- out_pin:
+    node: 6
+    output: 0
+  in_pin:
+    node: 10
+    input: 2
+- out_pin:
+    node: 7
+    output: 0
+  in_pin:
+    node: 5
+    input: 1
+- out_pin:
+    node: 7
+    output: 0
+  in_pin:
+    node: 10
+    input: 3
+- out_pin:
+    node: 9
+    output: 0
+  in_pin:
+    node: 7
+    input: 0
+- out_pin:
+    node: 10
+    output: 3
+  in_pin:
+    node: 8
+    input: 0
+- out_pin:
+    node: 10
+    output: 3
+  in_pin:
+    node: 11
+    input: 1
+- out_pin:
+    node: 11
+    output: 0
+  in_pin:
+    node: 5
+    input: 0
+- out_pin:
+    node: 13
+    output: 0
+  in_pin:
+    node: 12
+    input: 1
+- out_pin:
+    node: 14
+    output: 0
+  in_pin:
+    node: 16
+    input: 3
+- out_pin:
+    node: 15
+    output: 0
+  in_pin:
+    node: 16
+    input: 1
+start: 0
+finish: 1

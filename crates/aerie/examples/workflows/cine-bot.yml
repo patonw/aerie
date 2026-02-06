@@ -1,0 +1,1245 @@
+description: |-
+  Looks for mentions of movies and television shows then uses tools to find information before answering.
+
+  Demonstrates using the rate limiter tool inside a parallel subgraph.
+
+  Requires tools:
+  - examples/tools/nix/movies-api.mcp
+  - examples/tools/nix/rate-limiter.mcp
+uuid: 5036501d-9f88-4f9e-bb21-0307d92bf679
+nodes:
+  0:
+    value:
+      Start: {}
+    pos:
+      x: -2333.5042
+      y: -751.2097
+    open: true
+  1:
+    value:
+      Finish: {}
+    pos:
+      x: -2323.8171
+      y: -997.61176
+    open: true
+  5:
+    value:
+      CommentNode:
+        comment: |-
+          This could also benefit from the semantic similarity reranking/filtering tool.
+
+          See `examples/workflows/book-board.yml`
+        size:
+          x: 491.0
+          y: 199.5625
+    pos:
+      x: -1346.7053
+      y: 537.22675
+    open: true
+  7:
+    value:
+      Text:
+        value: What is the Night Manager about? Is it worth seeing?
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: -2357.671
+      y: -452.2785
+    open: true
+  14:
+    value:
+      Preview:
+        size:
+          x: 1240.0
+          y: 1146.0
+        uuid: 4292b612-cb57-4cf9-a65f-2b9ded0b7a7d
+    pos:
+      x: -399.59937
+      y: 111.48309
+    open: true
+  16:
+    value:
+      Subgraph:
+        title: Get Info
+        flavor: Iterative
+        parallel: true
+        graph:
+          uuid: 2ffd00eb-644d-4db7-a93d-2095a8d4a445
+          nodes:
+            0:
+              value:
+                Start:
+                  fields:
+                  - - input
+                    - Text
+              pos:
+                x: -3.1646352
+                y: 211.21472
+              open: true
+            1:
+              value:
+                Finish:
+                  fields:
+                  - - json
+                    - Json
+              pos:
+                x: 2648.409
+                y: -86.739395
+              open: true
+            2:
+              value:
+                ParseJson:
+                  text: ''
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 2196.9077
+                y: 19.086702
+              open: true
+            3:
+              value:
+                ParseJson:
+                  text: |-
+                    {
+                    "i": "tt0108394",
+                    "plot": "full"
+                    }
+                  size:
+                    x: 303.0
+                    y: 150.0
+              pos:
+                x: 861.0594
+                y: 39.71583
+              open: true
+            4:
+              value:
+                InvokeTool: {}
+              pos:
+                x: 1775.8955
+                y: -58.80189
+              open: true
+            5:
+              value:
+                Tools:
+                  toolset:
+                  - movies-api/getId
+                  size:
+                    x: 254.0
+                    y: 250.0
+              pos:
+                x: 984.11725
+                y: -506.76328
+              open: true
+            6:
+              value:
+                Subgraph:
+                  title: OMDB Auth
+                  graph:
+                    uuid: 6b36c133-dd1c-42d7-ae3e-4102d70f1844
+                    nodes:
+                      0:
+                        value:
+                          Start:
+                            fields:
+                            - - json
+                              - Json
+                        pos:
+                          x: 0.0
+                          y: 0.0
+                        open: true
+                      1:
+                        value:
+                          Finish:
+                            fields:
+                            - - json
+                              - Json
+                        pos:
+                          x: 1758.5042
+                          y: 8.528793
+                        open: true
+                      2:
+                        value:
+                          EnvironmentNode: {}
+                        pos:
+                          x: 346.61966
+                          y: 121.40132
+                        open: true
+                      3:
+                        value:
+                          GatherJson:
+                            count: 2
+                        pos:
+                          x: 781.9372
+                          y: 9.675581
+                        open: true
+                      4:
+                        value:
+                          TransformJson:
+                            filter: |-
+                              .[0] + {
+                              "apiKey": .[1].OMDB_API_KEY
+                              }
+                            size:
+                              x: 352.0
+                              y: 143.65625
+                        pos:
+                          x: 1171.3671
+                          y: -26.975561
+                        open: true
+                      6:
+                        value:
+                          Preview:
+                            size:
+                              x: 300.0
+                              y: 150.03125
+                            uuid: a77ef35a-24d9-4c6f-b139-561c49c48913
+                        pos:
+                          x: 503.55286
+                          y: -309.79166
+                        open: true
+                    wires:
+                    - out_pin:
+                        node: 0
+                        output: 0
+                      in_pin:
+                        node: 3
+                        input: 0
+                    - out_pin:
+                        node: 0
+                        output: 0
+                      in_pin:
+                        node: 6
+                        input: 0
+                    - out_pin:
+                        node: 2
+                        output: 0
+                      in_pin:
+                        node: 3
+                        input: 1
+                    - out_pin:
+                        node: 3
+                        output: 0
+                      in_pin:
+                        node: 4
+                        input: 1
+                    - out_pin:
+                        node: 4
+                        output: 0
+                      in_pin:
+                        node: 1
+                        input: 0
+                    start: 0
+                    finish: 1
+              pos:
+                x: 1332.7723
+                y: -18.222578
+              open: true
+            7:
+              value:
+                Preview:
+                  size:
+                    x: 962.65625
+                    y: 767.1875
+                  uuid: bca6efe7-8c28-4966-b4bc-97795d31a47a
+              pos:
+                x: 2700.2805
+                y: 259.01675
+              open: true
+            8:
+              value:
+                TemplateNode:
+                  template: |-
+                    {
+                      "i": "{{ value }}",
+                      "plot": "full"
+                    }
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 347.87888
+                y: 22.913246
+              open: true
+            9:
+              value:
+                Preview:
+                  size:
+                    x: 300.0
+                    y: 150.0
+                  uuid: 4bbf016c-27bf-4090-9189-73459084c73e
+              pos:
+                x: 1315.9277
+                y: 395.43024
+              open: true
+            10:
+              value:
+                RhaiNode:
+                  script: sleep(0.25)
+                  inputs:
+                  - - input
+                    - Text
+                  outputs:
+                  - - output
+                    - Text
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 359.23282
+                y: 375.2264
+              open: true
+            11:
+              value:
+                CommentNode:
+                  comment: |-
+                    Can fake rate limiting by sleeping without parallelism.
+
+                    Not actually needed for OMDB as long as calls aren't concurrent.
+                  size:
+                    x: 340.0
+                    y: 240.0
+              pos:
+                x: -81.396515
+                y: 492.0256
+              open: true
+            12:
+              value:
+                Tools:
+                  toolset:
+                  - rate-limiter/limit-omdb
+                  size:
+                    x: 252.0
+                    y: 250.0
+              pos:
+                x: 523.58594
+                y: -1005.63586
+              open: true
+            13:
+              value:
+                InvokeTool:
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 954.1669
+                y: -1064.8462
+              open: true
+            15:
+              value:
+                GateNode:
+                  kind: Tools
+              pos:
+                x: 1390.0883
+                y: -284.4686
+              open: true
+          wires:
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 8
+              input: 1
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 10
+              input: 0
+          - out_pin:
+              node: 2
+              output: 0
+            in_pin:
+              node: 1
+              input: 0
+          - out_pin:
+              node: 2
+              output: 0
+            in_pin:
+              node: 7
+              input: 0
+          - out_pin:
+              node: 3
+              output: 0
+            in_pin:
+              node: 6
+              input: 0
+          - out_pin:
+              node: 3
+              output: 0
+            in_pin:
+              node: 9
+              input: 0
+          - out_pin:
+              node: 4
+              output: 2
+            in_pin:
+              node: 2
+              input: 0
+          - out_pin:
+              node: 5
+              output: 0
+            in_pin:
+              node: 15
+              input: 1
+          - out_pin:
+              node: 6
+              output: 0
+            in_pin:
+              node: 4
+              input: 3
+          - out_pin:
+              node: 8
+              output: 0
+            in_pin:
+              node: 3
+              input: 0
+          - out_pin:
+              node: 12
+              output: 0
+            in_pin:
+              node: 13
+              input: 1
+          - out_pin:
+              node: 13
+              output: 2
+            in_pin:
+              node: 15
+              input: 0
+          - out_pin:
+              node: 15
+              output: 0
+            in_pin:
+              node: 4
+              input: 1
+          disabled:
+          - 10
+          start: 0
+          finish: 1
+    pos:
+      x: -1322.4307
+      y: 101.631874
+    open: true
+  17:
+    value:
+      Preview:
+        size:
+          x: 477.5625
+          y: 211.15625
+        uuid: b4a7cf57-fdd0-445f-8510-e2e51e98d4b5
+    pos:
+      x: -1343.7323
+      y: 857.6753
+    open: true
+  18:
+    value:
+      OutputNode:
+        label: all-results.json
+    pos:
+      x: -1301.4795
+      y: -122.416
+    open: true
+  19:
+    value:
+      ChatNode:
+        prompt: ''
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: -490.49762
+      y: -707.47644
+    open: true
+  20:
+    value:
+      AgentNode:
+        model: openrouter/arcee-ai/trinity-large-preview:free
+        preamble: |-
+          Use the context file to respond to the user's prompt.
+
+          Keep in mind the user's tastes when answering: the user prefers political thrillers and hard science fiction instead of romance and historical drama.
+        temperature: 0.51
+        size:
+          x: 300.0
+          y: 394.0
+    pos:
+      x: -1470.8395
+      y: -1391.661
+    open: true
+  21:
+    value:
+      Subgraph:
+        title: Find Movie IDs
+        graph:
+          uuid: 2044ba36-1abb-4548-93a9-ad2e35c0b336
+          nodes:
+            0:
+              value:
+                Start:
+                  fields:
+                  - - model
+                    - Text
+                  - - chat
+                    - Chat
+                  - - prompt
+                    - Text
+              pos:
+                x: 479.57065
+                y: 112.69501
+              open: true
+            1:
+              value:
+                Finish:
+                  fields:
+                  - - title
+                    - Text
+                  - - everything
+                    - Json
+                  - - movie IDs
+                    - TextList
+              pos:
+                x: 4212.295
+                y: 288.1375
+              open: true
+            2:
+              value:
+                Tools:
+                  toolset:
+                  - movies-api/titleSearch
+                  size:
+                    x: 253.0
+                    y: 250.0
+              pos:
+                x: 762.00397
+                y: -965.1185
+              open: true
+            3:
+              value:
+                AgentNode:
+                  preamble: |-
+                    Follow these instructions exactly. Do not deviate from them. Use the supplied tools. Do not attempt to provide a final answer by yourself. Use any placeholder value for the API key since it will be injected by the client.
+
+                    Extract titles of movie and television shows into the provided format
+                  temperature: 0.0
+                  size:
+                    x: 300.0
+                    y: 394.0
+              pos:
+                x: 1117.5848
+                y: -515.29816
+              open: true
+            4:
+              value:
+                StructuredChat:
+                  prompt: ''
+                  size:
+                    x: 300.0
+                    y: 150.0
+                  retries: 2
+                  extract: true
+              pos:
+                x: 1622.1306
+                y: 72.12548
+              open: true
+            5:
+              value:
+                Subgraph:
+                  title: OMDB Auth
+                  graph:
+                    uuid: 9d16a9ae-8177-491c-80a4-bd79b0153c79
+                    nodes:
+                      0:
+                        value:
+                          Start:
+                            fields:
+                            - - json
+                              - Json
+                        pos:
+                          x: 0.0
+                          y: 0.0
+                        open: true
+                      1:
+                        value:
+                          Finish:
+                            fields:
+                            - - json
+                              - Json
+                        pos:
+                          x: 1758.5042
+                          y: 8.528793
+                        open: true
+                      2:
+                        value:
+                          EnvironmentNode: {}
+                        pos:
+                          x: 346.61966
+                          y: 121.40132
+                        open: true
+                      3:
+                        value:
+                          GatherJson:
+                            count: 2
+                        pos:
+                          x: 781.9372
+                          y: 9.675581
+                        open: true
+                      4:
+                        value:
+                          TransformJson:
+                            filter: |-
+                              .[0] + {
+                              "apiKey": .[1].OMDB_API_KEY
+                              }
+                            size:
+                              x: 352.0
+                              y: 143.65625
+                        pos:
+                          x: 1171.3671
+                          y: -26.975561
+                        open: true
+                    wires:
+                    - out_pin:
+                        node: 0
+                        output: 0
+                      in_pin:
+                        node: 3
+                        input: 0
+                    - out_pin:
+                        node: 2
+                        output: 0
+                      in_pin:
+                        node: 3
+                        input: 1
+                    - out_pin:
+                        node: 3
+                        output: 0
+                      in_pin:
+                        node: 4
+                        input: 1
+                    - out_pin:
+                        node: 4
+                        output: 0
+                      in_pin:
+                        node: 1
+                        input: 0
+                    start: 0
+                    finish: 1
+              pos:
+                x: 2080.0684
+                y: 142.47215
+              open: true
+            6:
+              value:
+                InvokeTool:
+                  tool_name: titleSearch
+              pos:
+                x: 2444.1816
+                y: -41.57982
+              open: true
+            7:
+              value:
+                ParseJson:
+                  text: ''
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 2805.685
+                y: 182.3525
+              open: true
+            8:
+              value:
+                RhaiNode:
+                  script: |-
+                    json
+                      .extract(..10)
+                      .map(|x| x.imdbID)
+                  inputs:
+                  - - json
+                    - Json
+                  outputs:
+                  - - '[textlist]'
+                    - TextList
+                  size:
+                    x: 399.0
+                    y: 178.15625
+              pos:
+                x: 3692.807
+                y: 483.57047
+              open: true
+            9:
+              value:
+                CommentNode:
+                  comment: |-
+                    openapi-mcp docs suggest that API key in query param is supported but code suggests it isn't fully implemented yet.
+
+                    Instead, we inject from environment inside workflow.
+
+                    This isn't necessary for APIs using header auth or bearer tokens.
+                  size:
+                    x: 470.0
+                    y: 313.53125
+              pos:
+                x: 2081.5188
+                y: 614.7992
+              open: true
+            10:
+              value:
+                TransformJson:
+                  filter: sort_by(.Year | split("-") | .[-1] | try tonumber catch 0) | reverse
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 3649.255
+                y: -346.41312
+              open: true
+            11:
+              value:
+                Preview:
+                  size:
+                    x: 1240.0
+                    y: 1146.0
+                  uuid: fc59409e-8d63-4bd0-bc43-5f360c8b7f3f
+              pos:
+                x: 3254.545
+                y: 1109.716
+              open: true
+            12:
+              value:
+                TransformJson:
+                  filter: .Search
+                  size:
+                    x: 130.0
+                    y: 64.0
+              pos:
+                x: 3191.4553
+                y: 181.11935
+              open: true
+            13:
+              value:
+                TemplateNode:
+                  template: '{{ s }}'
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 2068.7407
+                y: -454.42065
+              open: true
+            14:
+              value:
+                CommentNode:
+                  comment: Optionally, order by most recent, though that will tend to prioritize "Making of _" and spin-off shorts.
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 4170.915
+                y: -298.72864
+              open: true
+            15:
+              value:
+                Preview:
+                  size:
+                    x: 455.8125
+                    y: 297.84375
+                  uuid: 24223ebd-bb1d-4fa8-91e9-37fd182bd050
+              pos:
+                x: 1484.1045
+                y: 608.376
+              open: true
+          wires:
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 3
+              input: 1
+          - out_pin:
+              node: 0
+              output: 1
+            in_pin:
+              node: 4
+              input: 1
+          - out_pin:
+              node: 0
+              output: 2
+            in_pin:
+              node: 4
+              input: 3
+          - out_pin:
+              node: 2
+              output: 0
+            in_pin:
+              node: 3
+              input: 3
+          - out_pin:
+              node: 2
+              output: 0
+            in_pin:
+              node: 6
+              input: 1
+          - out_pin:
+              node: 3
+              output: 0
+            in_pin:
+              node: 4
+              input: 0
+          - out_pin:
+              node: 4
+              output: 3
+            in_pin:
+              node: 5
+              input: 0
+          - out_pin:
+              node: 4
+              output: 3
+            in_pin:
+              node: 13
+              input: 1
+          - out_pin:
+              node: 4
+              output: 3
+            in_pin:
+              node: 15
+              input: 0
+          - out_pin:
+              node: 5
+              output: 0
+            in_pin:
+              node: 6
+              input: 3
+          - out_pin:
+              node: 6
+              output: 2
+            in_pin:
+              node: 7
+              input: 0
+          - out_pin:
+              node: 7
+              output: 0
+            in_pin:
+              node: 11
+              input: 0
+          - out_pin:
+              node: 7
+              output: 0
+            in_pin:
+              node: 12
+              input: 1
+          - out_pin:
+              node: 8
+              output: 0
+            in_pin:
+              node: 1
+              input: 2
+          - out_pin:
+              node: 12
+              output: 0
+            in_pin:
+              node: 1
+              input: 1
+          - out_pin:
+              node: 12
+              output: 0
+            in_pin:
+              node: 8
+              input: 0
+          - out_pin:
+              node: 13
+              output: 0
+            in_pin:
+              node: 1
+              input: 0
+          disabled:
+          - 10
+          start: 0
+          finish: 1
+    pos:
+      x: -1744.1614
+      y: -205.08922
+    open: true
+  23:
+    value:
+      Preview:
+        size:
+          x: 1240.0
+          y: 646.03125
+        uuid: 2f5f0ad4-4456-4910-9fb7-e60acce7e063
+    pos:
+      x: -191.23624
+      y: -804.8017
+    open: true
+  24:
+    value:
+      ChatContext:
+        context_doc: ''
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: -914.15643
+      y: -845.1539
+    open: true
+  25:
+    value:
+      Subgraph:
+        title: Trash
+        graph:
+          uuid: 9edb315f-7053-40b7-bdaa-62e4ad86f72b
+          nodes:
+            0:
+              value:
+                Start:
+                  fields:
+                  - - input
+                    - Text
+              pos:
+                x: 0.0
+                y: 0.0
+              open: true
+            1:
+              value:
+                Finish:
+                  fields:
+                  - - output
+                    - Text
+              pos:
+                x: 2000.0
+                y: 0.0
+              open: true
+            2:
+              value:
+                InvokeTool:
+                  tool_name: titleSearch
+              pos:
+                x: 1202.9552
+                y: 1420.8872
+              open: true
+            3:
+              value:
+                Preview:
+                  size:
+                    x: 300.0
+                    y: 150.0
+                  uuid: 57600a21-d355-4896-a7db-11d536a3ca84
+              pos:
+                x: 94.29309
+                y: 1748.4758
+              open: true
+            4:
+              value:
+                ParseJson:
+                  text: ''
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 1572.0156
+                y: 1637.6254
+              open: true
+            5:
+              value:
+                AgentNode:
+                  preamble: Extract titles of movie and television shows into the provided format
+                  temperature: 0.0
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: -1023.5726
+                y: 689.9213
+              open: true
+            6:
+              value:
+                ParseJson:
+                  text: |-
+                    {
+                      "$schema": "http://json-schema.org/draft-04/schema#",
+                      "description": "",
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "title"
+                      ]
+                    }
+                  size:
+                    x: 421.0
+                    y: 292.75
+              pos:
+                x: -1892.8999
+                y: 1119.1125
+              open: true
+            7:
+              value:
+                Subgraph:
+                  title: OMDB Auth
+                  graph:
+                    uuid: 0aa786f5-6831-45c2-a62b-b1838e987764
+                    nodes:
+                      0:
+                        value:
+                          Start:
+                            fields:
+                            - - json
+                              - Json
+                        pos:
+                          x: 0.0
+                          y: 0.0
+                        open: true
+                      1:
+                        value:
+                          Finish:
+                            fields:
+                            - - json
+                              - Json
+                        pos:
+                          x: 1758.5042
+                          y: 8.528793
+                        open: true
+                      2:
+                        value:
+                          EnvironmentNode: {}
+                        pos:
+                          x: 346.61966
+                          y: 121.40132
+                        open: true
+                      3:
+                        value:
+                          GatherJson:
+                            count: 2
+                        pos:
+                          x: 781.9372
+                          y: 9.675581
+                        open: true
+                      4:
+                        value:
+                          TransformJson:
+                            filter: |-
+                              .[0] + {
+                              "apiKey": .[1].OMDB_API_KEY
+                              }
+                            size:
+                              x: 352.0
+                              y: 143.65625
+                        pos:
+                          x: 1171.3671
+                          y: -26.975561
+                        open: true
+                    wires:
+                    - out_pin:
+                        node: 0
+                        output: 0
+                      in_pin:
+                        node: 3
+                        input: 0
+                    - out_pin:
+                        node: 2
+                        output: 0
+                      in_pin:
+                        node: 3
+                        input: 1
+                    - out_pin:
+                        node: 3
+                        output: 0
+                      in_pin:
+                        node: 4
+                        input: 1
+                    - out_pin:
+                        node: 4
+                        output: 0
+                      in_pin:
+                        node: 1
+                        input: 0
+                    start: 0
+                    finish: 1
+              pos:
+                x: 687.90155
+                y: 1435.8328
+              open: true
+            8:
+              value:
+                StructuredChat:
+                  prompt: ''
+                  size:
+                    x: 300.0
+                    y: 150.0
+                  retries: 0
+              pos:
+                x: -522.2
+                y: 1400.2787
+              open: true
+            9:
+              value:
+                TransformJson:
+                  filter: '{s: .title}'
+                  size:
+                    x: 302.0
+                    y: 150.0
+              pos:
+                x: 115.21478
+                y: 1276.4879
+              open: true
+            10:
+              value:
+                Tools:
+                  toolset:
+                  - movies-api/titleSearch
+                  size:
+                    x: 253.0
+                    y: 250.0
+              pos:
+                x: 668.8872
+                y: 1006.2984
+              open: true
+          wires:
+          - out_pin:
+              node: 2
+              output: 2
+            in_pin:
+              node: 4
+              input: 0
+          - out_pin:
+              node: 5
+              output: 0
+            in_pin:
+              node: 8
+              input: 0
+          - out_pin:
+              node: 6
+              output: 0
+            in_pin:
+              node: 8
+              input: 2
+          - out_pin:
+              node: 7
+              output: 0
+            in_pin:
+              node: 2
+              input: 3
+          - out_pin:
+              node: 8
+              output: 3
+            in_pin:
+              node: 3
+              input: 0
+          - out_pin:
+              node: 8
+              output: 3
+            in_pin:
+              node: 9
+              input: 1
+          - out_pin:
+              node: 9
+              output: 0
+            in_pin:
+              node: 7
+              input: 0
+          - out_pin:
+              node: 10
+              output: 0
+            in_pin:
+              node: 2
+              input: 1
+          start: 0
+          finish: 1
+    pos:
+      x: -1668.639
+      y: 1040.4812
+    open: true
+wires:
+- out_pin:
+    node: 0
+    output: 0
+  in_pin:
+    node: 20
+    input: 1
+- out_pin:
+    node: 0
+    output: 0
+  in_pin:
+    node: 21
+    input: 0
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 19
+    input: 1
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 21
+    input: 1
+- out_pin:
+    node: 7
+    output: 0
+  in_pin:
+    node: 19
+    input: 2
+- out_pin:
+    node: 7
+    output: 0
+  in_pin:
+    node: 21
+    input: 2
+- out_pin:
+    node: 16
+    output: 0
+  in_pin:
+    node: 14
+    input: 0
+- out_pin:
+    node: 16
+    output: 0
+  in_pin:
+    node: 24
+    input: 1
+- out_pin:
+    node: 19
+    output: 1
+  in_pin:
+    node: 23
+    input: 0
+- out_pin:
+    node: 20
+    output: 0
+  in_pin:
+    node: 24
+    input: 0
+- out_pin:
+    node: 21
+    output: 1
+  in_pin:
+    node: 18
+    input: 0
+- out_pin:
+    node: 21
+    output: 2
+  in_pin:
+    node: 16
+    input: 0
+- out_pin:
+    node: 21
+    output: 2
+  in_pin:
+    node: 17
+    input: 0
+- out_pin:
+    node: 24
+    output: 0
+  in_pin:
+    node: 19
+    input: 0
+disabled:
+- 25
+start: 0
+finish: 1

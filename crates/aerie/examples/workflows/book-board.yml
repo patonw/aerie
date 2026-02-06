@@ -1,0 +1,1396 @@
+description: |-
+  Takes a single social media post about books and updates a leaderboard of genres/themes.
+
+  Demonstrates use of reranking tools for prioritizing search results both textually and semantically for titles and summaries, respectively.
+
+
+  Requires tools:
+  - examples/tools/nix/openlibrary-oas.mcp
+  - examples/tools/nix/reranker.mcp
+schema: |-
+  {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "username": {
+        "type": "string",
+        "minLength": 1
+      },
+      "message": {
+        "type": "string",
+        "minLength": 1
+      },
+      "timestamp": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "tags": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uniqueItems": true
+      }
+    },
+    "required": [
+      "username",
+      "message",
+      "timestamp",
+      "tags"
+    ],
+    "additionalProperties": false
+  }
+uuid: 678fec0a-e294-4619-a7f1-8a9cfb26224f
+nodes:
+  0:
+    value:
+      Start: {}
+    pos:
+      x: -1535.4117
+      y: -34.346817
+    open: true
+  1:
+    value:
+      Finish: {}
+    pos:
+      x: -1526.5975
+      y: -204.22276
+    open: true
+  4:
+    value:
+      TransformJson:
+        filter: .message
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: -664.64417
+      y: 316.64856
+    open: true
+  5:
+    value:
+      Preview:
+        size:
+          x: 770.65625
+          y: 387.59375
+        uuid: 61460539-db7f-4ff0-81e3-856486c4b20d
+    pos:
+      x: -240.40604
+      y: 737.7597
+    open: true
+  7:
+    value:
+      Subgraph:
+        title: Fetch Book Info
+        flavor: Iterative
+        parallel: true
+        graph:
+          uuid: 96211645-3b52-4362-a9ab-e32489beee90
+          nodes:
+            0:
+              value:
+                Start:
+                  fields:
+                  - - search results
+                    - Json
+              pos:
+                x: -487.9774
+                y: 212.6045
+              open: true
+            1:
+              value:
+                Finish:
+                  fields:
+                  - - book info
+                    - Json
+              pos:
+                x: 1941.5088
+                y: -74.34157
+              open: true
+            2:
+              value:
+                TransformJson:
+                  filter: '{ olid }'
+                  size:
+                    x: 301.0
+                    y: 150.0
+              pos:
+                x: -169.34825
+                y: 141.50462
+              open: true
+            3:
+              value:
+                Tools:
+                  toolset:
+                  - openlibrary-oas/read_books_books
+                  size:
+                    x: 440.0
+                    y: 381.5
+              pos:
+                x: 299.3
+                y: -592.8899
+              open: true
+            4:
+              value:
+                InvokeTool: {}
+              pos:
+                x: 842.8655
+                y: -175.44814
+              open: true
+            5:
+              value:
+                ParseJson:
+                  text: ''
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 1369.8171
+                y: -98.07072
+              open: true
+            6:
+              value:
+                Tools:
+                  toolset:
+                  - rate-limiter/limit-openlib
+                  size:
+                    x: 252.0
+                    y: 250.0
+              pos:
+                x: -538.2777
+                y: -375.6398
+              open: true
+            7:
+              value:
+                InvokeTool:
+                  size:
+                    x: 304.0
+                    y: 150.0
+              pos:
+                x: -167.14561
+                y: -431.26776
+              open: true
+            8:
+              value:
+                GateNode:
+                  kind: Json
+              pos:
+                x: 424.21533
+                y: 73.72119
+              open: true
+          wires:
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 2
+              input: 1
+          - out_pin:
+              node: 2
+              output: 0
+            in_pin:
+              node: 8
+              input: 1
+          - out_pin:
+              node: 3
+              output: 0
+            in_pin:
+              node: 4
+              input: 1
+          - out_pin:
+              node: 4
+              output: 2
+            in_pin:
+              node: 5
+              input: 0
+          - out_pin:
+              node: 5
+              output: 0
+            in_pin:
+              node: 1
+              input: 0
+          - out_pin:
+              node: 6
+              output: 0
+            in_pin:
+              node: 7
+              input: 1
+          - out_pin:
+              node: 7
+              output: 2
+            in_pin:
+              node: 8
+              input: 0
+          - out_pin:
+              node: 8
+              output: 0
+            in_pin:
+              node: 4
+              input: 3
+          start: 0
+          finish: 1
+    pos:
+      x: 2681.4053
+      y: 930.439
+    open: true
+  8:
+    value:
+      Select:
+        count: 1
+        kind: Text
+    pos:
+      x: 1069.1865
+      y: 850.5254
+    open: false
+  9:
+    value:
+      UnwrapJson:
+        kind: Text
+    pos:
+      x: -151.41107
+      y: 346.17545
+    open: true
+  10:
+    value:
+      OutputNode:
+        label: scores.json
+    pos:
+      x: 5730.307
+      y: 898.54614
+    open: true
+  11:
+    value:
+      ValidateJson:
+        schema: |-
+          {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "username": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "username",
+              "message",
+              "timestamp",
+              "tags"
+            ],
+            "additionalProperties": false
+          }
+        size:
+          x: 769.03125
+          y: 407.46875
+    pos:
+      x: -1171.354
+      y: 317.00696
+    open: true
+  12:
+    value:
+      TransformJson:
+        filter: '{items: .}'
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 4773.625
+      y: 863.4745
+    open: true
+  13:
+    value:
+      InvokeTool: {}
+    pos:
+      x: 5306.39
+      y: 679.4916
+    open: true
+  14:
+    value:
+      Tools:
+        toolset:
+        - leaderboard/increment_scores
+        size:
+          x: 257.0
+          y: 250.0
+    pos:
+      x: 4875.816
+      y: 388.1311
+    open: true
+  15:
+    value:
+      Preview:
+        size:
+          x: 1186.875
+          y: 1052.0938
+        uuid: b8661e2f-8c36-4ceb-aef0-2183a1f89b5e
+    pos:
+      x: 2347.251
+      y: -601.5346
+    open: true
+  16:
+    value:
+      Subgraph:
+        title: Rerank titles
+        graph:
+          uuid: e7da46ce-5e47-426b-834f-bd2e196a8222
+          nodes:
+            0:
+              value:
+                Start:
+                  fields:
+                  - - query
+                    - Text
+                  - - json
+                    - Json
+              pos:
+                x: -325.77283
+                y: -53.088955
+              open: true
+            1:
+              value:
+                Finish:
+                  fields:
+                  - - json
+                    - Json
+              pos:
+                x: 2291.5254
+                y: -129.57626
+              open: true
+            2:
+              value:
+                ParseJson:
+                  text: ''
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 1812.1937
+                y: -180.27547
+              open: true
+            3:
+              value:
+                TransformJson:
+                  filter: |-
+                    {
+                     query: .[0],
+                     docs: .[1],
+                     metric: "jaro_winkler",
+                     limit: 10
+                    }
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 969.8956
+                y: -106.32446
+              open: true
+            4:
+              value:
+                GatherJson:
+                  count: 2
+              pos:
+                x: 570.1756
+                y: -45.017643
+              open: true
+            5:
+              value:
+                Tools:
+                  toolset:
+                  - reranker/rerank_docs
+                  size:
+                    x: 276.0
+                    y: 343.3125
+              pos:
+                x: 1041.2864
+                y: -627.72
+              open: true
+            6:
+              value:
+                InvokeTool: {}
+              pos:
+                x: 1440.8461
+                y: -319.3916
+              open: true
+            7:
+              value:
+                TransformJson:
+                  filter: .[] | (.text = .title + " by " + (.author_name // [] | join(" & ")))
+                  size:
+                    x: 313.0
+                    y: 150.0
+              pos:
+                x: 68.5896
+                y: 98.88051
+              open: true
+            8:
+              value:
+                CommentNode:
+                  comment: Compares the inferred title against result entries using string similarity (matching characters vs transpositions).
+                  size:
+                    x: 440.0
+                    y: 231.03125
+              pos:
+                x: 995.80304
+                y: 265.13068
+              open: true
+          wires:
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 4
+              input: 0
+          - out_pin:
+              node: 0
+              output: 1
+            in_pin:
+              node: 7
+              input: 1
+          - out_pin:
+              node: 2
+              output: 0
+            in_pin:
+              node: 1
+              input: 0
+          - out_pin:
+              node: 3
+              output: 0
+            in_pin:
+              node: 6
+              input: 3
+          - out_pin:
+              node: 4
+              output: 0
+            in_pin:
+              node: 3
+              input: 1
+          - out_pin:
+              node: 5
+              output: 0
+            in_pin:
+              node: 6
+              input: 1
+          - out_pin:
+              node: 6
+              output: 2
+            in_pin:
+              node: 2
+              input: 0
+          - out_pin:
+              node: 7
+              output: 0
+            in_pin:
+              node: 4
+              input: 1
+          start: 0
+          finish: 1
+    pos:
+      x: 1723.2047
+      y: 229.22942
+    open: true
+  17:
+    value:
+      Preview:
+        size:
+          x: 641.875
+          y: 780.71875
+        uuid: c15e1ada-345c-4c22-a044-fbaba28aa985
+    pos:
+      x: 3134.4968
+      y: 1395.919
+    open: true
+  19:
+    value:
+      Subgraph:
+        title: Extract & find books
+        graph:
+          uuid: d09f3bd7-f039-4816-8ff4-5f7feab49961
+          nodes:
+            0:
+              value:
+                Start:
+                  fields:
+                  - - model
+                    - Text
+                  - - chat
+                    - Chat
+                  - - message
+                    - Text
+              pos:
+                x: 575.43054
+                y: 8.064617
+              open: true
+            1:
+              value:
+                Finish:
+                  fields:
+                  - - query
+                    - Text
+                  - - search results
+                    - Json
+              pos:
+                x: 3675.7078
+                y: -388.6422
+              open: true
+            2:
+              value:
+                AgentNode:
+                  preamble: "Follow these instructions exactly. Do not deviate from them. \n\nCall the provided tools to query for books mentioned in the user's message. Only put the book title (and the author, if mentioned) in the query and nothing else.\n\nDo not attempt to respond directly to the user. Do not hallucinate final answers."
+                  size:
+                    x: 301.28125
+                    y: 261.09375
+              pos:
+                x: 1221.2896
+                y: -481.8581
+              open: true
+            4:
+              value:
+                UnwrapJson:
+                  kind: Text
+              pos:
+                x: 2808.6306
+                y: -459.514
+              open: true
+            5:
+              value:
+                TransformJson:
+                  filter: .q
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 2369.5098
+                y: -455.2288
+              open: true
+            6:
+              value:
+                TransformJson:
+                  filter: '[.docs[:20] | .[] | {author_name, title, first_publish_year, olid: .key | ltrimstr("/works/")}]'
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 3171.0447
+                y: -189.21613
+              open: true
+            7:
+              value:
+                StructuredChat:
+                  prompt: ''
+                  size:
+                    x: 300.0
+                    y: 150.0
+                  retries: 3
+                  extract: true
+              pos:
+                x: 1766.3435
+                y: -62.98883
+              open: true
+            8:
+              value:
+                CommentNode:
+                  comment: Takes an unstructured message and extracts a book title to find relevant records
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 1893.638
+                y: -916.6291
+              open: true
+            9:
+              value:
+                Tools:
+                  toolset:
+                  - openlibrary-oas/read_search_json_search_json_get
+                  size:
+                    x: 387.0
+                    y: 836.1875
+              pos:
+                x: 715.4868
+                y: -1845.4728
+              open: true
+            10:
+              value:
+                Preview:
+                  size:
+                    x: 446.78125
+                    y: 222.96875
+                  uuid: 19256b53-1273-4df6-9972-056e12c27ece
+              pos:
+                x: 2217.1572
+                y: 502.10126
+              open: true
+            11:
+              value:
+                InvokeTool: {}
+              pos:
+                x: 2354.4631
+                y: -71.584045
+              open: true
+            12:
+              value:
+                Preview:
+                  size:
+                    x: 2267.0625
+                    y: 1302.4062
+                  uuid: 94359fe6-36fd-47d4-8cc3-f2126a5bf333
+              pos:
+                x: 3091.8384
+                y: 538.34045
+              open: true
+            13:
+              value:
+                ParseJson:
+                  text: ''
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 2822.2322
+                y: -101.77295
+              open: true
+          wires:
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 2
+              input: 1
+          - out_pin:
+              node: 0
+              output: 1
+            in_pin:
+              node: 7
+              input: 1
+          - out_pin:
+              node: 0
+              output: 2
+            in_pin:
+              node: 7
+              input: 3
+          - out_pin:
+              node: 2
+              output: 0
+            in_pin:
+              node: 7
+              input: 0
+          - out_pin:
+              node: 4
+              output: 0
+            in_pin:
+              node: 1
+              input: 0
+          - out_pin:
+              node: 5
+              output: 0
+            in_pin:
+              node: 4
+              input: 0
+          - out_pin:
+              node: 6
+              output: 0
+            in_pin:
+              node: 1
+              input: 1
+          - out_pin:
+              node: 7
+              output: 3
+            in_pin:
+              node: 5
+              input: 1
+          - out_pin:
+              node: 7
+              output: 3
+            in_pin:
+              node: 10
+              input: 0
+          - out_pin:
+              node: 7
+              output: 3
+            in_pin:
+              node: 11
+              input: 3
+          - out_pin:
+              node: 9
+              output: 0
+            in_pin:
+              node: 2
+              input: 3
+          - out_pin:
+              node: 9
+              output: 0
+            in_pin:
+              node: 11
+              input: 1
+          - out_pin:
+              node: 11
+              output: 2
+            in_pin:
+              node: 12
+              input: 0
+          - out_pin:
+              node: 11
+              output: 2
+            in_pin:
+              node: 13
+              input: 0
+          - out_pin:
+              node: 13
+              output: 0
+            in_pin:
+              node: 6
+              input: 1
+          start: 0
+          finish: 1
+    pos:
+      x: 244.91028
+      y: -33.792877
+    open: true
+  20:
+    value:
+      TransformJson:
+        filter: '[.[] | .subjects | select(.)] | flatten | map( ascii_downcase) | unique'
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 4279.231
+      y: 835.9398
+    open: true
+  21:
+    value:
+      Preview:
+        size:
+          x: 1123.4062
+          y: 976.6875
+        uuid: de6f7261-6264-4512-b4d6-0c5a869fa4e5
+    pos:
+      x: 5283.311
+      y: 1302.2395
+    open: true
+  22:
+    value:
+      TransformJson:
+        filter: .[] | select(.)
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 1271.9365
+      y: 392.09012
+    open: true
+  23:
+    value:
+      TransformJson:
+        filter: '[.[0]]'
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 3758.4167
+      y: 853.4892
+    open: true
+  25:
+    value:
+      Subgraph:
+        title: Rerank descriptions
+        graph:
+          uuid: 5fa39da8-e209-4715-8acc-e7bfc8869711
+          nodes:
+            0:
+              value:
+                Start:
+                  fields:
+                  - - query
+                    - Text
+                  - - json
+                    - Json
+              pos:
+                x: -901.9532
+                y: -73.53059
+              open: true
+            1:
+              value:
+                Finish:
+                  fields:
+                  - - json
+                    - Json
+              pos:
+                x: 2728.2588
+                y: 94.36743
+              open: true
+            2:
+              value:
+                ParseJson:
+                  text: ''
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 2090.5671
+                y: -214.63261
+              open: true
+            3:
+              value:
+                TransformJson:
+                  filter: |-
+                    {
+                     query: .[0],
+                     docs: .[1],
+                     metric: "semantic",
+                    }
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: 1248.27
+                y: -140.6817
+              open: true
+            4:
+              value:
+                GatherJson:
+                  count: 2
+              pos:
+                x: 848.7931
+                y: -65.14133
+              open: true
+            5:
+              value:
+                Tools:
+                  toolset:
+                  - reranker/rerank_docs
+                  size:
+                    x: 276.0
+                    y: 343.3125
+              pos:
+                x: 1314.6158
+                y: -695.7073
+              open: true
+            6:
+              value:
+                InvokeTool: {}
+              pos:
+                x: 1719.2202
+                y: -353.7487
+              open: true
+            7:
+              value:
+                TransformJson:
+                  filter: '[.[] | select(.description) |(.text = (.description | .value? // . | tostring))]'
+                  size:
+                    x: 291.0
+                    y: 143.09375
+              pos:
+                x: -469.47623
+                y: 165.26016
+              open: true
+            8:
+              value:
+                CommentNode:
+                  comment: |-
+                    Compares the input message against each summary using semantic similarity. Entries that are closer in meaning to the user's posts ar ranked higher.
+                    Since the nature of posts is quite different from summaries, they will not be very similar on an absolute scale.
+                    However, common occurences of the same people or places or even similar concepts will differentiate the entries.
+                  size:
+                    x: 551.0
+                    y: 360.0625
+              pos:
+                x: -1122.5775
+                y: -865.0529
+              open: true
+            9:
+              value:
+                TransformJson:
+                  filter: length
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: -57.935406
+                y: 60.203773
+              open: true
+            10:
+              value:
+                Matcher:
+                  kind: Json
+                  patterns:
+                  - '0'
+                  exact: true
+              pos:
+                x: 342.49286
+                y: 319.45032
+              open: true
+            11:
+              value:
+                Select:
+                  count: 2
+                  kind: Json
+              pos:
+                x: 2438.3389
+                y: 36.456398
+              open: true
+            12:
+              value:
+                Demote:
+                  priority: 0
+                  kind: Json
+              pos:
+                x: -432.10364
+                y: 752.0078
+              open: true
+            13:
+              value:
+                CommentNode:
+                  comment: Only rerank if descriptions available.
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: -58.83834
+                y: -281.682
+              open: true
+            14:
+              value:
+                CommentNode:
+                  comment: If no descriptions, default to the original input.
+                  size:
+                    x: 300.0
+                    y: 150.0
+              pos:
+                x: -107.25327
+                y: 972.30286
+              open: true
+          wires:
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 4
+              input: 0
+          - out_pin:
+              node: 0
+              output: 1
+            in_pin:
+              node: 7
+              input: 1
+          - out_pin:
+              node: 0
+              output: 1
+            in_pin:
+              node: 12
+              input: 0
+          - out_pin:
+              node: 2
+              output: 0
+            in_pin:
+              node: 11
+              input: 0
+          - out_pin:
+              node: 3
+              output: 0
+            in_pin:
+              node: 6
+              input: 3
+          - out_pin:
+              node: 4
+              output: 0
+            in_pin:
+              node: 3
+              input: 1
+          - out_pin:
+              node: 5
+              output: 0
+            in_pin:
+              node: 6
+              input: 1
+          - out_pin:
+              node: 6
+              output: 2
+            in_pin:
+              node: 2
+              input: 0
+          - out_pin:
+              node: 7
+              output: 0
+            in_pin:
+              node: 9
+              input: 1
+          - out_pin:
+              node: 7
+              output: 0
+            in_pin:
+              node: 10
+              input: 1
+          - out_pin:
+              node: 9
+              output: 0
+            in_pin:
+              node: 10
+              input: 0
+          - out_pin:
+              node: 10
+              output: 1
+            in_pin:
+              node: 4
+              input: 1
+          - out_pin:
+              node: 11
+              output: 0
+            in_pin:
+              node: 1
+              input: 0
+          - out_pin:
+              node: 12
+              output: 0
+            in_pin:
+              node: 11
+              input: 1
+          start: 0
+          finish: 1
+    pos:
+      x: 3196.1162
+      y: 797.9865
+    open: true
+  27:
+    value:
+      Subgraph:
+        title: Apply Blacklist
+        flavor: Iterative
+        parallel: true
+        graph:
+          uuid: 09da3201-9c2b-4d59-ac75-807870b3dbec
+          nodes:
+            0:
+              value:
+                Start:
+                  fields:
+                  - - doc
+                    - Json
+              pos:
+                x: 0.0
+                y: 0.0
+              open: true
+            1:
+              value:
+                Finish:
+                  fields:
+                  - - json
+                    - Json
+              pos:
+                x: 2000.0
+                y: 0.0
+              open: true
+            2:
+              value:
+                RhaiNode:
+                  name: Blacklist filter
+                  script: |-
+                    let nope = #{};
+
+                    for it in blacklist.to_lower().split() {
+                      nope[it] = 1;
+                    }
+
+                    for word in doc.title.to_lower().split() {
+                      if nope.contains(word) {
+                        return ();
+                      }
+                    }
+
+                    doc
+                  inputs:
+                  - - blacklist
+                    - Text
+                  - - doc
+                    - Json
+                  outputs:
+                  - - json
+                    - Json
+                  size:
+                    x: 536.0
+                    y: 367.25
+              pos:
+                x: 856.0379
+                y: -292.6048
+              open: true
+            3:
+              value:
+                Text:
+                  value: |-
+                    Bible
+                    summary
+                    analysis
+                    review
+                    workbook
+                    study
+                    guide
+                  size:
+                    x: 363.0
+                    y: 192.6875
+              pos:
+                x: 330.3463
+                y: -522.3118
+              open: true
+          wires:
+          - out_pin:
+              node: 0
+              output: 0
+            in_pin:
+              node: 2
+              input: 1
+          - out_pin:
+              node: 2
+              output: 0
+            in_pin:
+              node: 1
+              input: 0
+          - out_pin:
+              node: 3
+              output: 0
+            in_pin:
+              node: 2
+              input: 0
+          start: 0
+          finish: 1
+    pos:
+      x: 858.89636
+      y: 327.69376
+    open: true
+  28:
+    value:
+      Preview:
+        size:
+          x: 817.0625
+          y: 457.0
+        uuid: 50e4c47f-71c0-4a01-ade3-841662a2d64c
+    pos:
+      x: 846.6301
+      y: -458.56522
+    open: true
+  29:
+    value:
+      Preview:
+        size:
+          x: 300.0
+          y: 150.0
+        uuid: 0c543a77-2d65-4f93-9af5-6d7814738112
+    pos:
+      x: 834.7071
+      y: -808.0636
+    open: true
+  30:
+    value:
+      TransformJson:
+        filter: .[:5]
+        size:
+          x: 290.0
+          y: 143.09375
+    pos:
+      x: 2205.0327
+      y: 934.5687
+    open: true
+  31:
+    value:
+      Preview:
+        size:
+          x: 1134.8125
+          y: 976.40625
+        uuid: 3806f245-b0dc-46b3-baa5-f53ed2bd7eb6
+    pos:
+      x: 3864.3174
+      y: 1302.3842
+    open: true
+wires:
+- out_pin:
+    node: 0
+    output: 0
+  in_pin:
+    node: 19
+    input: 0
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 19
+    input: 1
+- out_pin:
+    node: 0
+    output: 3
+  in_pin:
+    node: 11
+    input: 0
+- out_pin:
+    node: 0
+    output: 4
+  in_pin:
+    node: 11
+    input: 1
+- out_pin:
+    node: 4
+    output: 0
+  in_pin:
+    node: 5
+    input: 0
+- out_pin:
+    node: 4
+    output: 0
+  in_pin:
+    node: 9
+    input: 0
+- out_pin:
+    node: 7
+    output: 0
+  in_pin:
+    node: 17
+    input: 0
+- out_pin:
+    node: 7
+    output: 0
+  in_pin:
+    node: 25
+    input: 1
+- out_pin:
+    node: 8
+    output: 0
+  in_pin:
+    node: 25
+    input: 0
+- out_pin:
+    node: 9
+    output: 0
+  in_pin:
+    node: 8
+    input: 0
+- out_pin:
+    node: 9
+    output: 0
+  in_pin:
+    node: 19
+    input: 2
+- out_pin:
+    node: 11
+    output: 0
+  in_pin:
+    node: 4
+    input: 1
+- out_pin:
+    node: 12
+    output: 0
+  in_pin:
+    node: 13
+    input: 3
+- out_pin:
+    node: 12
+    output: 0
+  in_pin:
+    node: 21
+    input: 0
+- out_pin:
+    node: 13
+    output: 2
+  in_pin:
+    node: 10
+    input: 0
+- out_pin:
+    node: 14
+    output: 0
+  in_pin:
+    node: 13
+    input: 1
+- out_pin:
+    node: 16
+    output: 0
+  in_pin:
+    node: 15
+    input: 0
+- out_pin:
+    node: 16
+    output: 0
+  in_pin:
+    node: 30
+    input: 1
+- out_pin:
+    node: 19
+    output: 0
+  in_pin:
+    node: 16
+    input: 0
+- out_pin:
+    node: 19
+    output: 0
+  in_pin:
+    node: 29
+    input: 0
+- out_pin:
+    node: 19
+    output: 1
+  in_pin:
+    node: 27
+    input: 0
+- out_pin:
+    node: 19
+    output: 1
+  in_pin:
+    node: 28
+    input: 0
+- out_pin:
+    node: 20
+    output: 0
+  in_pin:
+    node: 12
+    input: 1
+- out_pin:
+    node: 22
+    output: 0
+  in_pin:
+    node: 16
+    input: 1
+- out_pin:
+    node: 23
+    output: 0
+  in_pin:
+    node: 20
+    input: 1
+- out_pin:
+    node: 25
+    output: 0
+  in_pin:
+    node: 23
+    input: 1
+- out_pin:
+    node: 25
+    output: 0
+  in_pin:
+    node: 31
+    input: 0
+- out_pin:
+    node: 27
+    output: 0
+  in_pin:
+    node: 22
+    input: 1
+- out_pin:
+    node: 30
+    output: 0
+  in_pin:
+    node: 7
+    input: 0
+start: 0
+finish: 1

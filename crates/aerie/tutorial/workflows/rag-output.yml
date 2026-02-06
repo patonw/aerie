@@ -1,4 +1,15 @@
----
+description: |-
+  #no-prompt
+  Example of uses multiple agents in a chain.
+
+  Uses one simple agent to create a query for a search tool.
+
+  Then feeds the search results to another agent to perform retrieval augmented generation (RAG).
+
+  Requires the qdrant-local.mcp tool found in the examples/tools/nix folder.
+
+  Run the rag-index tutorial first to populate the database.
+uuid: cc52aa2c-f254-46f4-8fdd-36cc13a94248
 nodes:
   0:
     value:
@@ -19,7 +30,7 @@ nodes:
       AgentNode:
         preamble: |-
           In one sentence create a search query to find information relevant to the user's prompt that can be used in a dedicated search index.
-          
+
           Do not preface your answer with things like "Sure, here's your query" etc. Do not explain why you've chosen this query. Just print the query and stop.
         size:
           x: 401.25
@@ -31,10 +42,10 @@ nodes:
   3:
     value:
       ChatNode:
-        prompt: ""
+        prompt: ''
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
       x: 765.6301
       y: 647.2964
@@ -52,10 +63,10 @@ nodes:
       CommentNode:
         comment: |-
           Convert the query text into JSON.
-          
+
           The Gather JSON node only takes one value in this instance, but is capable of converting multiple items into a single JSON document.
         size:
-          x: 325
+          x: 325.0
           y: 310.3125
     pos:
       x: 1041.3798
@@ -64,49 +75,44 @@ nodes:
   6:
     value:
       Text:
-        value: How does goose find extensions?
+        value: Who supports Rust?
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
-      x: -198.76572
-      y: 505.27048
-    open: true
-  7:
-    value:
-      GatherJson:
-        count: 1
-    pos:
-      x: 1061.4155
-      y: 829.88696
+      x: -303.41223
+      y: 535.2831
     open: true
   8:
     value:
       TransformJson:
         filter: |-
           {
-            "text": .[0]
+            query: .content,
+            collection_name: "rust-book"
           }
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
-      x: 1488.3414
-      y: 565.87256
+      x: 1461.2013
+      y: 629.36957
     open: true
   9:
     value:
       Tools:
         toolset:
-          - embcp-goose/search_repo
+        - qdrant-local/qdrant-find
+        size:
+          x: 252.0
+          y: 250.0
     pos:
-      x: 1538.3572
-      y: -42.03032
+      x: 1455.057
+      y: -161.43286
     open: true
   10:
     value:
-      InvokeTool:
-        tool_name: search_repo
+      InvokeTool: {}
     pos:
       x: 1934.593
       y: 399.129
@@ -115,8 +121,9 @@ nodes:
     value:
       Preview:
         size:
-          x: 1120
+          x: 1120.0
           y: 438.71875
+        uuid: 1fe2c49d-4d80-4f37-8525-2d0b47e53012
     pos:
       x: 2435.274
       y: 810.96826
@@ -124,10 +131,10 @@ nodes:
   12:
     value:
       ChatNode:
-        prompt: ""
+        prompt: ''
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
       x: 2848.0818
       y: 16.90733
@@ -135,10 +142,10 @@ nodes:
   13:
     value:
       AgentNode:
-        preamble: ""
+        preamble: Use the context file to answer the question. Do not hallucinate your response. Ensure your response is grounded in the provided context.
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
       x: 1869.2515
       y: -487.59662
@@ -146,10 +153,10 @@ nodes:
   14:
     value:
       ChatContext:
-        context_doc: ""
+        context_doc: ''
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
       x: 2379.8267
       y: -177.23001
@@ -167,10 +174,10 @@ nodes:
       CommentNode:
         comment: |-
           Gather JSON always produces an array. We need a more specific format for calling the tool which the Transform JSON node can produce.
-          
+
           The actual structure of the arguments will vary by tool. Refer to the tool documentation or schema.
         size:
-          x: 363
+          x: 363.0
           y: 366.625
     pos:
       x: 1465.8795
@@ -181,8 +188,8 @@ nodes:
       CommentNode:
         comment: Enabling the system message but leaving it blank erases it from the previous agent.
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
       x: 1885.153
       y: -797.32715
@@ -192,10 +199,10 @@ nodes:
       CommentNode:
         comment: |-
           Provide the search results as context.
-          
+
           There are other ways to do this. See the `toolhead` example for more ideas.
         size:
-          x: 328
+          x: 328.0
           y: 235.1875
     pos:
       x: 2365.1125
@@ -220,13 +227,13 @@ nodes:
   21:
     value:
       CommentNode:
-        comment: |-
-          
+        comment: |2-
+
           Even though agents are capable of calling tools directly or generating tool calls, the control and specificity of this method can give faster and more sensible results in many circumstances.
-          
+
           The trade-off is that it requires more design by the workflow author and does not generalize well.
         size:
-          x: 552
+          x: 552.0
           y: 355.78125
     pos:
       x: 795.0218
@@ -237,152 +244,129 @@ nodes:
       CommentNode:
         comment: |-
           This workflow does not use the global prompt.
-          
+
           You should notify users in the description when doing something similar.
         size:
-          x: 316
+          x: 316.0
           y: 218.84375
     pos:
-      x: -353.02386
-      y: 126.45344
+      x: -397.16388
+      y: 183.07503
     open: true
 wires:
-  - out_pin:
-      node: 0
-      output: 0
-    in_pin:
-      node: 2
-      input: 1
-  - out_pin:
-      node: 0
-      output: 1
-    in_pin:
-      node: 2
-      input: 2
-  - out_pin:
-      node: 0
-      output: 2
-    in_pin:
-      node: 4
-      input: 0
-  - out_pin:
-      node: 2
-      output: 0
-    in_pin:
-      node: 3
-      input: 0
-  - out_pin:
-      node: 2
-      output: 0
-    in_pin:
-      node: 13
-      input: 0
-  - out_pin:
-      node: 3
-      output: 1
-    in_pin:
-      node: 7
-      input: 0
-  - out_pin:
-      node: 3
-      output: 1
-    in_pin:
-      node: 19
-      input: 0
-  - out_pin:
-      node: 4
-      output: 0
-    in_pin:
-      node: 3
-      input: 1
-  - out_pin:
-      node: 4
-      output: 0
-    in_pin:
-      node: 10
-      input: 0
-  - out_pin:
-      node: 4
-      output: 0
-    in_pin:
-      node: 12
-      input: 1
-  - out_pin:
-      node: 6
-      output: 0
-    in_pin:
-      node: 3
-      input: 2
-  - out_pin:
-      node: 6
-      output: 0
-    in_pin:
-      node: 12
-      input: 2
-  - out_pin:
-      node: 7
-      output: 0
-    in_pin:
-      node: 8
-      input: 1
-  - out_pin:
-      node: 8
-      output: 0
-    in_pin:
-      node: 10
-      input: 3
-  - out_pin:
-      node: 9
-      output: 0
-    in_pin:
-      node: 10
-      input: 1
-  - out_pin:
-      node: 10
-      output: 2
-    in_pin:
-      node: 11
-      input: 0
-  - out_pin:
-      node: 10
-      output: 2
-    in_pin:
-      node: 14
-      input: 1
-  - out_pin:
-      node: 10
-      output: 2
-    in_pin:
-      node: 20
-      input: 0
-  - out_pin:
-      node: 12
-      output: 0
-    in_pin:
-      node: 1
-      input: 0
-  - out_pin:
-      node: 12
-      output: 1
-    in_pin:
-      node: 15
-      input: 0
-  - out_pin:
-      node: 13
-      output: 0
-    in_pin:
-      node: 14
-      input: 0
-  - out_pin:
-      node: 14
-      output: 0
-    in_pin:
-      node: 12
-      input: 0
-description: |-
-  #no-prompt
-  Example of uses multiple agents in a chain.
-  
-  Uses one simple agent to create a query for a search tool.
-  
-  Then feeds the search results to another agent to perform retrieval augmented generation (RAG).
+- out_pin:
+    node: 0
+    output: 0
+  in_pin:
+    node: 2
+    input: 1
+- out_pin:
+    node: 0
+    output: 1
+  in_pin:
+    node: 2
+    input: 2
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 4
+    input: 0
+- out_pin:
+    node: 2
+    output: 0
+  in_pin:
+    node: 3
+    input: 0
+- out_pin:
+    node: 2
+    output: 0
+  in_pin:
+    node: 13
+    input: 0
+- out_pin:
+    node: 3
+    output: 1
+  in_pin:
+    node: 8
+    input: 1
+- out_pin:
+    node: 3
+    output: 1
+  in_pin:
+    node: 19
+    input: 0
+- out_pin:
+    node: 4
+    output: 0
+  in_pin:
+    node: 12
+    input: 1
+- out_pin:
+    node: 6
+    output: 0
+  in_pin:
+    node: 3
+    input: 2
+- out_pin:
+    node: 6
+    output: 0
+  in_pin:
+    node: 12
+    input: 2
+- out_pin:
+    node: 8
+    output: 0
+  in_pin:
+    node: 10
+    input: 3
+- out_pin:
+    node: 9
+    output: 0
+  in_pin:
+    node: 10
+    input: 1
+- out_pin:
+    node: 10
+    output: 2
+  in_pin:
+    node: 11
+    input: 0
+- out_pin:
+    node: 10
+    output: 2
+  in_pin:
+    node: 14
+    input: 1
+- out_pin:
+    node: 10
+    output: 2
+  in_pin:
+    node: 20
+    input: 0
+- out_pin:
+    node: 12
+    output: 0
+  in_pin:
+    node: 1
+    input: 0
+- out_pin:
+    node: 12
+    output: 1
+  in_pin:
+    node: 15
+    input: 0
+- out_pin:
+    node: 13
+    output: 0
+  in_pin:
+    node: 14
+    input: 0
+- out_pin:
+    node: 14
+    output: 0
+  in_pin:
+    node: 12
+    input: 0
+start: 0
+finish: 1
