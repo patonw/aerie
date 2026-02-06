@@ -1,5 +1,8 @@
 type: Stdio
-env: BUCKET_foobar=2/10c
+env: |-
+  BUCKET_omdb=1/10c
+  BUCKET_openlib=3/s
+  BUCKET_openrouter=20/m
 command: nix-shell
 args:
 - -p

@@ -50,7 +50,7 @@ nodes:
         toolset:
         - chainer/rag-qdrant
         size:
-          x: 250.0
+          x: 251.125
           y: 250.0
     pos:
       x: 1737.8439
@@ -109,7 +109,7 @@ nodes:
                   toolset:
                   - qdrant-local/qdrant-store
                   size:
-                    x: 250.0
+                    x: 251.125
                     y: 250.0
               pos:
                 x: 909.29114
@@ -240,7 +240,7 @@ nodes:
                   toolset:
                   - qdrant-local/qdrant-find
                   size:
-                    x: 250.0
+                    x: 251.125
                     y: 250.0
               pos:
                 x: 863.12
@@ -588,8 +588,8 @@ nodes:
           x: 300.0
           y: 244.0
     pos:
-      x: 389.95227
-      y: -1880.4895
+      x: 325.83417
+      y: -1878.6454
     open: true
   16:
     value:
@@ -749,6 +749,12 @@ wires:
   in_pin:
     node: 15
     input: 1
+- out_pin:
+    node: 0
+    output: 1
+  in_pin:
+    node: 15
+    input: 2
 - out_pin:
     node: 0
     output: 2

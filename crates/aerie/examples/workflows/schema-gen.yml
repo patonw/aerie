@@ -1,0 +1,300 @@
+description: |-
+  Uses an LLM to generate a schema and examples.
+
+  Models will differ in ability to produce correct schemas. Generating examples helps validate the schema.
+uuid: 1944a8a1-6b41-4bf5-94b8-de4c2294ead9
+nodes:
+  0:
+    value:
+      Start: {}
+    pos:
+      x: -604.5994
+      y: -514.0077
+    open: true
+  1:
+    value:
+      Finish: {}
+    pos:
+      x: -602.9517
+      y: -689.56506
+    open: true
+  2:
+    value:
+      AgentNode: {}
+    pos:
+      x: -238.22824
+      y: -707.8996
+    open: true
+  3:
+    value:
+      ChatNode:
+        prompt: ''
+        size:
+          x: 300.0
+          y: 304.0
+    pos:
+      x: 285.16904
+      y: -472.2041
+    open: true
+  4:
+    value:
+      Preview:
+        size:
+          x: 862.875
+          y: 669.5625
+        uuid: f28b2cc0-3223-4601-bc42-08c915e974bc
+    pos:
+      x: 2127.4753
+      y: 302.36887
+    open: true
+  5:
+    value:
+      Text:
+        value: Generate a JSON schema a book record containing a  title and optionally, an author.
+        size:
+          x: 493.09375
+          y: 214.03125
+    pos:
+      x: -1229.3323
+      y: -144.83876
+    open: true
+  6:
+    value:
+      ParseJson:
+        text: |-
+          {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "entries": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "username": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "timestamp": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "uniqueItems": true
+                    }
+                  },
+                  "required": ["username", "message", "timestamp", "tags"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": ["entries"],
+            "additionalProperties": false
+          }
+        size:
+          x: 530.0
+          y: 418.28125
+    pos:
+      x: -959.99176
+      y: 988.9952
+    open: true
+  7:
+    value:
+      StructuredChat:
+        prompt: Generate 10 examples from this schema and submit them via the provided function.
+        size:
+          x: 300.0
+          y: 150.0
+        retries: 3
+        extract: true
+    pos:
+      x: 1623.0023
+      y: 500.89087
+    open: true
+  8:
+    value:
+      AgentNode:
+        temperature: 0.75
+    pos:
+      x: 723.2644
+      y: 301.24484
+    open: true
+  9:
+    value:
+      OutputNode:
+        label: examples.json
+    pos:
+      x: 2263.9692
+      y: 1243.9406
+    open: true
+  10:
+    value:
+      OutputNode:
+        label: schema.json
+    pos:
+      x: 1675.0127
+      y: -97.529495
+    open: true
+  11:
+    value:
+      ParseJson:
+        text: ''
+        extract: true
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 1185.2792
+      y: -222.54306
+    open: true
+  12:
+    value:
+      TemplateNode:
+        template: '{{ value }}'
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 927.65106
+      y: -810.79755
+    open: true
+  13:
+    value:
+      Preview:
+        size:
+          x: 904.9375
+          y: 534.4375
+        uuid: b1005941-7204-4de5-9248-a3d8c828690b
+    pos:
+      x: 2113.75
+      y: -550.4431
+    open: true
+  14:
+    value:
+      Text:
+        value: Generate a JSON schema for storing social media messages. It should be an object with an "entries" property. Each item in entries should include a username, message, timestamp and list of tags.
+        size:
+          x: 551.0
+          y: 235.65625
+    pos:
+      x: -1251.1888
+      y: 267.825
+    open: true
+  15:
+    value:
+      MaskHistory:
+        limit: 0
+    pos:
+      x: 732.8759
+      y: 647.6336
+    open: true
+wires:
+- out_pin:
+    node: 0
+    output: 0
+  in_pin:
+    node: 2
+    input: 1
+- out_pin:
+    node: 0
+    output: 1
+  in_pin:
+    node: 2
+    input: 2
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 3
+    input: 1
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 15
+    input: 0
+- out_pin:
+    node: 2
+    output: 0
+  in_pin:
+    node: 3
+    input: 0
+- out_pin:
+    node: 2
+    output: 0
+  in_pin:
+    node: 8
+    input: 0
+- out_pin:
+    node: 3
+    output: 1
+  in_pin:
+    node: 11
+    input: 0
+- out_pin:
+    node: 3
+    output: 1
+  in_pin:
+    node: 12
+    input: 1
+- out_pin:
+    node: 7
+    output: 3
+  in_pin:
+    node: 4
+    input: 0
+- out_pin:
+    node: 7
+    output: 3
+  in_pin:
+    node: 9
+    input: 0
+- out_pin:
+    node: 8
+    output: 0
+  in_pin:
+    node: 7
+    input: 0
+- out_pin:
+    node: 11
+    output: 0
+  in_pin:
+    node: 7
+    input: 2
+- out_pin:
+    node: 11
+    output: 0
+  in_pin:
+    node: 10
+    input: 0
+- out_pin:
+    node: 11
+    output: 0
+  in_pin:
+    node: 13
+    input: 0
+- out_pin:
+    node: 14
+    output: 0
+  in_pin:
+    node: 3
+    input: 2
+- out_pin:
+    node: 15
+    output: 0
+  in_pin:
+    node: 7
+    input: 1
+disabled:
+- 6
+start: 0
+finish: 1
