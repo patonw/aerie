@@ -447,6 +447,15 @@ impl StructuredChat {
             _ => Err(WorkflowError::Required(vec!["A prompt is required".into()]))?,
         };
 
+        let validator = if let Some(schema) = schema.as_ref() {
+            Some(
+                jsonschema::validator_for(schema)
+                    .map_err(|err| anyhow::anyhow!("Invalid schema: {err:?}"))?,
+            )
+        } else {
+            None
+        };
+
         if let Some(schema) = &schema {
             Arc::make_mut(&mut agent_spec).schema(schema.clone());
         }
@@ -543,20 +552,22 @@ impl StructuredChat {
                     chat = chat.try_moo(|c| c.push(Ok(agent_msg).into()))?;
 
                     if let Some(tool_func) = tool_func {
-                        if let Some(schema) = schema.as_ref()
-                            && let Err(err) = jsonschema::validate(schema, &tool_func.arguments)
-                        {
-                            if attempts >= max_attempts {
-                                break Err(WorkflowError::Validation(err.to_owned()));
-                            } else {
-                                if let Some(scratch) = &run_ctx.scratch {
-                                    scratch.push_back(Err(format!("{err:?}")));
+                        if let Some(validator) = &validator {
+                            // Invalid schema non-retryable
+
+                            if let Err(err) = validator.validate(&tool_func.arguments) {
+                                if attempts >= max_attempts {
+                                    break Err(WorkflowError::Validation(err.to_owned()));
+                                } else {
+                                    if let Some(scratch) = &run_ctx.scratch {
+                                        scratch.push_back(Err(format!("{err:?}")));
+                                    }
+                                    chat = chat.try_moo(|c| {
+                                        let validation = WorkflowError::Validation(err.to_owned());
+                                        c.push_error(validation)
+                                    })?;
+                                    continue;
                                 }
-                                chat = chat.try_moo(|c| {
-                                    let validation = WorkflowError::Validation(err.to_owned());
-                                    c.push_error(validation)
-                                })?;
-                                continue;
                             }
                         }
 
