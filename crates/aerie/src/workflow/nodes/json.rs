@@ -275,7 +275,11 @@ impl DynNode for ValidateJson {
             _ => unreachable!(),
         };
 
-        jsonschema::validate(&schema, &input)
+        let validator = jsonschema::validator_for(&schema)
+            .map_err(|err| anyhow::anyhow!("Invalid schema: {err:?}"))?;
+
+        validator
+            .validate(&input)
             .map_err(|err| anyhow::anyhow!("Validation error: {err:?}"))?;
 
         let value = Arc::new(input);
