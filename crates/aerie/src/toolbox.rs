@@ -68,9 +68,26 @@ impl ChainBreaker {
 }
 
 #[cached(result = true)]
-
 fn parse_schema(text: String) -> anyhow::Result<serde_json::Value> {
     Ok(serde_json::from_str(&text)?)
+}
+
+#[inline]
+fn prompt_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "prompt": { "type": "string", "description": "A prompt to pass to the next agent" },
+        }
+    })
+}
+
+fn parse_or_prompt_schema(schema: &str) -> serde_json::Value {
+    Some(schema)
+        .filter(|s| !s.is_empty())
+        .and_then(|s| parse_schema(s.to_string()).ok())
+        // .map(|s| json!({"input": s})) // To wrap or not to wrap?
+        .unwrap_or_else(prompt_schema)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,16 +119,7 @@ impl rig::tool::Tool for ChainTool {
             &self.name, &self.description
         );
 
-        let schema = Some(&self.schema)
-            .filter(|s| !s.is_empty())
-            .and_then(|s| parse_schema(s.clone()).ok())
-            // .map(|s| json!({"input": s})) // To wrap or not to wrap?
-            .unwrap_or_else(|| json!({
-                "type": "object",
-                "properties": {
-                    "prompt": { "type": "string", "description": "A prompt to pass to the next agent" },
-                }
-            }));
+        let schema = parse_or_prompt_schema(&self.schema);
 
         rig::completion::ToolDefinition {
             name: self.name.clone(),
@@ -206,6 +214,26 @@ impl ToolProvider {
                 .find(|t| t.name == tool_name)
                 .and_then(|t| t.description.clone())
                 .unwrap_or(Cow::Owned("".to_string())),
+        }
+    }
+
+    pub fn input_schema(&'_ self, tool_name: impl AsRef<str>) -> serde_json::Value {
+        let tool_name = tool_name.as_ref();
+        match self {
+            ToolProvider::Chainer { workflows, .. } => {
+                if tool_name == ChainBreaker::NAME {
+                    json!({})
+                } else {
+                    let schema = workflows.schema(tool_name);
+                    parse_or_prompt_schema(&schema)
+                }
+            }
+            ToolProvider::MCP { tools, .. } => tools
+                .iter()
+                .find(|t| t.name == tool_name)
+                .map(|t| (*t.input_schema).clone())
+                .map(serde_json::Value::Object)
+                .unwrap_or(json!({})), // null is not a valid schema
         }
     }
 
