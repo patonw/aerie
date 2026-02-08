@@ -551,7 +551,26 @@ impl StructuredChat {
                     chat = chat.try_moo(|c| c.push(Ok(agent_msg).into()))?;
 
                     if let Some(tool_func) = tool_func {
-                        if let Some(validator) = &validator {
+                        let tool_name = tool_func.name.clone();
+                        let tool_args = Arc::new(tool_func.arguments.clone());
+
+                        // if a agentic tool call, fetch the schema from the toolbox
+                        let validator = if let Some(selector) = &agent_spec.tools
+                            && let Some(provider) = run_ctx
+                                .agent_factory
+                                .toolbox
+                                .provider_for(selector, &tool_name)
+                        {
+                            let schema = provider.input_schema(&tool_name);
+                            Cow::Owned(Some(
+                                jsonschema::validator_for(&schema)
+                                    .map_err(|err| anyhow::anyhow!("Invalid schema: {err:?}"))?,
+                            ))
+                        } else {
+                            Cow::Borrowed(&validator)
+                        };
+
+                        if let Some(validator) = &*validator {
                             // Invalid schema non-retryable
 
                             if let Err(err) = validator.validate(&tool_func.arguments) {
@@ -570,10 +589,7 @@ impl StructuredChat {
                             }
                         }
 
-                        // TODO: if a agentic tool call, fetch the schema from the toolbox
-                        let tool_name = tool_func.name.clone();
-                        let data = Arc::new(tool_func.arguments.clone());
-                        break Ok((tool_name, data));
+                        break Ok((tool_name, tool_args));
                     } else if attempts >= max_attempts {
                         break Err(WorkflowError::MissingToolCall);
                     } else {

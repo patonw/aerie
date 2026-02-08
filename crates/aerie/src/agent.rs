@@ -215,7 +215,11 @@ impl AgentFactory {
 }
 
 #[derive(Builder)]
-#[builder(name = "AgentSpec", derive(Debug, Hash, PartialEq, Eq, Serialize))]
+#[builder(
+    name = "AgentSpec",
+    derive(Debug, Hash, PartialEq, Eq, Serialize),
+    field(public)
+)]
 // For use via the derived builder, not directly
 pub struct _AgentSpec_ {
     pub model: String,
