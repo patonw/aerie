@@ -371,10 +371,13 @@ fn init_logging(log_tx: flume::Sender<LogEntry>) {
                 })),
         )
         .with(
-            tracing_subscriber::fmt::layer().with_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| format!("info,{}=warn", env!("CARGO_CRATE_NAME")).into()),
-            ),
+            tracing_subscriber::fmt::layer()
+                .with_thread_names(true)
+                .with_filter(
+                    tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                        format!("info,{}=warn", env!("CARGO_CRATE_NAME")).into()
+                    }),
+                ),
         )
         .init();
 }

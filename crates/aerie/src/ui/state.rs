@@ -34,7 +34,7 @@ use crate::{
     utils::{ErrorDistiller as _, ErrorList},
     workflow::{
         EditContext, GraphId, PreviewData, ShadowGraph, WorkNode,
-        runner::{NodeStateMap, WorkflowRun},
+        runner::{ExecId, NodeStateMap, WorkflowRun},
         store::{WorkflowStore, WorkflowStoreDir},
     },
 };
@@ -120,6 +120,7 @@ impl AppState {
                 .events(self.events.clone())
                 .current_graph(shadow.uuid)
                 .parent_id(stack.parent_id())
+                .exec_id(self.workflows.view_stack.exec_id())
                 .flavor(stack.flavor())
                 .errors(self.errors.clone())
                 .previews(self.workflows.previews.clone())
@@ -668,7 +669,8 @@ impl<W: WorkflowStore> WorkflowState<W> {
             tracing::debug!("Expansion: {nodes:?}");
         }
 
-        let view = self.node_state.view(&graph_id);
+        let exec_id = ExecId::from(graph_id);
+        let view = self.node_state.view(exec_id);
         for node in nodes {
             view.remove(node);
         }

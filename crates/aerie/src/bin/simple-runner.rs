@@ -172,6 +172,7 @@ fn main() -> anyhow::Result<()> {
     for run_count in 0..=args.autoruns {
         let run_ctx = RunContext::builder()
             .runtime(rt.handle().clone())
+            .exec_id(shadow.uuid.into())
             .agent_factory(agent_factory.clone())
             .history(session.history.clone())
             .seed(settings.seed.clone())
