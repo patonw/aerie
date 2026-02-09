@@ -3,13 +3,16 @@ use chrono::{DateTime, Local};
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use im::OrdSet;
 use itertools::{EitherOrBoth, Itertools};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap},
+    hash::{DefaultHasher, Hash as _, Hasher as _},
     ops::Deref,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::Duration,
 };
 use typed_builder::TypedBuilder;
+use uuid::Uuid;
 
 use crate::workflow::{
     ShadowGraph, ValueKind, Wire, WorkflowError,
@@ -19,6 +22,41 @@ use crate::workflow::{
 use super::{GraphId, RunContext, Value, WorkNode};
 
 pub type RunOutput = Arc<ArcSwap<im::OrdMap<String, crate::workflow::Value>>>;
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ExecId(pub u64, pub u64);
+
+impl Default for ExecId {
+    fn default() -> Self {
+        GraphId::default().into()
+    }
+}
+
+impl From<GraphId> for ExecId {
+    fn from(value: GraphId) -> Self {
+        let u64_pair = value.0.as_u64_pair();
+        Self(u64_pair.0, u64_pair.1)
+    }
+}
+
+impl From<ExecId> for Uuid {
+    fn from(val: ExecId) -> Self {
+        Uuid::from_u64_pair(val.0, val.1)
+    }
+}
+
+impl ExecId {
+    pub fn scope(&self, graph_id: GraphId, pass: usize) -> Self {
+        let mut s = DefaultHasher::new();
+        self.hash(&mut s);
+        graph_id.hash(&mut s);
+        pass.hash(&mut s);
+        let mut that = *self;
+
+        that.1 = s.finish();
+        that
+    }
+}
 
 #[derive(Debug, Clone, Default, TypedBuilder)]
 pub struct WorkflowRun {
@@ -45,14 +83,15 @@ impl std::fmt::Debug for ExecState {
             Self::Ready => write!(f, "Ready"),
             Self::Running => write!(f, "Running"),
             Self::Done(arg0) => {
-                let args = arg0
-                    .iter()
-                    .map(|it| match it {
-                        // Mask the session to avoid spamming the logs/console
-                        Value::Chat(_) => &Value::Placeholder(ValueKind::Chat),
-                        _ => it,
-                    })
-                    .collect_vec();
+                // let args = arg0
+                //     .iter()
+                //     .map(|it| match it {
+                //         // Mask the session to avoid spamming the logs/console
+                //         Value::Chat(_) => &Value::Placeholder(ValueKind::Chat),
+                //         _ => it,
+                //     })
+                //     .collect_vec();
+                let args = arg0.iter().map(|it| it.kind()).collect_vec();
                 f.debug_tuple("Done").field(&args).finish()
             }
             Self::Disabled => write!(f, "Disabled"),
@@ -61,37 +100,55 @@ impl std::fmt::Debug for ExecState {
     }
 }
 
-type GraphNodePass = (GraphId, NodeId, usize);
+type GraphNodePass = (ExecId, NodeId);
 
 /// A global cache of node execution states across all graphs and subgraphs
 #[derive(Default, Clone, Debug)]
-pub struct NodeStateMap(pub Arc<ArcSwap<im::OrdMap<GraphNodePass, ExecState>>>);
+pub struct NodeStateMap(
+    pub Arc<ArcSwap<im::OrdMap<GraphNodePass, ExecState>>>,
+    pub Arc<RwLock<()>>,
+);
 
 impl NodeStateMap {
     pub fn clear(&self) {
         self.0.store(Default::default());
     }
 
-    pub fn view(&self, graph_id: &GraphId) -> NodeStateView {
+    pub fn view(&self, exec_id: ExecId) -> NodeStateView {
         let data = self.clone();
-        NodeStateView {
-            data,
-            graph_id: *graph_id,
-            pass: 0,
-        }
+        NodeStateView { data, exec_id }
     }
 }
 
 /// A slice of the node state for a single graph
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone)]
 pub struct NodeStateView {
     pub data: NodeStateMap,
-    pub graph_id: GraphId,
-    pub pass: usize,
+    pub exec_id: ExecId,
+}
+
+impl std::fmt::Debug for NodeStateView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let data: im::OrdMap<NodeId, ExecState> = self
+            .data
+            .0
+            .load()
+            .iter()
+            .filter(|(k, _)| k.0 == self.exec_id)
+            .map(|(k, v)| (k.1, v.clone()))
+            .collect();
+        f.debug_struct("NodeStateView")
+            .field("exec_id", &self.exec_id)
+            .field("data", &data)
+            .finish()
+    }
 }
 
 impl NodeStateView {
     pub fn clear(&self) {
+        let _guard = self.data.1.write().unwrap();
+
+        tracing::trace!("Clearing view {self:?}");
         self.data.0.rcu(|states| {
             // TODO: a more effecient way to do this
             im::OrdMap::from_iter(
@@ -99,38 +156,51 @@ impl NodeStateView {
                     .as_ref()
                     .clone()
                     .into_iter()
-                    .filter(|it| it.0.0 != self.graph_id || it.0.2 != self.pass),
+                    .filter(|it| it.0.0 != self.exec_id),
             )
         });
-    }
-    pub fn pass(&self, pass: usize) -> Self {
-        Self {
-            pass,
-            ..self.clone()
-        }
+
+        tracing::trace!("Cleared view {self:?}");
     }
 
     pub fn remove(&self, node: NodeId) {
+        let _guard = self.data.1.write().unwrap();
         self.data.0.rcu(|states| {
             // nodes.iter().fold(states.as_ref().clone(), |s, n| {
             //     s.without(&(self.graph_id, *n, self.pass))
             // })
-            states.without(&(self.graph_id, node, self.pass))
+            states.without(&(self.exec_id, node))
         });
     }
 
     pub fn insert(&self, node: NodeId, value: ExecState) {
+        let _guard = self.data.1.write().unwrap();
+
+        if matches!(value, ExecState::Done(_)) {
+            tracing::trace!(
+                "Exec {:?} node {node:?} will be DONE:\n\n{:?}",
+                self.exec_id,
+                self,
+                // std::backtrace::Backtrace::force_capture(),
+            );
+        }
         self.data
             .0
-            .rcu(|states| states.update((self.graph_id, node, self.pass), value.clone()));
+            .rcu(|states| states.update((self.exec_id, node), value.clone()));
+
+        if matches!(value, ExecState::Done(_)) {
+            tracing::trace!(
+                "exec {:?} node {node:?} is now DONE:\n\n{:?}",
+                self.exec_id,
+                self,
+                // std::backtrace::Backtrace::force_capture(),
+            );
+        }
     }
 
     pub fn get(&self, node: &NodeId) -> Option<ExecState> {
-        self.data
-            .0
-            .load()
-            .get(&(self.graph_id, *node, self.pass))
-            .cloned()
+        let _guard = self.data.1.read().unwrap();
+        self.data.0.load().get(&(self.exec_id, *node)).cloned()
     }
 }
 
@@ -373,14 +443,23 @@ impl WorkflowRunner {
             tracing::info!("No more nodes ready.");
             self.outputs = self.outputs();
 
-            if self.outputs.is_empty() {
-                let finish_state = self
-                    .graph
-                    .finish
-                    .as_ref()
-                    .and_then(|f| self.state_view.get(f))
-                    .unwrap_or(ExecState::Waiting(Default::default()));
+            let finish_state = self
+                .graph
+                .finish
+                .as_ref()
+                .and_then(|f| self.state_view.get(f))
+                .unwrap_or(ExecState::Waiting(Default::default()));
 
+            tracing::trace!(
+                "Finishing {:?} with node {:?}: {:?}",
+                self.state_view.exec_id,
+                self.graph.finish,
+                self.state_view,
+                // std::backtrace::Backtrace::force_capture(),
+            );
+
+            if !matches!(finish_state, ExecState::Done(_)) {
+                tracing::warn!("Unfinished business: {:?}", self.state_view);
                 Err(WorkflowError::Unfinished(finish_state))?;
             }
             return Ok(false);
@@ -493,7 +572,7 @@ impl WorkflowRunner {
             }
         };
 
-        tracing::info!("** Executed {node_id:?}");
+        tracing::info!("** Executed {node_id:?}: {}", snarl[node_id].kind());
 
         let successors = if let Some(successors) = self.successors.get(&node_id) {
             tracing::debug!(

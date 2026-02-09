@@ -27,7 +27,7 @@ use crate::{
             GraphSubmenu, InvokeTool, Matcher, Number, OutputNode, Panic, Preview, Select,
             StructuredChat, Subgraph, TemplateNode, Text, Tools,
         },
-        runner::{ExecState, NodeStateMap},
+        runner::{ExecId, ExecState, NodeStateMap},
     },
 };
 
@@ -147,6 +147,20 @@ impl ViewStack {
 
     pub fn view_id(&self) -> egui::Id {
         self.root_id.with(&self.path)
+    }
+
+    pub fn exec_id(&self) -> Option<ExecId> {
+        let mut result = None;
+
+        for level in self.levels.iter().rev() {
+            if result.is_none() {
+                result = Some(ExecId::from(level.uuid));
+            } else {
+                result = Some(result.unwrap().scope(level.uuid, 0));
+            }
+        }
+
+        result
     }
 
     pub fn exit(&mut self, levels: usize) -> anyhow::Result<()> {
@@ -485,7 +499,9 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui: &mut Ui,
         snarl: &mut Snarl<WorkNode>,
     ) {
-        let node_state = self.node_state.view(&self.shadow.uuid);
+        let node_state = self
+            .node_state
+            .view(self.edit_ctx.exec_id.unwrap_or_default());
 
         if snarl[node].0.downcast_ref::<CommentNode>().is_some() {
             return;

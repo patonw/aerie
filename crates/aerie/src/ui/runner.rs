@@ -30,9 +30,11 @@ impl super::AppState {
 
         self.session.scratch.clear();
 
+        let exec_id = self.workflows.shadow.uuid.into();
         let mut exec = {
             let run_ctx = RunContext::builder()
                 .runtime(self.rt.clone())
+                .exec_id(exec_id)
                 .agent_factory(self.agent_factory.clone())
                 .events(Some(self.events.clone()))
                 .node_state(self.workflows.node_state.clone())
@@ -61,7 +63,7 @@ impl super::AppState {
             let mut exec = WorkflowRunner::builder()
                 .inputs(inputs)
                 .run_ctx(run_ctx)
-                .state_view(self.workflows.node_state.view(&self.workflows.shadow.uuid))
+                .state_view(self.workflows.node_state.view(exec_id))
                 .build();
 
             exec.init(&self.workflows.shadow);

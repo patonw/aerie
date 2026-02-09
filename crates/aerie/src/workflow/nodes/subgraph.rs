@@ -79,12 +79,13 @@ impl Subgraph {
     ) -> Result<Vec<Value>, WorkflowError> {
         // TODO: customize context for subgraph
         // What to do about outputs channel?
-        let state_view = ctx.node_state.view(&self.graph.uuid);
+        let exec_id = ctx.exec_id.scope(self.graph.uuid, 0);
+        let state_view = ctx.node_state.view(exec_id);
         state_view.clear();
 
         let mut exec = WorkflowRunner::builder()
             .inputs(inputs)
-            .run_ctx(ctx.clone())
+            .run_ctx(ctx.with_exec_id(exec_id))
             .state_view(state_view)
             .build();
 
@@ -144,11 +145,12 @@ impl Subgraph {
         ctx.event(AppEvent::ProgressBegin(graph_id.0, num_iters));
         for i in 0..num_iters {
             let sliced = par_slice(&inputs, i);
-            let state_view = ctx.node_state.view(&self.graph.uuid).pass(i);
+            let exec_id = ctx.exec_id.scope(self.graph.uuid, i);
+            let state_view = ctx.node_state.view(exec_id);
             state_view.clear();
             let mut exec = WorkflowRunner::builder()
                 .inputs(sliced)
-                .run_ctx(ctx.clone())
+                .run_ctx(ctx.with_exec_id(exec_id))
                 .state_view(state_view)
                 .build();
 
@@ -187,6 +189,7 @@ impl Subgraph {
         Ok(results)
     }
 
+    // TODO: debug missing inputs during pardo
     fn par_foreach(
         &mut self,
         ctx: &super::RunContext,
@@ -212,12 +215,14 @@ impl Subgraph {
         let all_out = (0..num_iters)
             .into_par_iter()
             .map(|i| {
+                tracing::trace!("Initializing runner for {graph_id:?} pass {i}");
                 let sliced = par_slice(&inputs, i);
-                let state_view = ctx.node_state.view(&graph_id).pass(i);
+                let exec_id = ctx.exec_id.scope(self.graph.uuid, i);
+                let state_view = ctx.node_state.view(exec_id);
                 state_view.clear();
                 let mut exec = WorkflowRunner::builder()
                     .inputs(sliced)
-                    .run_ctx(ctx.clone())
+                    .run_ctx(ctx.with_exec_id(exec_id))
                     .state_view(state_view)
                     .build();
 
@@ -226,6 +231,10 @@ impl Subgraph {
             })
             .map(|mut exec| -> Result<Vec<Option<Value>>, WorkflowError> {
                 let interrupt = ctx.interrupt.clone();
+                tracing::trace!(
+                    "Running graph {graph_id:?} exec {:?}",
+                    exec.state_view.exec_id
+                );
 
                 let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
                 tracing::info!("About to execute subgraph");

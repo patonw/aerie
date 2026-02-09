@@ -39,7 +39,7 @@ use crate::{
     utils::{AtomicBuffer, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
     workflow::{
         nodes::{Finish, Flavor, Start},
-        runner::{ExecState, NodeStateMap},
+        runner::{ExecId, ExecState, NodeStateMap},
     },
 };
 
@@ -202,6 +202,9 @@ pub struct EditContext {
     pub parent_id: Option<(GraphId, NodeId)>,
 
     #[builder(default)]
+    pub exec_id: Option<ExecId>,
+
+    #[builder(default)]
     pub flavor: Option<Flavor>,
 
     #[builder(default)]
@@ -259,6 +262,8 @@ impl OutputChannel {
 pub struct RunContext {
     pub runtime: tokio::runtime::Handle,
 
+    pub exec_id: ExecId,
+
     pub agent_factory: AgentFactory,
 
     #[builder(default)]
@@ -308,6 +313,13 @@ impl RunContext {
         };
 
         queue.insert(event);
+    }
+
+    pub fn with_exec_id(&self, exec_id: ExecId) -> Self {
+        Self {
+            exec_id,
+            ..self.clone()
+        }
     }
 }
 
