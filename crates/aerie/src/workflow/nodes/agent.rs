@@ -10,6 +10,7 @@ use crate::{
     ToolProvider, ToolSelector,
     config::Ternary,
     ui::{resizable_frame, resizable_frame_opt, shortcuts::squelch},
+    utils::message_text,
     workflow::{FlexNode, WorkflowError},
 };
 
@@ -427,7 +428,7 @@ impl DynNode for ChatContext {
         use ValueKind::*;
         Cow::Borrowed(match in_pin {
             0 => &[Agent],
-            1 => &[Text, TextList, Json],
+            1 => &[Text, TextList, Message, Json],
             _ => ValueKind::all(),
         })
     }
@@ -462,6 +463,7 @@ impl DynNode for ChatContext {
                         .collect();
                 Arc::new(value)
             }
+            Some(Value::Message(value)) => Arc::new(message_text(value)),
             Some(Value::Json(value)) => {
                 let data = serde_json::to_string(value)
                     .map_err(|e| WorkflowError::Conversion(format!("Invalid JSON: {e:?}")))?;
