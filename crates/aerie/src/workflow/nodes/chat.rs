@@ -175,14 +175,11 @@ impl ChatNode {
             None => Err(WorkflowError::Required(vec!["Agent spec required".into()]))?,
             _ => unreachable!(),
         };
-        let chat = match &inputs[1] {
-            Some(Value::Chat(history)) => history,
-            None => Err(WorkflowError::Required(vec![
-                "Chat history required".into(),
-            ]))?,
+        let mut chat = match &inputs[1] {
+            Some(Value::Chat(history)) => Cow::Borrowed(history.as_ref()),
+            None => Default::default(),
             _ => unreachable!(),
         };
-        let mut chat = Cow::Borrowed(chat.as_ref());
 
         let prompt = match &inputs[2] {
             Some(Value::Text(text)) if !text.is_empty() => Message::user((**text).clone()),
@@ -427,10 +424,14 @@ impl StructuredChat {
         };
 
         let in_chat = match &inputs[1] {
-            Some(Value::Chat(history)) => history,
-            None => Err(WorkflowError::Required(vec![
-                "Chat history required".into(),
-            ]))?,
+            Some(Value::Chat(history)) => history.clone(),
+            None => Default::default(),
+            _ => unreachable!(),
+        };
+
+        let mut chat = match &inputs[1] {
+            Some(Value::Chat(history)) => Cow::Borrowed(history.as_ref()),
+            None => Default::default(),
             _ => unreachable!(),
         };
 
@@ -461,8 +462,6 @@ impl StructuredChat {
         }
 
         let agent = agent_spec.agent(&run_ctx.agent_factory)?;
-
-        let mut chat = Cow::Borrowed(in_chat.as_ref());
 
         let max_attempts = self.retries + 1;
         let mut attempts = 0;
