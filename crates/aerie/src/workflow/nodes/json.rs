@@ -11,7 +11,7 @@ use crate::{
         resizable_frame,
         shortcuts::{Shortcut, squelch},
     },
-    utils::{extract_json, message_text},
+    utils::{extract_json, message_party, message_text},
     workflow::{
         DynNode, EditContext, FlexNode, RunContext, UiNode, Value, WorkNode, WorkflowError,
         nodes::GraphSubmenu,
@@ -380,10 +380,11 @@ impl DynNode for TransformJson {
                 ValueKind::Number,
                 ValueKind::Integer,
                 ValueKind::Text,
-                ValueKind::Message,
                 ValueKind::FloatList,
                 ValueKind::IntList,
                 ValueKind::TextList,
+                ValueKind::Chat,
+                ValueKind::Message,
                 ValueKind::MsgList,
             ],
             _ => unreachable!(),
@@ -418,9 +419,24 @@ impl DynNode for TransformJson {
             Some(Value::IntList(value)) => json!(value),
             Some(Value::Text(value)) => json!(value),
             Some(Value::TextList(value)) => json!(value),
-            Some(Value::Message(value)) => json!(message_text(value)),
+            Some(Value::Chat(value)) => {
+                json!(
+                    value
+                        .iter_msgs()
+                        .map(|m| json!({"author": message_party(&m), "content": message_text(&m)}))
+                        .collect_vec()
+                )
+            }
+            Some(Value::Message(value)) => {
+                json!({"author": message_party(value), "content": message_text(value)})
+            }
             Some(Value::MsgList(value)) => {
-                json!(value.iter().map(|m| message_text(m)).collect_vec())
+                json!(
+                    value
+                        .iter()
+                        .map(|m| json!({"author": message_party(m), "content": message_text(m)}))
+                        .collect_vec()
+                )
             }
             None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
             _ => unreachable!(),
@@ -499,10 +515,11 @@ impl DynNode for GatherJson {
             ValueKind::Text,
             ValueKind::Number,
             ValueKind::Integer,
-            ValueKind::Message,
             ValueKind::FloatList,
             ValueKind::IntList,
             ValueKind::TextList,
+            ValueKind::Chat,
+            ValueKind::Message,
             ValueKind::MsgList,
         ])
     }
@@ -534,12 +551,29 @@ impl DynNode for GatherJson {
                 Some(Value::Integer(value)) => {
                     serde_json::Value::Number(Number::from_i128(value as i128).unwrap())
                 }
-                Some(Value::Message(value)) => serde_json::Value::String(message_text(&value)),
                 Some(Value::FloatList(value)) => json!(value),
                 Some(Value::IntList(value)) => json!(value),
                 Some(Value::TextList(value)) => json!(value),
+                Some(Value::Chat(value)) => {
+                    json!(
+                    value
+                        .iter_msgs()
+                        .map(|m| json!({"author": message_party(&m), "content": message_text(&m)}))
+                        .collect_vec()
+                )
+                }
+                Some(Value::Message(value)) => {
+                    json!({"author": message_party(&value), "content": message_text(&value)})
+                }
                 Some(Value::MsgList(value)) => {
-                    json!(value.iter().map(|m| message_text(m)).collect_vec())
+                    json!(
+                        value
+                            .iter()
+                            .map(
+                                |m| json!({"author": message_party(m), "content": message_text(m)})
+                            )
+                            .collect_vec()
+                    )
                 }
                 None => serde_json::Value::Null,
                 _ => unreachable!(),
