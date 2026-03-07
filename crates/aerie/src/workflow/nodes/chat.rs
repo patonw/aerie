@@ -52,7 +52,7 @@ impl DynNode for ChatNode {
         Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Agent],
             1 => &[ValueKind::Chat],
-            2 => &[ValueKind::Text, ValueKind::Message],
+            2 => &[ValueKind::Text, ValueKind::Message, ValueKind::Json],
             _ => ValueKind::all(),
         })
     }
@@ -185,6 +185,8 @@ impl ChatNode {
             _ => unreachable!(),
         };
 
+        let mut messages = chat.iter_msgs().map(|it| it.into_owned()).collect_vec();
+
         let prompt = match &inputs[2] {
             Some(Value::Text(text)) if !text.is_empty() => Message::user((**text).clone()),
             Some(Value::Message(msg @ Message::User { .. })) => msg.clone(),
@@ -192,11 +194,19 @@ impl ChatNode {
                 // Coerce into user message if we want to use another agent's output for cross talk
                 Message::user(message_text(msg))
             }
+            Some(Value::Json(value)) => match value.as_ref() {
+                serde_json::Value::String(text) => Message::user(text.as_str()),
+                value => Message::user(serde_json::to_string(value).map_err(|e| {
+                    WorkflowError::Conversion(format!("Failed to stringify value: {e:?}"))
+                })?),
+            },
             None if !self.prompt.is_empty() => Message::user(self.prompt.clone()),
+            None if matches!(messages.last(), Some(Message::User { .. })) => {
+                messages.last().cloned().unwrap()
+            }
             _ => Err(WorkflowError::Required(vec!["A prompt is required".into()]))?,
         };
 
-        let mut messages = chat.iter_msgs().map(|it| it.into_owned()).collect_vec();
         let last_idx = messages.len();
 
         let agent = agent_spec.agent(&run_ctx.agent_factory)?;
@@ -270,7 +280,7 @@ impl DynNode for StructuredChat {
             0 => &[ValueKind::Agent],
             1 => &[ValueKind::Chat],
             2 => &[ValueKind::Json],
-            3 => &[ValueKind::Text, ValueKind::Message],
+            3 => &[ValueKind::Text, ValueKind::Message, ValueKind::Json],
             _ => ValueKind::all(),
         })
     }
@@ -450,10 +460,16 @@ impl StructuredChat {
         };
 
         let prompt = match &inputs[3] {
-            Some(Value::Text(text)) if !text.is_empty() => Message::user((**text).clone()),
-            Some(Value::Message(msg)) => msg.clone(),
-            None if !self.prompt.is_empty() => Message::user(self.prompt.clone()),
-            _ => Err(WorkflowError::Required(vec!["A prompt is required".into()]))?,
+            Some(Value::Text(text)) if !text.is_empty() => Some(Message::user((**text).clone())),
+            Some(Value::Message(msg)) => Some(msg.clone()),
+            Some(Value::Json(value)) => match value.as_ref() {
+                serde_json::Value::String(text) => Some(Message::user(text.as_str())),
+                value => Some(Message::user(serde_json::to_string(value).map_err(
+                    |e| WorkflowError::Conversion(format!("Failed to stringify value: {e:?}")),
+                )?)),
+            },
+            None if !self.prompt.is_empty() => Some(Message::user(self.prompt.clone())),
+            _ => None,
         };
 
         let validator = if let Some(schema) = schema.as_ref() {
@@ -474,13 +490,25 @@ impl StructuredChat {
         let max_attempts = self.retries + 1;
         let mut attempts = 0;
 
-        if !run_ctx.streaming
-            && let Some(scratch) = &run_ctx.scratch
-        {
-            scratch.push_back(Ok(prompt.clone()));
-        }
+        if let Some(prompt) = prompt {
+            if !run_ctx.streaming
+                && let Some(scratch) = &run_ctx.scratch
+            {
+                scratch.push_back(Ok(prompt.clone()));
+            }
 
-        chat = chat.try_moo(|c| c.push(Ok(prompt).into()))?;
+            chat = chat.try_moo(|c| c.push(Ok(prompt).into()))?;
+        }
+        // else if !matches!(
+        //     chat.last(),
+        //     Some(crate::ChatEntry {
+        //         content: ChatcOntent::Message(Message::User { .. }),
+        //         ..
+        //     })
+        // ) {
+        //     // unless last entry is a user message.
+        //     Err(WorkflowError::Required(vec!["A prompt is required".into()]))?;
+        // }
 
         let result: Result<_, WorkflowError> = loop {
             if run_ctx.interrupt.load(Ordering::Relaxed) {
@@ -810,7 +838,9 @@ async fn multi_turn_completion(
 
     // Using two buffers since chat_history is specific to this call, while scratch is
     // more for monitoring global progress across nodes.
-    chat_history.push(prompt.clone());
+    if chat_history.last() != Some(&prompt) {
+        chat_history.push(prompt.clone());
+    }
     if let Some(scratch) = &run_ctx.scratch {
         scratch.push_back(Ok(prompt.clone()));
     }
