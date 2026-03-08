@@ -551,7 +551,7 @@ fn push_values(res: &mut Value, val: Option<Value>) {
             items.extend(values);
         }
         (MsgList(items), Some(Message(value))) => {
-            items.push_back(Arc::new(value));
+            items.push_back(value.clone());
         }
         (MsgList(items), Some(MsgList(values))) => {
             items.extend(values);
@@ -605,7 +605,7 @@ fn par_slice(inputs: &[Option<Value>], i: usize) -> Vec<Option<Value>> {
             Some(TextList(items)) => Some(Text(items[i].clone())),
             Some(FloatList(items)) => Some(Number(items[i])),
             Some(IntList(items)) => Some(Integer(items[i])),
-            Some(MsgList(items)) => Some(Message((*items[i]).clone())),
+            Some(MsgList(items)) => Some(Message(items[i].clone())),
             Some(Json(arr)) if matches!(**arr, serde_json::Value::Array(_)) => {
                 let serde_json::Value::Array(items) = arr.as_ref() else {
                     unreachable!()

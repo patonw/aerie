@@ -22,7 +22,7 @@ fn root_start_fields() -> im::Vector<(String, ValueKind)> {
         ("temperature".into(), ValueKind::Number),
         ("conversation".into(), ValueKind::Chat),
         ("schema".into(), ValueKind::Json),
-        ("input".into(), ValueKind::Text),
+        ("input".into(), ValueKind::Message),
     ]
 }
 
