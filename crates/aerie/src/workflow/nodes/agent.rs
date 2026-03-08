@@ -801,7 +801,7 @@ impl InvokeTool {
 
         Ok(vec![
             history,
-            Value::Message(msg),
+            Value::Message(Arc::new(msg)),
             Value::Text(Arc::new(tool_output.clone())),
             Value::Placeholder(ValueKind::Failure),
         ])

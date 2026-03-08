@@ -323,7 +323,7 @@ impl DynNode for CreateMessage {
             _ => unreachable!(),
         };
 
-        Ok(vec![Value::Message(msg)])
+        Ok(vec![Value::Message(Arc::new(msg))])
     }
 }
 
@@ -431,7 +431,11 @@ impl DynNode for ExtendHistory {
             })
             .collect_vec();
 
-        let extended = history.extend(messages.into_iter().map(|msg| Ok(msg).into()))?;
+        let extended = history.extend(
+            messages
+                .into_iter()
+                .map(|msg| Ok(msg.as_ref().clone()).into()),
+        )?;
         let value = Arc::new(extended.into_owned());
 
         Ok(vec![Value::Chat(value)])

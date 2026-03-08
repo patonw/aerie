@@ -189,8 +189,10 @@ impl ChatNode {
 
         let prompt = match &inputs[2] {
             Some(Value::Text(text)) if !text.is_empty() => Message::user((**text).clone()),
-            Some(Value::Message(msg @ Message::User { .. })) => msg.clone(),
-            Some(Value::Message(msg @ Message::Assistant { .. })) => {
+            Some(Value::Message(msg)) if matches!(**msg, Message::User { .. }) => {
+                msg.as_ref().clone()
+            }
+            Some(Value::Message(msg)) if matches!(**msg, Message::Assistant { .. }) => {
                 // Coerce into user message if we want to use another agent's output for cross talk
                 Message::user(message_text(msg))
             }
@@ -235,7 +237,7 @@ impl ChatNode {
             if let Some(entry) = chat.last()
                 && let ChatContent::Message(message) = &entry.content
             {
-                Value::Message(message.clone())
+                Value::Message(Arc::new(message.clone()))
             } else {
                 Value::Placeholder(ValueKind::Message)
             }
@@ -340,7 +342,7 @@ impl UiNode for StructuredChat {
     ) -> egui_snarl::ui::PinInfo {
         match pin_id {
             0 => {
-                ui.label("history");
+                ui.label("conversation");
             }
             1 => {
                 ui.label("response");
@@ -371,7 +373,7 @@ impl UiNode for StructuredChat {
                 ui.label("agent");
             }
             1 => {
-                ui.label("history");
+                ui.label("conversation");
             }
             2 => {
                 ui.label("schema");
@@ -461,7 +463,7 @@ impl StructuredChat {
 
         let prompt = match &inputs[3] {
             Some(Value::Text(text)) if !text.is_empty() => Some(Message::user((**text).clone())),
-            Some(Value::Message(msg)) => Some(msg.clone()),
+            Some(Value::Message(msg)) => Some(msg.as_ref().clone()),
             Some(Value::Json(value)) => match value.as_ref() {
                 serde_json::Value::String(text) => Some(Message::user(text.as_str())),
                 value => Some(Message::user(serde_json::to_string(value).map_err(
@@ -663,7 +665,7 @@ impl StructuredChat {
         let message = if let Some(entry) = history.last()
             && let ChatContent::Message(message) = &entry.content
         {
-            Value::Message(message.clone())
+            Value::Message(Arc::new(message.clone()))
         } else {
             Value::Placeholder(ValueKind::Message)
         };
