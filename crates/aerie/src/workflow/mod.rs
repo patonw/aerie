@@ -70,7 +70,7 @@ pub enum Value {
     Agent(Arc<AgentSpec>),
     Tools(Arc<ToolSelector>),
     Chat(Arc<ChatHistory>),
-    Message(Message),
+    Message(Arc<Message>),
     MsgList(Vector<Arc<Message>>),
 }
 
@@ -361,13 +361,14 @@ impl RootContext {
             serde_json::json!({})
         };
 
+        let msg = Message::user(&self.user_prompt);
         // TODO: Probably don't need most of these in the object
         let values = vec![
             Some(Value::Text(Arc::new(self.model.clone()))),
             Some(Value::Number(E64::assert(self.temperature))),
             Some(Value::Chat(self.history.load().clone())),
             Some(Value::Json(Arc::new(schema))),
-            Some(Value::Text(Arc::new(self.user_prompt.clone()))),
+            Some(Value::Message(Arc::new(msg))),
         ];
         Ok(values)
     }
