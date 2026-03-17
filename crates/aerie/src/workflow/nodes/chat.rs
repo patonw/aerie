@@ -188,7 +188,7 @@ impl ChatNode {
             _ => unreachable!(),
         };
 
-        let mut messages = chat.iter_msgs().map(|it| it.into_owned()).collect_vec();
+        let mut messages = chat.iter_msgs().map(|it| it.as_ref().clone()).collect_vec();
 
         let prompt = match &inputs[2] {
             Some(Value::Text(text)) if !text.is_empty() => Message::user((**text).clone()),
@@ -241,7 +241,7 @@ impl ChatNode {
                         scratch.push_back(Ok(msg.clone()));
                     }
 
-                    chat = chat.try_moo(|c| c.push(Ok(msg).into()))?;
+                    chat = chat.try_moo(|c| c.push(Ok(Arc::new(msg)).into()))?;
                 }
             }
             Err(err) => Err(WorkflowError::Provider(err.into()))?,
@@ -251,7 +251,7 @@ impl ChatNode {
             if let Some(entry) = chat.last()
                 && let ChatContent::Message(message) = &entry.content
             {
-                Value::Message(Arc::new(message.clone()))
+                Value::Message(message.clone())
             } else {
                 Value::Placeholder(ValueKind::Message)
             }
@@ -528,7 +528,7 @@ impl StructuredChat {
                 scratch.push_back(Ok(prompt.clone()));
             }
 
-            chat = chat.try_moo(|c| c.push(Ok(prompt).into()))?;
+            chat = chat.try_moo(|c| c.push(Ok(Arc::new(prompt)).into()))?;
         }
         // else if !matches!(
         //     chat.last(),
@@ -547,7 +547,7 @@ impl StructuredChat {
             }
 
             // chat is the source of truth. history is just its shadow.
-            let mut history = chat.iter_msgs().map(|it| it.into_owned()).collect_vec();
+            let mut history = chat.iter_msgs().map(|it| it.as_ref().clone()).collect_vec();
             // Use the last message as the prompt
             let current_prompt = history.pop().unwrap();
 
@@ -615,7 +615,7 @@ impl StructuredChat {
                         }
                     }
 
-                    chat = chat.try_moo(|c| c.push(Ok(agent_msg).into()))?;
+                    chat = chat.try_moo(|c| c.push(Ok(Arc::new(agent_msg)).into()))?;
 
                     if let Some(tool_func) = tool_func {
                         let tool_name = tool_func.name.clone();
@@ -694,7 +694,7 @@ impl StructuredChat {
         let message = if let Some(entry) = history.last()
             && let ChatContent::Message(message) = &entry.content
         {
-            Value::Message(Arc::new(message.clone()))
+            Value::Message(message.clone())
         } else {
             Value::Placeholder(ValueKind::Message)
         };

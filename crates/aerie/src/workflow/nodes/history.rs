@@ -291,10 +291,10 @@ impl DynNode for CreateMessage {
                     AssistantContent::tool_call("", "", data.as_ref().clone())
                 };
 
-                Some(ChatContent::Message(Message::Assistant {
+                Some(ChatContent::Message(Arc::new(Message::Assistant {
                     id: None,
                     content: OneOrMany::one(content),
-                }))
+                })))
             }
             _ => {
                 let text = match &inputs[0] {
@@ -340,23 +340,23 @@ impl DynNode for CreateMessage {
                         }
 
                         let msg = Message::User { content };
-                        ChatContent::Message(msg)
+                        ChatContent::Message(Arc::new(msg))
                     }
                     MessageKind::Assistant => {
                         let mut content =
                             rig::OneOrMany::one(rig::message::AssistantContent::text(&*text));
 
                         for url in &images {
-                            let image = image_url_rig(url)?;
+                            let image = image_url_rig(url, false)?;
                             content.push(rig::message::AssistantContent::Image(image));
                         }
 
                         let msg = Message::Assistant { id: None, content };
-                        ChatContent::Message(msg)
+                        ChatContent::Message(Arc::new(msg))
                     }
                     MessageKind::ToolResult => {
                         let message = Message::tool_result("", &*text);
-                        ChatContent::Message(message)
+                        ChatContent::Message(Arc::new(message))
                     }
                     _ => unreachable!(),
                 })
@@ -369,11 +369,11 @@ impl DynNode for CreateMessage {
 
         let msg = match value {
             ChatContent::Message(message) => message.clone(),
-            ChatContent::Error { err } => Message::user(format!("Error:\n{err:?}")),
+            ChatContent::Error { err } => Arc::new(Message::user(format!("Error:\n{err:?}"))),
             _ => unreachable!(),
         };
 
-        Ok(vec![Value::Message(Arc::new(msg))])
+        Ok(vec![Value::Message(msg)])
     }
 }
 
@@ -484,11 +484,7 @@ impl DynNode for ExtendHistory {
             })
             .collect_vec();
 
-        let extended = history.extend(
-            messages
-                .into_iter()
-                .map(|msg| Ok(msg.as_ref().clone()).into()),
-        )?;
+        let extended = history.extend(messages.into_iter().map(|msg| Ok(msg.clone()).into()))?;
         let value = Arc::new(extended.into_owned());
 
         Ok(vec![Value::Chat(value)])

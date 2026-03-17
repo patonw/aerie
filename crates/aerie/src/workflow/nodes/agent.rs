@@ -790,7 +790,7 @@ impl InvokeTool {
                 future.await?
             };
 
-        let msg = Message::tool_result(tool_name, &tool_output);
+        let msg = Arc::new(Message::tool_result(tool_name, &tool_output));
 
         let history = if let Some(chat) = chat {
             let chat = chat.extend(vec![Ok(msg.clone()).into()])?;
@@ -801,7 +801,7 @@ impl InvokeTool {
 
         Ok(vec![
             history,
-            Value::Message(Arc::new(msg)),
+            Value::Message(msg),
             Value::Text(Arc::new(tool_output.clone())),
             Value::Placeholder(ValueKind::Failure),
         ])
