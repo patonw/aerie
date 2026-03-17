@@ -248,7 +248,7 @@ impl super::AppState {
                             match &msg.content {
                                 ChatContent::Message(message) => {
                                     // TODO: only on user prompt
-                                    if let Message::User { .. } = message
+                                    if let Message::User { .. } = message.as_ref()
                                         && ui.button(GIT_BRANCH).clicked()
                                     {
                                         self.branch_point = Some(msg.id);
@@ -338,7 +338,7 @@ impl super::AppState {
                 if self.prompt.is_empty()
                     && let Some(entry) = hist.store.get(&branch_point)
                     && let ChatContent::Message(msg) = &entry.content
-                    && let Message::User { content } = msg
+                    && let Message::User { content } = msg.as_ref()
                     && let UserContent::Text(text) = content.first()
                 {
                     self.prompt = text.text().to_string();
