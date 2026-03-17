@@ -1285,7 +1285,6 @@ pub fn write_value(mut fh: impl std::io::Write, value: &Value) -> Result<(), any
             serde_json::to_writer(fh, value.as_ref())?;
         }
         Value::Chat(value) => {
-            let value = value.iter_msgs().map(|it| it.into_owned()).collect_vec();
             serde_yml::to_writer(fh, &value)?;
         }
         Value::Message(value) => {

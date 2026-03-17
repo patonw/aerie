@@ -16,7 +16,6 @@ use aerie::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use clap::{Parser, Subcommand};
 use egui_snarl::Snarl;
-use itertools::Itertools as _;
 use serde::Serializer as _;
 use serde_json::json;
 use serde_yaml_ng as serde_yml;
@@ -396,10 +395,7 @@ async fn console_output(
                 mapper.serialize_entry(&label, &value).unwrap()
             }
             aerie::workflow::Value::Json(value) => mapper.serialize_entry(&label, &value).unwrap(),
-            aerie::workflow::Value::Chat(chat) => {
-                let value = chat.iter_msgs().map(|it| it.into_owned()).collect_vec();
-                mapper.serialize_entry(&label, &value).unwrap()
-            }
+            aerie::workflow::Value::Chat(chat) => mapper.serialize_entry(&label, &chat).unwrap(),
             aerie::workflow::Value::Message(message) => {
                 let text = message_text(&message);
 

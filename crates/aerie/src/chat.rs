@@ -231,7 +231,7 @@ pub fn list_sessions(dir: PathBuf) -> Vec<String> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ChatContent {
-    Message(Message),
+    Message(Arc<Message>),
     Aside {
         automation: String,
         prompt: String,
@@ -252,10 +252,10 @@ impl std::hash::Hash for ChatContent {
     }
 }
 
-impl From<Result<Message, String>> for ChatContent {
-    fn from(value: Result<Message, String>) -> Self {
+impl From<Result<Arc<Message>, String>> for ChatContent {
+    fn from(value: Result<Arc<Message>, String>) -> Self {
         match value {
-            Ok(msg) => ChatContent::Message(msg),
+            Ok(msg) => ChatContent::Message(msg.clone()),
             Err(err) => ChatContent::Error { err },
         }
     }
@@ -533,12 +533,10 @@ impl ChatHistory {
         buffer.into_iter()
     }
 
-    pub fn iter_msgs(&self) -> impl Iterator<Item = Cow<'_, Message>> {
+    pub fn iter_msgs(&self) -> impl Iterator<Item = Arc<Message>> {
         self.iter().filter_map(|entry| match &entry.content {
-            ChatContent::Message(message) => Some(Cow::Borrowed(message)),
-            ChatContent::Error { err } => {
-                Some(Cow::Owned(Message::user(format!("Error:\n{err:?}"))))
-            }
+            ChatContent::Message(message) => Some(message.clone()),
+            ChatContent::Error { err } => Some(Arc::new(Message::user(format!("Error:\n{err:?}")))),
             _ => None,
         })
     }
@@ -695,11 +693,7 @@ impl ChatHistory {
         result.branches = self.branches.without(branch);
 
         let mut cursor = head_id;
-        loop {
-            let Some(node) = result.store.get(&cursor) else {
-                break;
-            };
-
+        while let Some(node) = result.store.get(&cursor) {
             if !node.branch.is_empty() && node.branch != branch {
                 if result.head == branch {
                     result.head = node.branch.clone();
