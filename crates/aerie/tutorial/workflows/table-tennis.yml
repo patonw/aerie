@@ -105,17 +105,6 @@ nodes:
       x: 1823.9835
       y: 258.60764
     open: true
-  7:
-    value:
-      Text:
-        value: table-tennis
-        size:
-          x: 300.0
-          y: 150.0
-    pos:
-      x: 3163.1748
-      y: -598.8017
-    open: true
   8:
     value:
       ParseJson:
@@ -190,30 +179,9 @@ nodes:
       x: 3551.4653
       y: 526.8125
     open: true
-  14:
-    value:
-      Text:
-        value: table-tennis
-        size:
-          x: 300.0
-          y: 150.0
-    pos:
-      x: 3163.2617
-      y: -279.35855
-    open: true
-  15:
-    value:
-      Select:
-        count: 2
-        kind: Text
-    pos:
-      x: 3682.524
-      y: -242.80856
-    open: true
   16:
     value:
-      InvokeTool:
-        tool_name: chainpong
+      InvokeTool: {}
     pos:
       x: 4819.1655
       y: 131.57043
@@ -225,7 +193,7 @@ nodes:
         - chainer/chainpong
         - chainer/table-tennis
         size:
-          x: 250.0
+          x: 251.125
           y: 250.0
     pos:
       x: 4420.8525
@@ -279,19 +247,6 @@ nodes:
     pos:
       x: 3575.8928
       y: 954.0145
-    open: true
-  24:
-    value:
-      CommentNode:
-        comment: |-
-          Conditionally, define the next workflow.
-          These could call different workflows
-        size:
-          x: 300.0
-          y: 150.0
-    pos:
-      x: 3635.1323
-      y: -535.7874
     open: true
   25:
     value:
@@ -393,12 +348,6 @@ wires:
     node: 10
     input: 1
 - out_pin:
-    node: 7
-    output: 0
-  in_pin:
-    node: 15
-    input: 0
-- out_pin:
     node: 9
     output: 0
   in_pin:
@@ -408,20 +357,8 @@ wires:
     node: 10
     output: 0
   in_pin:
-    node: 7
-    input: 0
-- out_pin:
-    node: 10
-    output: 0
-  in_pin:
     node: 12
     input: 1
-- out_pin:
-    node: 10
-    output: 1
-  in_pin:
-    node: 14
-    input: 0
 - out_pin:
     node: 10
     output: 1
@@ -452,18 +389,6 @@ wires:
   in_pin:
     node: 18
     input: 1
-- out_pin:
-    node: 14
-    output: 0
-  in_pin:
-    node: 15
-    input: 1
-- out_pin:
-    node: 15
-    output: 0
-  in_pin:
-    node: 16
-    input: 2
 - out_pin:
     node: 16
     output: 2

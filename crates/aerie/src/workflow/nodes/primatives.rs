@@ -1,9 +1,9 @@
-use std::{convert::identity, sync::Arc};
+use std::{borrow::Cow, convert::identity, str::FromStr as _, sync::Arc};
 
 use decorum::E64;
 use egui::RichText;
 use egui_commonmark::CommonMarkCache;
-use egui_phosphor::regular::NUMPAD;
+use egui_phosphor::regular::{BRACKETS_SQUARE, NUMPAD};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -22,6 +22,9 @@ pub struct Number {
     i_value: i64,
 
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    list: bool,
+
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     integer: bool,
 }
 
@@ -29,11 +32,45 @@ pub struct Number {
 impl FlexNode for Number {}
 
 impl DynNode for Number {
-    fn out_kind(&self, _out_pin: usize) -> ValueKind {
-        if self.integer {
-            ValueKind::Integer
+    fn in_kinds(&'_ self, _in_pin: usize) -> Cow<'_, [ValueKind]> {
+        let Self { integer, .. } = self;
+        if *integer {
+            Cow::Borrowed(&[
+                ValueKind::Integer,
+                ValueKind::IntList,
+                ValueKind::Number,
+                ValueKind::FloatList,
+                ValueKind::TextList,
+                ValueKind::Text,
+            ])
         } else {
-            ValueKind::Number
+            Cow::Borrowed(&[
+                ValueKind::Number,
+                ValueKind::FloatList,
+                ValueKind::Integer,
+                ValueKind::IntList,
+                ValueKind::TextList,
+                ValueKind::Text,
+            ])
+        }
+    }
+
+    fn outputs(&self) -> usize {
+        2
+    }
+
+    fn out_kind(&self, out_pin: usize) -> ValueKind {
+        let Self { list, integer, .. } = self;
+
+        if out_pin == 0 {
+            match (list, integer) {
+                (true, true) => ValueKind::IntList,
+                (false, true) => ValueKind::Integer,
+                (true, false) => ValueKind::FloatList,
+                (false, false) => ValueKind::Number,
+            }
+        } else {
+            ValueKind::Failure
         }
     }
 
@@ -41,12 +78,109 @@ impl DynNode for Number {
         &mut self,
         _ctx: &RunContext,
         _node_id: egui_snarl::NodeId,
-        _inputs: Vec<Option<Value>>,
+        inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        if self.integer {
-            Ok(vec![Value::Integer(self.i_value)])
-        } else {
-            Ok(vec![Value::Number(self.f_value)])
+        let Self { list, integer, .. } = self;
+
+        match &inputs[0] {
+            None => {
+                if self.integer {
+                    Ok(vec![Value::Integer(self.i_value)])
+                } else {
+                    Ok(vec![Value::Number(self.f_value)])
+                }
+            }
+            Some(Value::Integer(value)) => Ok(vec![match (list, integer) {
+                (true, true) => Value::IntList(im::vector![*value]),
+                (false, true) => Value::Integer(*value),
+                (true, false) => Value::FloatList(im::vector![E64::assert(*value as f64)]),
+                (false, false) => Value::Number(E64::assert(*value as f64)),
+            }]),
+            Some(Value::IntList(value)) => Ok(vec![match (list, integer) {
+                (true, true) => Value::IntList(value.clone()),
+                (false, true) if value.len() == 1 => Value::Integer(value[0]),
+                (true, false) => {
+                    Value::FloatList(value.iter().map(|it| E64::assert(*it as f64)).collect())
+                }
+                (false, false) if value.len() == 1 => Value::Number(E64::assert(value[0] as f64)),
+                (false, _) => Err(WorkflowError::Conversion(
+                    "List must have exactly one value".into(),
+                ))?,
+            }]),
+            Some(Value::Number(value)) => Ok(vec![match (list, integer) {
+                (true, true) => Value::IntList(im::vector![value.into_inner() as i64]),
+                (false, true) => Value::Integer(value.into_inner() as i64),
+                (true, false) => Value::FloatList(im::vector![*value]),
+                (false, false) => Value::Number(*value),
+            }]),
+            Some(Value::FloatList(value)) => Ok(vec![match (list, integer) {
+                (true, true) => {
+                    Value::IntList(value.iter().map(|it| it.into_inner() as i64).collect())
+                }
+                (false, true) if value.len() == 1 => Value::Integer(value[0].into_inner() as i64),
+                (true, false) => Value::FloatList(value.clone()),
+                (false, false) if value.len() == 1 => Value::Number(value[0]),
+                (false, _) => Err(WorkflowError::Conversion(
+                    "List must have exactly one value".into(),
+                ))?,
+            }]),
+            Some(Value::Text(value)) => Ok(vec![match (list, integer) {
+                (true, true) => {
+                    let item = value
+                        .parse::<i64>()
+                        .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?;
+                    Value::IntList(im::vector![item])
+                }
+                (false, true) => Value::Integer(
+                    value
+                        .parse()
+                        .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?,
+                ),
+                (true, false) => {
+                    let item = E64::from_str(value)
+                        .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?;
+                    Value::FloatList(im::vector![item])
+                }
+                (false, false) => Value::Number(
+                    E64::from_str(value.as_str())
+                        .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?,
+                ),
+            }]),
+            Some(Value::TextList(value)) => Ok(vec![match (list, integer) {
+                (true, true) => {
+                    let items: Result<im::Vector<i64>, WorkflowError> = value
+                        .iter()
+                        .map(|it| {
+                            it.parse::<i64>()
+                                .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))
+                        })
+                        .collect();
+                    Value::IntList(items?)
+                }
+                (false, true) if value.len() == 1 => Value::Integer(
+                    value[0]
+                        .parse()
+                        .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?,
+                ),
+                (true, false) => {
+                    let items: Result<im::Vector<_>, WorkflowError> = value
+                        .iter()
+                        .map(|it| {
+                            E64::from_str(it)
+                                .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))
+                        })
+                        .collect();
+                    Value::FloatList(items?)
+                }
+                (false, false) if value.len() == 1 => Value::Number(
+                    E64::from_str(value[0].as_str())
+                        .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?,
+                ),
+                (false, _) => Err(WorkflowError::Conversion(
+                    "List must have exactly one value".into(),
+                ))?,
+            }]),
+            _ => unreachable!(),
         }
     }
 }
@@ -55,39 +189,65 @@ impl UiNode for Number {
     fn title(&self) -> &str {
         "Number"
     }
-
-    fn show_output(
+    fn show_input(
         &mut self,
         ui: &mut egui::Ui,
         _ctx: &EditContext,
         pin_id: usize,
+        remote: Option<Value>,
     ) -> egui_snarl::ui::PinInfo {
         assert_eq!(pin_id, 0);
 
-        if self.integer {
-            ui.add(egui::DragValue::new(&mut self.i_value).update_while_editing(false));
-            self.f_value = E64::assert(self.i_value as f64);
+        let Self {
+            list,
+            integer,
+            i_value,
+            f_value,
+        } = self;
+
+        if remote.is_none() {
+            if *integer {
+                ui.add(egui::DragValue::new(i_value).update_while_editing(false));
+                *f_value = E64::assert(*i_value as f64);
+            } else {
+                let mut inner = f_value.into_inner();
+                ui.add(
+                    egui::DragValue::new(&mut inner)
+                        .speed(0.1)
+                        .update_while_editing(false),
+                );
+                *f_value = E64::assert(inner);
+                *i_value = inner as i64;
+            }
+
+            self.list = false;
         } else {
-            let mut inner = self.f_value.into_inner();
-            ui.add(
-                egui::DragValue::new(&mut inner)
-                    .speed(0.1)
-                    .update_while_editing(false),
-            );
-            self.f_value = E64::assert(inner);
-            self.i_value = inner as i64;
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.toggle_value(list, BRACKETS_SQUARE)
+                .on_hover_text("list value");
         }
 
-        ui.toggle_value(&mut self.integer, NUMPAD)
-            .on_hover_text("treat value as integer");
-        self.out_kind(pin_id).default_pin()
+        ui.toggle_value(integer, NUMPAD)
+            .on_hover_text("integer value");
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
     }
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextSplit {
+    Lines,
+    Paragraphs,
+    Words,
+    Documents,
 }
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Text {
     pub value: Arc<String>,
+
+    pub delim: Option<TextSplit>,
 
     pub size: Option<crate::utils::EVec2>,
 }
@@ -100,18 +260,65 @@ impl DynNode for Text {
         Value::Text(self.value.clone())
     }
 
+    fn in_kinds(&'_ self, in_pin: usize) -> std::borrow::Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
+            0 => &[ValueKind::Text, ValueKind::Message],
+            _ => unreachable!(),
+        })
+    }
+
     fn out_kind(&self, out_pin: usize) -> ValueKind {
         assert_eq!(out_pin, 0);
-        ValueKind::Text
+        if self.delim.is_none() {
+            ValueKind::Text
+        } else {
+            ValueKind::TextList
+        }
     }
 
     fn execute(
         &mut self,
         _ctx: &RunContext,
         _node_id: egui_snarl::NodeId,
-        _inputs: Vec<Option<Value>>,
+        inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        Ok(vec![Value::Text(self.value.clone())])
+        use TextSplit::*;
+        let Self { value, delim, .. } = self;
+
+        let text = match &inputs[0] {
+            Some(Value::Text(text)) => text.clone(),
+            Some(Value::Message(message)) => Arc::new(message_text(message)),
+            None => value.clone(),
+            _ => unreachable!(),
+        };
+
+        match delim {
+            None => Ok(vec![Value::Text(text.clone())]),
+            Some(Lines) => Ok(vec![Value::TextList(
+                text.split("\n")
+                    .filter(|it| !it.is_empty())
+                    .map(|it| Arc::new(it.trim().to_string()))
+                    .collect(),
+            )]),
+            Some(Paragraphs) => Ok(vec![Value::TextList(
+                text.split("\n\n")
+                    .filter(|it| !it.is_empty())
+                    .map(|it| Arc::new(it.trim().to_string()))
+                    .collect(),
+            )]),
+            Some(Words) => Ok(vec![Value::TextList(
+                text.split_whitespace()
+                    .filter(|it| !it.is_empty())
+                    .map(|it| Arc::new(it.to_string()))
+                    .collect(),
+            )]),
+            Some(Documents) => Ok(vec![Value::TextList(
+                text.split("\n---\n")
+                    .filter(|it| !it.is_empty())
+                    .map(|it| Arc::new(it.trim().to_string()))
+                    .collect(),
+            )]),
+        }
     }
 }
 
@@ -120,23 +327,56 @@ impl UiNode for Text {
         "Text"
     }
 
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        _ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        if remote.is_none() {
+            egui::Frame::new().inner_margin(4).show(ui, |ui| {
+                resizable_frame(&mut self.size, ui, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        let text = Arc::make_mut(&mut self.value);
+                        let widget = egui::TextEdit::multiline(text)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("Enter text \u{1F64B}");
+
+                        squelch(ui.add_sized(ui.available_size(), widget));
+                    });
+                });
+            });
+        } else {
+            ui.label("input");
+        }
+
+        self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+
     fn has_body(&self) -> bool {
         true
     }
 
     fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
-        egui::Frame::new().inner_margin(4).show(ui, |ui| {
-            resizable_frame(&mut self.size, ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let text = Arc::make_mut(&mut self.value);
-                    let widget = egui::TextEdit::multiline(text)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("Enter text \u{1F64B}");
+        use TextSplit::*;
+        let Self { delim, .. } = self;
 
-                    squelch(ui.add_sized(ui.available_size(), widget));
-                });
+        egui::ComboBox::from_label("split")
+            .selected_text(if delim.is_none() {
+                String::new()
+            } else {
+                format!("{:?}", delim.as_ref().unwrap())
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(delim, None, "");
+                ui.selectable_value(delim, Some(Lines), "Lines");
+                ui.selectable_value(delim, Some(Paragraphs), "Paragraphs")
+                    .on_hover_text("Paragraphs separated by blank lines");
+                ui.selectable_value(delim, Some(Words), "Words");
+                ui.selectable_value(delim, Some(Documents), "Documents")
+                    .on_hover_text("Documents separated by triple dash (---)");
             });
-        });
     }
 
     fn show_output(

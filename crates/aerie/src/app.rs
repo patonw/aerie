@@ -347,6 +347,10 @@ impl App {
                 let autorun = settings_.view(|s| s.autoruns);
                 if behavior.run_count < autorun {
                     behavior.run_count += 1;
+
+                    let exec_id = behavior.workflows.shadow.graph.uuid.into();
+                    behavior.workflows.node_state.view(exec_id).clear();
+
                     behavior.exec_workflow();
                 }
             }

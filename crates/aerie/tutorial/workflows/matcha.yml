@@ -1,4 +1,8 @@
----
+description: |-
+  A simple showcase of conditional flow.
+
+  Use this sparingly otherwise, workflows will end up like the "table-tennis" example
+uuid: aee01159-22ad-4efb-bfa5-df4e35a52538
 nodes:
   0:
     value:
@@ -17,10 +21,10 @@ nodes:
   2:
     value:
       Text:
-        value: "Change the prompt to something beginning with \"hello\" and see where this message ends up."
+        value: Change the prompt to something beginning with "hello" and see where this message ends up.
         size:
-          x: 300
-          y: 184
+          x: 300.0
+          y: 184.0
     pos:
       x: -214.6275
       y: 1162.5555
@@ -38,8 +42,9 @@ nodes:
     value:
       Preview:
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
+        uuid: 75169e27-a740-49e2-88ff-c539f22713bb
     pos:
       x: 945.50977
       y: 1704.5023
@@ -49,8 +54,8 @@ nodes:
       CommentNode:
         comment: Try changing the temperature using the slider in the Settings tab
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
       x: 420.6636
       y: 584.1121
@@ -60,7 +65,7 @@ nodes:
       Matcher:
         kind: Text
         patterns:
-          - 0.0..0.3 | 0.4 | 0.5..=1.0
+        - 0.0..0.3 | 0.4 | 0.5..=1.0
         exact: true
     pos:
       x: 796.0029
@@ -71,9 +76,9 @@ nodes:
       Matcher:
         kind: Text
         patterns:
-          - ^.el+o
-          - goodbye | hello
-          - "^(this \\| that)$"
+        - ^.el+o
+        - goodbye | hello
+        - ^(this \| that)$
     pos:
       x: 387.06107
       y: 1350.56
@@ -81,10 +86,10 @@ nodes:
   8:
     value:
       Text:
-        value: "Make sure `exact` is toggled off when using numeric ranges or the workflow will fail."
+        value: Make sure `exact` is toggled off when using numeric ranges or the workflow will fail.
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
       x: 299.56992
       y: -376.93423
@@ -93,8 +98,9 @@ nodes:
     value:
       Preview:
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
+        uuid: 2b013115-4feb-4779-91f5-9a08ebf7e6c1
     pos:
       x: 957.13605
       y: 1195.2659
@@ -104,44 +110,11 @@ nodes:
       Matcher:
         kind: Chat
         patterns:
-          - 0..=0.3
-          - 0.3..0.7
+        - 0..=0.3
+        - 0.3..0.7
     pos:
       x: 450.32846
       y: 238.92337
-    open: true
-  11:
-    value:
-      Text:
-        value: Cool
-        size:
-          x: 300
-          y: 150
-    pos:
-      x: 1014.5817
-      y: 43.016075
-    open: true
-  12:
-    value:
-      Text:
-        value: Warmer
-        size:
-          x: 300
-          y: 150
-    pos:
-      x: 1006.2787
-      y: 377.18774
-    open: true
-  13:
-    value:
-      Text:
-        value: Ouch! Too hot!
-        size:
-          x: 300
-          y: 150
-    pos:
-      x: 996.587
-      y: 711.7149
     open: true
   14:
     value:
@@ -156,8 +129,9 @@ nodes:
     value:
       Preview:
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
+        uuid: 2ad029b9-eb72-4c1a-96b9-9c63d163d4c7
     pos:
       x: 1789.7545
       y: 512.3602
@@ -166,8 +140,9 @@ nodes:
     value:
       Preview:
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
+        uuid: 77f93304-fa7d-4dbe-9b45-b2fe4e2cbbab
     pos:
       x: 1387.3314
       y: -253.16368
@@ -176,8 +151,9 @@ nodes:
     value:
       Preview:
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
+        uuid: 73ed72f8-33a0-4b56-8fc3-7628b22568e8
     pos:
       x: 1376.8406
       y: -578.2139
@@ -187,8 +163,8 @@ nodes:
       Text:
         value: this | that
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
       x: -201.138
       y: 1575.3102
@@ -197,8 +173,9 @@ nodes:
     value:
       Preview:
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
+        uuid: 6d47c003-aa4d-4dbd-8fa1-e57f2f0e242f
     pos:
       x: 962.3906
       y: 1358.4199
@@ -207,8 +184,9 @@ nodes:
     value:
       Preview:
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
+        uuid: be4cc814-6391-4871-ba7a-cf1f36a5b92e
     pos:
       x: 954.4658
       y: 1531.3712
@@ -216,10 +194,10 @@ nodes:
   21:
     value:
       CommentNode:
-        comment: "To match a string with a literal '|' character, you'll need to use a regex."
+        comment: To match a string with a literal '|' character, you'll need to use a regex.
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
       x: 286.50354
       y: 1730.4634
@@ -227,10 +205,10 @@ nodes:
   22:
     value:
       CommentNode:
-        comment: "Multiple values and/or ranges can be separated with the pipe '|' character..."
+        comment: Multiple values and/or ranges can be separated with the pipe '|' character...
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
       x: 865.2824
       y: -691.0408
@@ -244,128 +222,159 @@ nodes:
       x: 273.12924
       y: -618.72064
     open: true
+  24:
+    value:
+      TemplateNode:
+        template: Cool
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 954.8744
+      y: -0.6699747
+    open: true
+  25:
+    value:
+      TemplateNode:
+        template: Warmer
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 953.8267
+      y: 324.53528
+    open: true
+  26:
+    value:
+      TemplateNode:
+        template: Ouch! Too hot!
+        size:
+          x: 300.0
+          y: 150.0
+    pos:
+      x: 960.6407
+      y: 655.4264
+    open: true
 wires:
-  - out_pin:
-      node: 0
-      output: 1
-    in_pin:
-      node: 10
-      input: 0
-  - out_pin:
-      node: 0
-      output: 2
-    in_pin:
-      node: 10
-      input: 1
-  - out_pin:
-      node: 0
-      output: 4
-    in_pin:
-      node: 7
-      input: 0
-  - out_pin:
-      node: 2
-      output: 0
-    in_pin:
-      node: 7
-      input: 1
-  - out_pin:
-      node: 3
-      output: 0
-    in_pin:
-      node: 23
-      input: 0
-  - out_pin:
-      node: 6
-      output: 0
-    in_pin:
-      node: 17
-      input: 0
-  - out_pin:
-      node: 6
-      output: 1
-    in_pin:
-      node: 16
-      input: 0
-  - out_pin:
-      node: 7
-      output: 0
-    in_pin:
-      node: 9
-      input: 0
-  - out_pin:
-      node: 7
-      output: 1
-    in_pin:
-      node: 19
-      input: 0
-  - out_pin:
-      node: 7
-      output: 2
-    in_pin:
-      node: 20
-      input: 0
-  - out_pin:
-      node: 7
-      output: 3
-    in_pin:
-      node: 4
-      input: 0
-  - out_pin:
-      node: 8
-      output: 0
-    in_pin:
-      node: 6
-      input: 1
-  - out_pin:
-      node: 10
-      output: 0
-    in_pin:
-      node: 11
-      input: 0
-  - out_pin:
-      node: 10
-      output: 1
-    in_pin:
-      node: 12
-      input: 0
-  - out_pin:
-      node: 10
-      output: 2
-    in_pin:
-      node: 13
-      input: 0
-  - out_pin:
-      node: 11
-      output: 0
-    in_pin:
-      node: 14
-      input: 0
-  - out_pin:
-      node: 12
-      output: 0
-    in_pin:
-      node: 14
-      input: 1
-  - out_pin:
-      node: 13
-      output: 0
-    in_pin:
-      node: 14
-      input: 2
-  - out_pin:
-      node: 14
-      output: 0
-    in_pin:
-      node: 15
-      input: 0
-  - out_pin:
-      node: 23
-      output: 0
-    in_pin:
-      node: 6
-      input: 0
-description: |-
-  A simple showcase of conditional flow.
-  
-  Use this sparingly otherwise, workflows will end up like the "table-tennis" example
+- out_pin:
+    node: 0
+    output: 1
+  in_pin:
+    node: 10
+    input: 0
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 10
+    input: 1
+- out_pin:
+    node: 0
+    output: 4
+  in_pin:
+    node: 7
+    input: 0
+- out_pin:
+    node: 2
+    output: 0
+  in_pin:
+    node: 7
+    input: 1
+- out_pin:
+    node: 3
+    output: 0
+  in_pin:
+    node: 23
+    input: 0
+- out_pin:
+    node: 6
+    output: 0
+  in_pin:
+    node: 17
+    input: 0
+- out_pin:
+    node: 6
+    output: 1
+  in_pin:
+    node: 16
+    input: 0
+- out_pin:
+    node: 7
+    output: 0
+  in_pin:
+    node: 9
+    input: 0
+- out_pin:
+    node: 7
+    output: 1
+  in_pin:
+    node: 19
+    input: 0
+- out_pin:
+    node: 7
+    output: 2
+  in_pin:
+    node: 20
+    input: 0
+- out_pin:
+    node: 7
+    output: 3
+  in_pin:
+    node: 4
+    input: 0
+- out_pin:
+    node: 8
+    output: 0
+  in_pin:
+    node: 6
+    input: 1
+- out_pin:
+    node: 10
+    output: 0
+  in_pin:
+    node: 24
+    input: 1
+- out_pin:
+    node: 10
+    output: 1
+  in_pin:
+    node: 25
+    input: 1
+- out_pin:
+    node: 10
+    output: 2
+  in_pin:
+    node: 26
+    input: 1
+- out_pin:
+    node: 14
+    output: 0
+  in_pin:
+    node: 15
+    input: 0
+- out_pin:
+    node: 23
+    output: 0
+  in_pin:
+    node: 6
+    input: 0
+- out_pin:
+    node: 24
+    output: 0
+  in_pin:
+    node: 14
+    input: 0
+- out_pin:
+    node: 25
+    output: 0
+  in_pin:
+    node: 14
+    input: 1
+- out_pin:
+    node: 26
+    output: 0
+  in_pin:
+    node: 14
+    input: 2
+start: 0
+finish: 1
