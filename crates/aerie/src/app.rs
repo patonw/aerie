@@ -252,7 +252,10 @@ impl App {
         let max_size = self.max_size;
 
         let options = (self.eframe_opts_fn)(eframe::NativeOptions {
-            // viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
+            viewport: egui::ViewportBuilder::default()
+                .with_maximized(true) // Otherwise, panics on windows
+                .with_resizable(true)
+                .with_drag_and_drop(true),
             ..Default::default()
         });
 

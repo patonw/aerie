@@ -1,0 +1,176 @@
+name: Build aerie
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "aerie/**"
+      - ".github/**"
+
+jobs:
+  gh-info:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump trigger event
+        env:
+          GITHUB_EVENT: ${{ toJson(github.event) }}
+        run: echo "$GITHUB_EVENT"
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aerie
+    outputs:
+      build-id: ${{ steps.build-id.outputs.BUILD_ID }}
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - run: |
+          git rev-parse --abbrev-ref HEAD
+          git rev-parse --short HEAD
+          pwd
+      - id: build-id
+        run: |
+          BUILD_ID=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')-$(date +"%y%m%d%H%M")
+          echo "BUILD_ID=$BUILD_ID" >> "$GITHUB_OUTPUT"
+      - run: |
+          echo "BUILD_ID=$BUILD_ID"
+        env:
+          BUILD_ID: ${{ steps.build-id.outputs.BUILD_ID }}
+      - name: Cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            aerie/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('aerie/**/Cargo.lock') }}
+      - name: build
+        run: cargo build --release
+      - name: Upload  artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: aerie-x86_64-linux
+          path: aerie/target/release/aerie
+  appimage:
+    # if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    container:
+      image: debian:latest
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: aerie-x86_64-linux
+      - name: fetch build tools
+        run: |
+          apt update
+          apt install -y fuse appstream file gpg curl wget \
+            libgl-dev libxkbcommon-dev libwayland-dev \
+            libegl1 libegl-mesa0
+
+          wget -c "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+          chmod +x ./linuxdeploy-x86_64.AppImage
+          curl -o aerie.png https://placehold.co/64.png
+      - name: bundle AppImage
+        run: |
+          ./linuxdeploy-x86_64.AppImage --appimage-extract-and-run \
+            --executable aerie \
+            --appdir AppDir --output appimage \
+            -i aerie.png --create-desktop-file \
+            -l /usr/lib/x86_64-linux-gnu/libbsd.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libdrm_amdgpu.so.1 \
+            -l /usr/lib/x86_64-linux-gnu/libdrm_intel.so.1 \
+            -l /usr/lib/x86_64-linux-gnu/libdrm.so.2 \
+            -l /usr/lib/x86_64-linux-gnu/libedit.so.2 \
+            -l /usr/lib/x86_64-linux-gnu/libEGL_mesa.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libEGL.so.1 \
+            -l /usr/lib/x86_64-linux-gnu/libelf.so.1 \
+            -l /usr/lib/x86_64-linux-gnu/libexpat.so.1 \
+            -l /usr/lib/x86_64-linux-gnu/libgbm.so.1 \
+            -l /usr/lib/x86_64-linux-gnu/libGLdispatch.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libGL.so.1 \
+            -l /usr/lib/x86_64-linux-gnu/libGLX.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/liblzma.so.5 \
+            -l /usr/lib/x86_64-linux-gnu/libmd.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libpciaccess.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libsensors.so.5 \
+            -l /usr/lib/x86_64-linux-gnu/libstdc++.so.6 \
+            -l /usr/lib/x86_64-linux-gnu/libtinfo.so.6 \
+            -l /usr/lib/x86_64-linux-gnu/libwayland-client.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libwayland-cursor.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libwayland-egl.so.1 \
+            -l /usr/lib/x86_64-linux-gnu/libwayland-server.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libX11.so.6 \
+            -l /usr/lib/x86_64-linux-gnu/libX11-xcb.so.1 \
+            -l /usr/lib/x86_64-linux-gnu/libXau.so.6 \
+            -l /usr/lib/x86_64-linux-gnu/libxcb-dri3.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libxcb-present.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libxcb-randr.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libxcb-shm.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libxcb.so.1 \
+            -l /usr/lib/x86_64-linux-gnu/libxcb-sync.so.1 \
+            -l /usr/lib/x86_64-linux-gnu/libxcb-xfixes.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libXdmcp.so.6 \
+            -l /usr/lib/x86_64-linux-gnu/libxkbcommon.so.0 \
+            -l /usr/lib/x86_64-linux-gnu/libxshmfence.so.1 \
+            -l /usr/lib/x86_64-linux-gnu/libz.so.1 \
+            -l /usr/lib/x86_64-linux-gnu/libzstd.so.1
+      - name: Upload  artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: aerie-AppImage
+          path: aerie-x86_64.AppImage
+  pre-release:
+    if: ${{ ! startsWith(github.ref, 'refs/tags/v') }}
+    needs:
+      - build
+      - appimage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download AppImage artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: aerie-AppImage
+      - run: |
+          echo "BUILD_ID=$BUILD_ID"
+        env:
+          BUILD_ID: ${{ needs.build.outputs.build-id }}
+      - name: Create a draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: ${{ github.ref != 'refs/heads/main' }}
+          prerelease: true
+          tag_name: ${{ needs.build.outputs.build-id }}
+          generate_release_notes: true
+          body: |
+            This is an automated preview build.
+          files: |
+            aerie-x86_64.AppImage
+  release:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs:
+      - appimage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download AppImage artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: aerie-AppImage
+      - name: Create a draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            aerie-x86_64.AppImage
