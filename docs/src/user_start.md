@@ -2,7 +2,12 @@
 
 ## Installation
 
-- Currently only available as source
+- Linux AppImage binary builds available under [releases](https://github.com/patonw/refoliate/releases)
+  - Download from Assets
+  - Runs on most common distributions
+  - Can run on Windows under [WSL](https://learn.microsoft.com/en-us/windows/wsl/tutorials/gui-apps)
+  - On NixOS requires nixGL and appimage-run
+- Also available as source
   - Only tested on Linux
   - Process is fairly automated once build tool installed
 - Need a terminal
