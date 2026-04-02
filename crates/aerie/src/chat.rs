@@ -1,9 +1,9 @@
+use crate::rig::message::Message;
 use anyhow::anyhow;
 use arc_swap::ArcSwap;
 use cached::proc_macro::cached;
 use derive_builder::Builder;
 use itertools::Itertools;
-use rig::message::Message;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use serde_yaml_ng as serde_yml;
@@ -218,7 +218,6 @@ impl ChatSession {
     }
 }
 
-use std::time::Duration;
 #[cached(time = 5)]
 pub fn list_sessions(dir: PathBuf) -> Vec<String> {
     tracing::info!("listing sessions for {dir:?}");

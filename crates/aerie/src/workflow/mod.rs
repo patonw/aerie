@@ -1,3 +1,7 @@
+use crate::rig::{
+    message::Message,
+    tool::{ToolSetError, server::ToolServerError},
+};
 use arc_swap::ArcSwap;
 use decorum::{E32, E64};
 use downcast_rs::{Downcast, impl_downcast};
@@ -14,10 +18,6 @@ use im::Vector;
 use itertools::Itertools;
 use jsonschema::ValidationError;
 use kinded::Kinded;
-use rig::{
-    message::Message,
-    tool::{ToolSetError, server::ToolServerError},
-};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use serde_yaml_ng as serde_yml;

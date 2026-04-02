@@ -1,10 +1,10 @@
 use std::{borrow::Cow, sync::Arc};
 
-use itertools::Itertools as _;
-use rig::{
+use crate::rig::{
     OneOrMany,
     message::{AssistantContent, Message, ToolCall, ToolFunction},
 };
+use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -275,11 +275,7 @@ impl DynNode for CreateMessage {
                 } else if let Ok(tool_func) =
                     serde_json::from_value::<ToolFunction>(data.as_ref().clone())
                 {
-                    AssistantContent::ToolCall(ToolCall {
-                        id: String::default(),
-                        call_id: None,
-                        function: tool_func,
-                    })
+                    AssistantContent::ToolCall(ToolCall::new(String::default(), tool_func))
                 } else {
                     AssistantContent::tool_call("", "", data.as_ref().clone())
                 };

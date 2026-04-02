@@ -1,13 +1,15 @@
+#[allow(deprecated)]
+use crate::rig::{
+    self,
+    agent::{Agent, AgentBuilder},
+    client::completion::CompletionModelHandle,
+    completion::ToolDefinition,
+};
 use anyhow::{Context as _, anyhow};
 use arc_swap::{ArcSwap, ArcSwapOption};
 use decorum::E64;
 use derive_builder::Builder;
 use itertools::Itertools;
-use rig::{
-    agent::{Agent, AgentBuilderSimple},
-    client::{builder::DynClientBuilder, completion::CompletionModelHandle},
-    completion::ToolDefinition,
-};
 use scopeguard::defer;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -27,13 +29,18 @@ use crate::{
     workflow::store::WorkflowStoreDir,
 };
 
+use rig_dynclient::builder::DynClientBuilder;
+
 pub use super::chat::{ChatContent, ChatEntry, ChatHistory, ChatSession};
 pub use super::config::{Settings, ToolSelector, ToolSpec};
 pub use super::logging::{LogChannelLayer, LogEntry};
 pub use super::pipeline::{Pipeline, Workstep};
 pub use super::toolbox::{ToolProvider, Toolbox};
 
-pub type AgentBuilderT = AgentBuilderSimple<CompletionModelHandle<'static>>;
+#[allow(deprecated)]
+pub type AgentBuilderT = AgentBuilder<CompletionModelHandle<'static>>;
+
+#[allow(deprecated)]
 pub type AgentT = Agent<CompletionModelHandle<'static>>;
 
 #[derive(Serialize, Deserialize)]
@@ -106,6 +113,7 @@ pub struct AgentFactory {
 }
 
 impl AgentFactory {
+    #[allow(deprecated)]
     pub fn agent_builder(&self, provider_model: &str) -> anyhow::Result<AgentBuilderT> {
         let temperature = self.settings.view(|s| s.temperature);
 
@@ -113,12 +121,10 @@ impl AgentFactory {
 
         tracing::info!("Building agent with provider {provider} model {model}");
 
-        let completion = DynClientBuilder::new().completion(&provider, &model)?;
+        let completion = DynClientBuilder::new().completion(provider.leak(), &model)?;
 
-        let handle = CompletionModelHandle {
-            inner: Arc::from(completion),
-        };
-        Ok(AgentBuilderSimple::new(handle).temperature(temperature))
+        let handle = CompletionModelHandle::new(Arc::from(completion));
+        Ok(AgentBuilder::new(handle).temperature(temperature))
     }
 
     pub fn spec_to_agent(&self, spec: &AgentSpec) -> anyhow::Result<AgentT> {
@@ -145,14 +151,18 @@ impl AgentFactory {
             agent = agent.context(context_doc);
         }
 
-        if let Some(schema) = &spec.schema {
+        let agent = if let Some(schema) = &spec.schema {
             let tool = StructuredSubmit::from(schema.as_ref());
-            agent = agent.tool(tool);
+            agent.tool(tool).build()
         } else if let Some(toolset) = &spec.tools {
-            agent = self.toolbox.apply(agent, toolset);
-        }
+            match self.toolbox.apply(agent, toolset) {
+                either::Either::Left(builder) => builder.build(),
+                either::Either::Right(builder) => builder.build(),
+            }
+        } else {
+            agent.build()
+        };
 
-        let agent = agent.build();
         self.cache
             .store(Arc::new(cache.update(spec.clone(), agent.clone())));
 

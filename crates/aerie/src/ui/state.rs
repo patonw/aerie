@@ -1,3 +1,4 @@
+use crate::rmcp::model::Tool;
 use arc_swap::ArcSwap;
 use eframe::egui;
 use egui::WidgetText;
@@ -5,7 +6,6 @@ use egui_commonmark::*;
 use egui_snarl::NodeId;
 use egui_tiles::SimplificationOptions;
 use itertools::Itertools;
-use rmcp::model::Tool;
 use serde_yaml_ng as serde_yml;
 use std::{
     borrow::Cow,

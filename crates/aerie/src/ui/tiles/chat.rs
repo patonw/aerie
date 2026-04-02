@@ -1,8 +1,8 @@
+use crate::rig::message::{Message, UserContent};
 use eframe::egui;
 use egui_commonmark::*;
 use egui_phosphor::regular::GIT_BRANCH;
 use itertools::Itertools;
-use rig::message::{Message, UserContent};
 use std::{borrow::Cow, sync::atomic::Ordering};
 
 use crate::{

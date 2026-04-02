@@ -1,4 +1,0 @@
-[submodule "aerie/upstream/rig"]
-	path = aerie/upstream/rig
-	url = https://github.com/patonw/rig
-	branch = fix-tool_choice

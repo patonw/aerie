@@ -1,6 +1,6 @@
+use crate::rig::message::Message;
 use decorum::E64;
 use egui::TextEdit;
-use rig::message::Message;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{borrow::Cow, sync::Arc, time::Duration};
@@ -49,7 +49,7 @@ impl DynNode for Tools {
         node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        use rig::tool::Tool as _;
+        use crate::rig::tool::Tool as _;
         let _ = (ctx, node_id, inputs);
         let toolbox = &ctx.agent_factory.toolbox;
         let mut toolset = self.toolset.as_ref().clone();
@@ -166,7 +166,7 @@ impl UiNode for Tools {
                                 }
                             }
                             ToolProvider::Chainer { .. } => {
-                                use rig::tool::Tool as _;
+                                use crate::rig::tool::Tool as _;
                                 for tool in provider.all_tool_names() {
                                     if tool != ChainBreaker::NAME
                                         && !ctx.metadata.chain.contains(&*tool)
