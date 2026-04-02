@@ -6,11 +6,11 @@ use std::{
     sync::Arc,
 };
 
+use crate::rig::message::{AssistantContent, Message, ToolResultContent, UserContent};
 use arc_swap::ArcSwap;
 use decorum::E32;
 use egui::mutex::Mutex;
 use itertools::{Itertools, iproduct};
-use rig::message::{AssistantContent, Message, ToolResultContent, UserContent};
 use rpds::{List, ListSync};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -382,10 +382,12 @@ pub fn extract_assistant_content(content: &AssistantContent) -> Vec<(String, For
                 .unwrap_or_else(|_| format!("{tool_call:?}"));
             vec![(text, FormatOpts::Pre)]
         }
-        AssistantContent::Reasoning(reasoning) => vec![(
-            reasoning.reasoning.join("\n\n---\n\n"),
-            FormatOpts::Markdown,
-        )],
+        AssistantContent::Reasoning(reasoning) => {
+            vec![(reasoning.display_text(), FormatOpts::Markdown)]
+        }
+        AssistantContent::Image(_image) => {
+            vec![]
+        }
     }
 }
 

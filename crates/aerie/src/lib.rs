@@ -26,6 +26,7 @@ pub use egui;
 pub use egui_snarl as snarl;
 pub use im;
 pub use inventory;
+pub use rig_dynclient::{self, rig, rmcp};
 pub use serde;
 pub use serde_json;
 pub use tracing;

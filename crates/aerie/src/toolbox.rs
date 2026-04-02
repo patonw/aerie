@@ -1,12 +1,14 @@
-use arc_swap::{ArcSwap, ArcSwapOption};
-use cached::proc_macro::cached;
-use im::OrdMap;
-use itertools::Itertools;
-use rig::{
-    agent::AgentBuilderSimple,
+use crate::rig::{
+    self,
+    agent::AgentBuilder,
     completion::CompletionModel,
     tool::{Tool as _, ToolSet as RigToolSet},
 };
+use arc_swap::{ArcSwap, ArcSwapOption};
+use cached::proc_macro::cached;
+use either::Either;
+use im::OrdMap;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -17,9 +19,9 @@ use std::{
 };
 use tokio::process::Command;
 
-use rmcp::{
+use crate::rmcp::{
     Peer, RoleClient, ServiceExt as _,
-    model::{ClientCapabilities, ClientInfo, Implementation, Tool},
+    model::{ClientCapabilities, ClientInfo, Implementation, InitializeRequestParams, Tool},
     service::RunningService,
     transport::{
         ConfigureCommandExt, StreamableHttpClientTransport, TokioChildProcess,
@@ -34,6 +36,9 @@ use crate::{
         store::{WorkflowStore as _, WorkflowStoreDir},
     },
 };
+
+pub type AgentMaybeTooled<M> =
+    Either<AgentBuilder<M>, AgentBuilder<M, (), rig::agent::WithBuilderTools>>;
 
 use super::config::{ToolSelector, ToolSpec};
 
@@ -183,7 +188,7 @@ pub enum ToolProvider {
 #[derive(Clone)]
 pub enum McpClient {
     Stdio(Arc<RunningService<RoleClient, ()>>),
-    HTTP(Arc<RunningService<RoleClient, rmcp::model::InitializeRequestParam>>),
+    HTTP(Arc<RunningService<RoleClient, InitializeRequestParams>>),
 }
 
 impl McpClient {
@@ -331,10 +336,10 @@ impl ToolProvider {
 
     pub fn select_tools<M: CompletionModel>(
         &self,
-        mut agent: AgentBuilderSimple<M>,
+        mut agent: AgentMaybeTooled<M>,
         _provider: &str,
         selector: impl Fn(&str) -> bool,
-    ) -> AgentBuilderSimple<M> {
+    ) -> AgentMaybeTooled<M> {
         match self {
             ToolProvider::MCP { client, tools, .. } => {
                 let selection = tools
@@ -346,7 +351,14 @@ impl ToolProvider {
                     //     tool
                     // })
                     .collect_vec();
-                agent.rmcp_tools(selection, client.peer().clone())
+                match agent {
+                    Either::Left(a) => {
+                        Either::Right(a.rmcp_tools(selection, client.peer().clone()))
+                    }
+                    Either::Right(a) => {
+                        Either::Right(a.rmcp_tools(selection, client.peer().clone()))
+                    }
+                }
             }
             ToolProvider::Chainer {
                 workflows,
@@ -354,8 +366,12 @@ impl ToolProvider {
                 next_prompt,
             } => {
                 if selector(ChainBreaker::NAME) {
-                    agent = agent.tool(ChainBreaker);
+                    agent = match agent {
+                        Either::Left(a) => Either::Right(a.tool(ChainBreaker)),
+                        Either::Right(a) => Either::Right(a.tool(ChainBreaker)),
+                    };
                 }
+
                 let store = workflows;
                 for name in store.names().filter(|name| selector(name)) {
                     let description = store.description(&name);
@@ -367,7 +383,10 @@ impl ToolProvider {
                         description: description.into_owned(),
                         schema: schema.into_owned(),
                     };
-                    agent = agent.tool(tool);
+                    agent = match agent {
+                        Either::Left(a) => Either::Right(a.tool(tool)),
+                        Either::Right(a) => Either::Right(a.tool(tool)),
+                    };
                 }
 
                 agent
@@ -437,6 +456,7 @@ impl ToolProvider {
                 let transport = StreamableHttpClientTransport::from_config(config);
 
                 let client_info = ClientInfo {
+                    meta: None,
                     protocol_version: Default::default(),
                     capabilities: ClientCapabilities::default(),
                     client_info: Implementation {
@@ -518,21 +538,23 @@ impl Toolbox {
 
     pub fn select_tools<M: CompletionModel>(
         &self,
-        agent: AgentBuilderSimple<M>,
+        agent: AgentBuilder<M>,
         pred: impl Fn(&str, &str) -> bool + Copy,
-    ) -> AgentBuilderSimple<M> {
+    ) -> AgentMaybeTooled<M> {
         let providers = self.providers.load();
-        providers.iter().fold(agent, |agent, (name, chain)| {
-            chain.select_tools(agent, name, |tool| pred(name, tool))
-        })
+        providers
+            .iter()
+            .fold(Either::Left(agent), |agent, (name, chain)| {
+                chain.select_tools(agent, name, |tool| pred(name, tool))
+            })
     }
 
     // TODO: build the agent then manually create a ToolServer
     pub fn apply<M: CompletionModel>(
         &self,
-        agent: AgentBuilderSimple<M>,
+        agent: AgentBuilder<M>,
         toolset: &ToolSelector,
-    ) -> AgentBuilderSimple<M> {
+    ) -> AgentMaybeTooled<M> {
         self.select_tools(agent, |name, tool| toolset.apply(name, tool))
     }
 

@@ -4,13 +4,13 @@ use std::{
     time::Duration,
 };
 
-use itertools::Itertools;
-use rig::{
-    OneOrMany,
+use crate::rig::{
+    self, OneOrMany,
     agent::PromptRequest,
     completion::{Completion, CompletionError, CompletionResponse},
     message::{AssistantContent, Message, Reasoning, ToolCall, ToolFunction, UserContent},
 };
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
@@ -678,17 +678,18 @@ impl StructuredChat {
     }
 }
 
+#[allow(deprecated)]
 async fn one_shot_completion(
     run_ctx: &RunContext,
     agent: &rig::agent::Agent<rig::client::completion::CompletionModelHandle<'static>>,
     prompt: Message,
     history: Vec<Message>,
 ) -> Result<CompletionResponse<()>, WorkflowError> {
-    use futures_util::stream::StreamExt as _;
-    use rig::{
+    use crate::rig::{
         agent::Text,
         streaming::{StreamedAssistantContent, StreamingCompletion},
     };
+    use futures_util::stream::StreamExt as _;
 
     if !run_ctx.streaming {
         let mut request = agent
@@ -747,11 +748,9 @@ async fn one_shot_completion(
                         a.store(Arc::new(Ok(msg)));
                     }
                 }
-
-                StreamedAssistantContent::ToolCall(tool_call) => {
+                StreamedAssistantContent::ToolCall { tool_call, .. } => {
                     tool_calls.push(tool_call.clone());
                 }
-                // No idea how to handle this case
                 StreamedAssistantContent::ToolCallDelta { .. } => {
                     // Maybe we can just ignore. Seems like APIs that use this send
                     // a complete ToolCall at the end.
@@ -759,10 +758,13 @@ async fn one_shot_completion(
                     // Also, deltas seem to omit the actual tool name.
                     // Only sends back arguments.
                 }
-                StreamedAssistantContent::Reasoning(Reasoning { reasoning, .. }) => {
-                    reasonings.extend(reasoning);
+                StreamedAssistantContent::Reasoning(reasoning) => {
+                    reasonings.push(reasoning.display_text());
                 }
                 StreamedAssistantContent::Final(_) => {}
+                StreamedAssistantContent::ReasoningDelta { .. } => {
+                    // TODO: append to last reasoning
+                }
             },
             Err(err) => {
                 Err(WorkflowError::Provider(err.into()))?;
@@ -795,6 +797,7 @@ async fn one_shot_completion(
         choice: OneOrMany::many(contents).unwrap(),
         usage: Default::default(),
         raw_response: (),
+        message_id: None,
     })
 }
 
@@ -814,6 +817,7 @@ enum StreamingError {
     Tool(#[from] rig::tool::ToolSetError),
 }
 
+#[allow(deprecated)]
 // Following the example multi_turn_streaming_gemini, but I'm pretty lost.
 async fn multi_turn_completion(
     run_ctx: &RunContext,
@@ -822,15 +826,16 @@ async fn multi_turn_completion(
     prompt: Message,
     chat_history: &mut Vec<Message>,
 ) -> Result<(), StreamingError> {
-    use futures_util::stream::StreamExt as _;
-    use rig::{
+    use crate::rig::{
+        self,
         agent::Text,
         streaming::{StreamedAssistantContent, StreamingCompletion},
     };
+    use futures_util::stream::StreamExt as _;
 
     if !run_ctx.streaming {
-        PromptRequest::new(agent, prompt)
-            .multi_turn(5)
+        PromptRequest::from_agent(agent, prompt)
+            .max_turns(5)
             .with_history(chat_history)
             .await?;
         return Ok(());
@@ -891,14 +896,11 @@ async fn multi_turn_completion(
                         a.store(Arc::new(Ok(msg)));
                     }
                 }
-                Ok(StreamedAssistantContent::ToolCall(tool_call)) => {
+                Ok(StreamedAssistantContent::ToolCall { tool_call, .. }) => {
                     tool_calls.push(tool_call);
                 }
-                Ok(StreamedAssistantContent::Reasoning(rig::message::Reasoning {
-                    reasoning,
-                    ..
-                })) => {
-                    reasonings.extend(reasoning);
+                Ok(StreamedAssistantContent::Reasoning(reasoning)) => {
+                    reasonings.push(reasoning.display_text());
                 }
                 Ok(_) => {}
                 err => {

@@ -10,7 +10,7 @@ use std::{
     },
 };
 
-use rmcp::model::Tool;
+use crate::rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
