@@ -3,15 +3,12 @@ name: Check aerie
 on:
   pull_request:
     paths:
-      - "aerie/**"
+      - "crates/aerie/**"
       - ".github/**"
 
 jobs:
   run-tests:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: aerie
     steps:
       - name: Check out repository code
         uses: actions/checkout@v5
@@ -23,7 +20,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            aerie/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('aerie/**/Cargo.lock') }}
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: test
         run: cargo test --release

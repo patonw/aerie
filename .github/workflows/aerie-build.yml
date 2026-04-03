@@ -5,8 +5,8 @@ on:
     branches:
       - main
     paths:
-      - "aerie/**"
-      - ".github/**"
+      - "crates/aerie/**"
+      - ".github/workflows/aerie-build.yml"
 
 jobs:
   gh-info:
@@ -18,9 +18,6 @@ jobs:
         run: echo "$GITHUB_EVENT"
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: aerie
     outputs:
       build-id: ${{ steps.build-id.outputs.BUILD_ID }}
     steps:
@@ -34,7 +31,8 @@ jobs:
           pwd
       - id: build-id
         run: |
-          BUILD_ID=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')-$(date +"%y%m%d%H%M")
+          COMMIT_DATE=$(git --no-pager log -1 --pretty='%ad' --date='format:%y%m%d%H%M')
+          BUILD_ID=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')-$COMMIT_DATE
           echo "BUILD_ID=$BUILD_ID" >> "$GITHUB_OUTPUT"
       - run: |
           echo "BUILD_ID=$BUILD_ID"
@@ -46,15 +44,15 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            aerie/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('aerie/**/Cargo.lock') }}
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: build
         run: cargo build --release
       - name: Upload  artifact
         uses: actions/upload-artifact@v7
         with:
           name: aerie-x86_64-linux
-          path: aerie/target/release/aerie
+          path: target/release/aerie
   appimage:
     # if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     needs:

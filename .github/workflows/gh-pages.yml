@@ -1,8 +1,12 @@
 name: publish documentation
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/gh-pages.yml"
+      - "docs/**"
 
 jobs:
   deploy:
@@ -24,13 +28,11 @@ jobs:
           echo `pwd`/mdbook >> $GITHUB_PATH
       - name: Build Book
         run: |
-          # This assumes your book is in the root of your repository.
-          # Just add a `cd` here if you need to change to another directory.
-          pushd aerie/docs
+          pushd docs
           mdbook build
           popd
           mkdir -p public
-          mv aerie/docs/book public/aerie
+          cp -r docs/book/. public
       - name: Setup Pages
         uses: actions/configure-pages@v4
       - name: Upload artifact

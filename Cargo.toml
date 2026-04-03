@@ -1,0 +1,6 @@
+[workspace]
+resolver = "3"
+members = ["crates/aerie"]
+
+[patch.crates-io]
+egui-snarl = { git = "https://github.com/patonw/egui-snarl", branch = "update-selection" }

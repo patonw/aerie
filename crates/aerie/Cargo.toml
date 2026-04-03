@@ -5,14 +5,16 @@ edition = "2024"
 default-run = "aerie"
 
 [[bin]]
+name = "aerie"
+required-features = []
+
+[[bin]]
+name = "simple-runner"
+required-features = []
+
+[[bin]]
 name = "migrate-workflow"
 required-features = ["migration"]
-
-[patch.crates-io]
-# egui-snarl = { path = "/code/upstream/rust/egui-snarl/" }
-egui-snarl = { git = "https://github.com/patonw/egui-snarl", branch = "update-selection" }
-# rig-core = { path = "upstream/rig/rig/rig-core" }
-# rig-core = { git = "https://github.com/patonw/rig", branch = "fix-tool_choice" }
 
 [dependencies]
 anyhow = "1.0.100"
