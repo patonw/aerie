@@ -562,7 +562,7 @@ impl<T: Clone + Hash + PartialEq + Debug> ShadowGraph<T> {
 
 impl Default for ShadowGraph<WorkNode> {
     fn default() -> Self {
-        let bytes = include_bytes!("../../tutorial/workflows/__default__.yml");
+        let bytes = include_bytes!("../../assets/workflows/__default__.yml");
         serde_yml::from_slice::<Self>(bytes).expect("Cannot load the default graph")
     }
 }

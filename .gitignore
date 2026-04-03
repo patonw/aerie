@@ -17,4 +17,4 @@ scratch*
 perf.data*
 flamegraph*
 .fastembed_cache/
-*/docs/book
+docs/book

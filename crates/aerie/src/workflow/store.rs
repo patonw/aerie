@@ -54,12 +54,12 @@ impl WorkflowStoreFile {
             result.insert("".into(), Default::default());
 
             if tutorial {
-                let bytes = include_bytes!("../../tutorial/workflows/basic.yml");
+                let bytes = include_bytes!("../../../../examples/workflows/beginner/basic.yml");
                 if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
                     result.insert("basic".into(), graph);
                 }
 
-                let bytes = include_bytes!("../../tutorial/workflows/chatty.yml");
+                let bytes = include_bytes!("../../../../examples/workflows/beginner/chatty.yml");
                 if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
                     result.insert("chatty".into(), graph);
                 }
@@ -201,12 +201,12 @@ impl WorkflowStoreDir {
         tracing::info!("Loaded all workflows: {names:?}");
 
         if tutorial && names.iter().all(|n| n == "__default__") {
-            let bytes = include_bytes!("../../tutorial/workflows/basic.yml");
+            let bytes = include_bytes!("../../../../examples/workflows/beginner/basic.yml");
             if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
                 let _ = CachedDirStore::save(&this, "basic", graph);
             }
 
-            let bytes = include_bytes!("../../tutorial/workflows/chatty.yml");
+            let bytes = include_bytes!("../../../../examples/workflows/beginner/chatty.yml");
             if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
                 let _ = CachedDirStore::save(&this, "chatty", graph);
             }
