@@ -27,6 +27,10 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Args {
+    /// An ephemeral file handle to dotenv formatted secrets
+    #[arg(long, short)]
+    env: Option<PathBuf>,
+
     /// The workflow file to run
     workflow: PathBuf,
 
@@ -88,6 +92,14 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
+
+    if let Some(env_handle) = &args.env {
+        let _ = if env_handle.to_str() == Some("-") {
+            dotenvy::from_read(std::io::stdin())
+        } else {
+            dotenvy::from_path(env_handle)
+        };
+    }
 
     if args.autoruns > 0 && args.workflows.is_none() {
         anyhow::bail!("Cannot use autorun without a workflow store");
