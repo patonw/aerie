@@ -52,14 +52,48 @@
 
 - Provider is specified in the prefix of the model
 - e.g. `openai/gpt-4o` will connect to OpenAI API
-- API keys and must be supplied by environment variable
-- No way to configure in the app. Bad practice regardless.
-- Environment variable depends on provider
-- Method to set variables depends on environment
+- API keys can be supplied by environment variable
+  - Common practice and convenient
+  - specific method to set variables depends on platform
+  - Not particularly secure
+  - Account-wide variables visible to unrelated apps
+  - Anyone can inspect variables of running apps
+- Ephemeral file handles more secure
+  - Contents still dotenv format
+  - Not perfect but far more secure
+  - Avoid persistent files on disk (still allowed, however)
+  - Use external vault or password manager to store secrets
+  - When launching app, use process substitution or stdio pipe
+- Variable name depends on provider
 - Some providers require additional settings like API host or base
 - Refer to rig docs for more details
 
-### Examples
+Example of passing secrets through file handle from Bitwarden:
+
+```bash
+$ bw unlock
+# ... login steps ...
+$ export BW_SESSION=***
+$ aerie --env <(bw get notes "API Keys") ...
+```
+
+Where "API Keys" is a secure note that looks like:
+```env
+OPENROUTER_API_KEY=***
+MISTRAL_API_KEY=***
+TAVILY_API_KEY=***
+...
+```
+
+> 📢 Avoid exposing the literal values of the API keys on the command line.
+>
+> **Don't do this:** `echo "SOME_API_KEY=asdf" | aerie --env -`
+>
+> The API key will be saved to your history and visible from the process list.
+> Use a plain text file, instead, when security is *not* critical.
+> It will be easier to restrict or redact after the fact.
+
+### Provider Examples
 
 #### OpenRouter
 
@@ -84,8 +118,7 @@ You typically won't be setting an API key for ollama, since you'll be managing t
 - model key:
   - `ollama/qwen3-coder:30b`
 
-> [!IMPORTANT]
-> You must use `ollama pull` to download any models before using them
+> 📢 You must use `ollama pull` to download any models before using them
 
 ## Cleanup
 
