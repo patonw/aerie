@@ -19,6 +19,10 @@ use clap::{Parser, Subcommand};
 #[derive(Parser, Clone, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Args {
+    /// An ephemeral file handle to dotenv formatted secrets
+    #[arg(long, short)]
+    pub env: Option<PathBuf>,
+
     #[arg(long, short)]
     pub session: Option<String>,
 

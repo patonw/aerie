@@ -15,6 +15,14 @@ fn main() -> anyhow::Result<()> {
     // Shhh...
     let _ = dotenvy::from_path(settings_path.with_file_name(".env"));
 
+    if let Some(env_handle) = &args.env {
+        let _ = if env_handle.to_str() == Some("-") {
+            dotenvy::from_read(std::io::stdin())
+        } else {
+            dotenvy::from_path(env_handle)
+        };
+    }
+
     let app = aerie::app::App::builder()
         .name("aerie")
         .args(args)
