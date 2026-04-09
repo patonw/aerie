@@ -100,14 +100,14 @@ APIs. See the subgraphs and iteration tutorial [^iteration].
 
 Workflows don't have to be simple chat agents. Named *Output* nodes emit
 results that can be consumed by other applications — written to the console or
-individual files when run via the `simple-runner` CLI:
+individual files when run via the runner CLI:
 
 ```bash
 aerie-runner \
-    -w ~/.local/share/aerie/workflows/ \
-    -m openrouter/openrouter/free \
+    --workflows ~/.local/share/aerie/workflows/ \
+    --model openrouter/openrouter/free \
     -I article.txt \
-    my-workflow
+    exec my-workflow
 ```
 
 See the [outputs tutorial] for details.

@@ -13,7 +13,7 @@ use aerie::{
     },
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use egui_snarl::Snarl;
 use itertools::Itertools as _;
 use serde::Serializer as _;
@@ -21,54 +21,16 @@ use serde_json::json;
 use serde_yaml_ng as serde_yml;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-/// A minimalist workflow runner that dumps outputs to the console as a JSON object.
-///
-/// If you need post-processing, use external tools like jq, sed and awk.
-#[derive(Parser, Debug)]
-#[command(version, about)]
-struct Args {
-    /// An ephemeral file handle to dotenv formatted secrets
-    #[arg(long, short)]
-    env: Option<PathBuf>,
-
+#[derive(clap::Args, Clone, Debug)]
+pub struct ExecArgs {
     /// The workflow file to run
     workflow: PathBuf,
 
-    /// Path to a workflow directory for chain execution
-    #[arg(short, long)]
-    workflows: Option<PathBuf>,
-
-    #[arg(short, long)]
-    tools: Option<PathBuf>,
-
-    /// A session to use in the workflow.
-    /// Updates are discarded unless `--update` is also used.
-    #[arg(short, long)]
-    session: Option<PathBuf>,
-
-    /// Configuration file containing tool providers and default agent settings
-    #[arg(short, long)]
-    config: Option<PathBuf>,
-
-    /// The session branch to use
-    #[arg(short, long)]
-    branch: Option<String>,
-
-    /// Save updates to the session after running the workflow.
-    #[arg(long, action)]
-    update: bool,
-
-    /// The default model for the workflow. Has no effect on nodes that define a specific model.
-    #[arg(short, long)]
-    model: Option<String>,
-
-    #[arg(short = 'T', long)]
-    temperature: Option<f64>,
-
-    /// Initial user prompt if required by the workflow.
+    /// Initial user prompt if required by the workflow
     #[arg(short, long, visible_alias("prompt"))]
     input: Option<String>,
 
+    /// Path to file containing the initial prompt
     #[arg(short = 'I', long)]
     input_file: Option<PathBuf>,
 
@@ -81,8 +43,60 @@ struct Args {
     autoruns: usize,
 
     /// Prints an additional object containing the next workflow after the last run
-    #[arg(short, long, action = clap::ArgAction::SetTrue, default_value_t = false)]
-    next: bool,
+    #[arg(short = 'n', long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    show_next: bool,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum Command {
+    Exec(ExecArgs),
+}
+
+/// A minimalist workflow runner that dumps outputs to the console as a JSON object.
+///
+/// If you need post-processing, use external tools like jq, sed and awk.
+#[derive(Parser, Debug)]
+#[command(version, about)]
+struct Args {
+    /// Configuration file containing tool providers and default agent settings
+    #[arg(short, long)]
+    config: Option<PathBuf>,
+
+    /// An ephemeral file handle to dotenv formatted secrets
+    #[arg(long, short)]
+    env: Option<PathBuf>,
+
+    /// Directory containing workflows
+    #[arg(short, long)]
+    workflows: Option<PathBuf>,
+
+    /// Directory containing tool provider definitions
+    #[arg(short, long)]
+    tools: Option<PathBuf>,
+
+    /// A session to use in the workflow.
+    /// Updates are discarded unless `--update` is also used.
+    #[arg(short, long)]
+    session: Option<PathBuf>,
+
+    /// The session branch to use
+    #[arg(short, long)]
+    branch: Option<String>,
+
+    /// Save updates to the session after running the workflow.
+    #[arg(long, action)]
+    update_session: bool,
+
+    /// The default model for the workflow. Has no effect on nodes that define a specific model.
+    #[arg(short, long)]
+    model: Option<String>,
+
+    /// Default language model temperature
+    #[arg(short = 'T', long)]
+    temperature: Option<f64>,
+
+    #[command(subcommand)]
+    pub command: Command,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -101,11 +115,20 @@ fn main() -> anyhow::Result<()> {
         };
     }
 
-    if args.autoruns > 0 && args.workflows.is_none() {
+    let Command::Exec(ExecArgs {
+        workflow,
+        input,
+        input_file,
+        out_dir,
+        autoruns,
+        show_next,
+    }) = &args.command;
+
+    if *autoruns > 0 && args.workflows.is_none() {
         anyhow::bail!("Cannot use autorun without a workflow store");
     }
 
-    if let Some(out_dir) = &args.out_dir {
+    if let Some(out_dir) = &out_dir {
         std::fs::create_dir_all(out_dir)?;
     }
 
@@ -200,26 +223,26 @@ fn main() -> anyhow::Result<()> {
         tracing::info!("Waiting for {num_tasks} tools to load...");
     }
 
-    let mut prompt = args.input.as_ref().cloned().unwrap_or_default();
+    let mut prompt = input.as_ref().cloned().unwrap_or_default();
     if &prompt == "-" {
         prompt = std::io::read_to_string(std::io::stdin())?;
     }
 
-    if let Some(path) = &args.input_file {
+    if let Some(path) = &input_file {
         prompt = std::fs::read_to_string(path)?;
     }
 
-    let workflow_path = args.workflow.as_path();
+    let workflow_path = workflow.as_path();
     let mut shadow: Workflow = if workflow_path.is_file() {
         let reader = OpenOptions::new().read(true).open(workflow_path)?;
         serde_yml::from_reader(reader)?
     } else if let Some(store) = &mut workflow_store {
-        store.load(&args.workflow.display().to_string())?
+        store.load(&workflow.display().to_string())?
     } else {
         anyhow::bail!("Invalid file: {workflow_path:?}");
     };
 
-    for run_count in 0..=args.autoruns {
+    for run_count in 0..=*autoruns {
         let run_ctx = RunContext::builder()
             .runtime(rt.handle().clone())
             .exec_id(shadow.graph.uuid.into())
@@ -229,8 +252,8 @@ fn main() -> anyhow::Result<()> {
             .seed(settings.seed.clone())
             .build();
 
-        let saver_task = if let Some(out_dir) = &args.out_dir {
-            let out_dir = if args.autoruns > 0 {
+        let saver_task = if let Some(out_dir) = out_dir {
+            let out_dir = if *autoruns > 0 {
                 out_dir.join(run_count.to_string())
             } else {
                 out_dir.clone()
@@ -287,11 +310,11 @@ fn main() -> anyhow::Result<()> {
 
         result?;
 
-        if args.update && args.session.is_some() {
+        if args.update_session && args.session.is_some() {
             session.save()?;
         }
 
-        if run_count < args.autoruns {
+        if run_count < *autoruns {
             if let Some(next_prompt) = next_prompt.swap(Default::default()) {
                 prompt = next_prompt.as_ref().to_owned();
             }
@@ -306,7 +329,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    if args.next {
+    if *show_next {
         let next_workflow = next_workflow
             .swap(Default::default())
             .map(|s| s.as_ref().clone());

@@ -71,14 +71,12 @@
 Example of passing secrets through file handle from Bitwarden:
 
 ```bash
-$ bw unlock
-# ... login steps ...
-$ export BW_SESSION=***
 $ aerie --env <(bw get notes "API Keys") ...
+? Master password: *****
 ```
 
 Where "API Keys" is a secure note that looks like:
-```env
+```dotenv
 OPENROUTER_API_KEY=***
 MISTRAL_API_KEY=***
 TAVILY_API_KEY=***

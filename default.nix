@@ -72,7 +72,7 @@ rec {
     runtimeInputs = [aerie];
     text = ''
       export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath libraries}
-      simple-runner "$@"
+      runner "$@"
     '';
   };
 
