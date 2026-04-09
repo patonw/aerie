@@ -29,11 +29,11 @@
 - Enable logging: `RUST_LOG=aerie=debug RUST_BACKTRACE=full cargo ...`
 - Headless workflow run:
   ```bash
-  cargo run --bin simple-runner -- \
+  cargo run --bin runner -- \
     --temperature 0.3 \
     --model ollama/qwen3-coder:30b \
     --config <path-to-config> \
-    tutorial/workflows/toolhead.yml
+    exec tutorial/workflows/toolhead.yml
   ```
 
 ## Customization

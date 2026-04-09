@@ -9,7 +9,7 @@ name = "aerie"
 required-features = []
 
 [[bin]]
-name = "simple-runner"
+name = "runner"
 required-features = []
 
 [[bin]]

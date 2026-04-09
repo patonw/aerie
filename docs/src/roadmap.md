@@ -1,42 +1,24 @@
 # Roadmap
 
 - [ ] Documentation to actual sentences
-- [x] Deprecate Model values and replace instances with Text
-  - Switch text storage to `smol_str`
 - [ ] Warn on missing tools & providers in mentioned in selection
-- [x] Extensibility
-  - make crate usable as a library
-  - Box dyn nodes
-  - Runtime registration
-- [x] Subgraphs
-  - Subgraph defined by ~storage and~ flavor (e.g. simple, retry, match)
-  - ~Storage can be Inline or Named~
-    - Inline subgraphs edited inside node
-    - ~Named subgraphs can only be edited from manager~
-    - ~Can convert between inline and named within a root graph~
-    - ~Named subgraphs cannot be referenced by another subgraph~
-    - ~i.e. only top-level~
-    - Subgraphs can contain nested inline subgraphs
-- [x] rhai script node
-- [x] Data parallelism via subgraps
-- [ ] Rate Limiter node
-  - Each node instance is a single bucket
-  - Only useful as an (indirect) child of an iterative subgraph
-  - Multiplexed input/outputs to control multiple branches w/ same bucket
-- [ ] MCP runner
+- [ ] `runner serve` subcommand
+  - Local HTTP server with /exec endpoint
+  - exec args as posted JSON
+  - Avoids startup latency during multiple runs
+- [ ] `runner mcp [stdio|http]` subcommands
+  - MCP server over STDIO and HTTP
   - Workflows as tools
     - Expose description and schema
     - payload param for workflow input
   - top-level params for conversation, autorun, temperature, model
-- [ ] WASM plugins
-- [ ] Media support
-  - Image inputs first
-  - Input collection management
-  - ~input file args in runner~
-  - support file names and data urls
+- [ ] `ui` feature flag
+  - exclude egui & other deps when disabled
+  - headless workflow node impls only
 
 ## Low Priority
 
+- [ ] WASM plugins
 - [ ] Tab layout persistence
 - [ ] Credential helpers
   - Encrypted environment variables
@@ -49,3 +31,5 @@
   - Need to throttle by provider (use separate pools?)
 - [ ] Sharing/publishing via web
   - [ ] Import/Export root graphs/subgraphs
+- [ ] Client-server split for UI
+  - [ ] optional web client
