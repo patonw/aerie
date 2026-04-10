@@ -1,3 +1,4 @@
+#![cfg(feature = "ui")]
 use typed_builder::TypedBuilder;
 
 use arc_swap::{ArcSwap, ArcSwapOption};

@@ -1,18 +1,25 @@
 use crate::rig::message::Message;
 use decorum::E64;
+#[cfg(feature = "ui")]
 use egui::TextEdit;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{borrow::Cow, sync::Arc, time::Duration};
 
-use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 use crate::{
-    ToolProvider, ToolSelector,
+    ToolSelector,
     config::Ternary,
     toolbox::{ChainBreaker, ChainTool},
-    ui::{resizable_frame, resizable_frame_opt, shortcuts::squelch},
     utils::message_text,
+    workflow::nodes::{DynNode, RunContext, Value, ValueKind},
     workflow::{FlexNode, WorkflowError},
+};
+
+#[cfg(feature = "ui")]
+use crate::{
+    ToolProvider,
+    ui::{resizable_frame, resizable_frame_opt, shortcuts::squelch},
+    workflow::{EditContext, UiNode},
 };
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +77,7 @@ impl DynNode for Tools {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Tools {
     fn title(&self) -> &str {
         if self.name.is_empty() {
@@ -322,6 +330,7 @@ impl DynNode for AgentNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for AgentNode {
     fn title(&self) -> &str {
         if self.name.is_empty() {
@@ -526,6 +535,7 @@ impl DynNode for ChatContext {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for ChatContext {
     fn title(&self) -> &str {
         "Context"
@@ -661,6 +671,7 @@ impl DynNode for InvokeTool {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for InvokeTool {
     fn title(&self) -> &str {
         "Invoke Tool"

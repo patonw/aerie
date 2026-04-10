@@ -1,20 +1,30 @@
 use std::{borrow::Cow, convert::identity, str::FromStr as _, sync::Arc};
 
 use decorum::E64;
-use egui::RichText;
-use egui_commonmark::CommonMarkCache;
-use egui_phosphor::regular::{BRACKETS_SQUARE, NUMPAD};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
 use crate::{
-    ChatContent,
-    ui::{AppEvent, resizable_frame, shortcuts::squelch, tiles::chat::render_message_width},
-    utils::{message_party, message_text},
-    workflow::{FlexNode, GraphId, WorkflowError},
+    utils::message_text,
+    workflow::{DynNode, FlexNode, GraphId, RunContext, Value, ValueKind, WorkflowError},
 };
 
-use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
+#[cfg(feature = "ui")]
+use egui::RichText;
+
+#[cfg(feature = "ui")]
+use egui_commonmark::CommonMarkCache;
+
+#[cfg(feature = "ui")]
+use egui_phosphor::regular::{BRACKETS_SQUARE, NUMPAD};
+
+#[cfg(feature = "ui")]
+use crate::{
+    ChatContent,
+    ui::{AppEvent, resizable_frame, shortcuts::squelch, tiles::chat::render_message_width},
+    utils::message_party,
+    workflow::{EditContext, UiNode},
+};
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Number {
@@ -185,6 +195,7 @@ impl DynNode for Number {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Number {
     fn title(&self) -> &str {
         "Number"
@@ -322,6 +333,7 @@ impl DynNode for Text {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Text {
     fn title(&self) -> &str {
         "Text"
@@ -444,6 +456,7 @@ impl DynNode for Preview {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Preview {
     fn on_paste(&mut self) {
         self.uuid = GraphId::new();
@@ -561,6 +574,7 @@ impl DynNode for OutputNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for OutputNode {
     fn title(&self) -> &str {
         "Output"
@@ -623,6 +637,7 @@ impl DynNode for Panic {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Panic {
     fn title(&self) -> &str {
         "Panic"

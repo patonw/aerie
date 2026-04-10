@@ -8,11 +8,7 @@ use downcast_rs::{Downcast, impl_downcast};
 use dyn_clone::DynClone;
 use dyn_eq::DynEq;
 use dyn_hash::DynHash;
-use egui::{Color32, Stroke};
-use egui_snarl::{
-    InPinId, Node as SnarlNode, NodeId, OutPinId, Snarl,
-    ui::{PinInfo, WireStyle},
-};
+use egui_snarl::{InPinId, Node as SnarlNode, NodeId, NodePos, OutPinId, Snarl};
 use either::Either;
 use im::Vector;
 use itertools::Itertools;
@@ -32,17 +28,25 @@ use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use crate::{
-    AgentFactory, ChatHistory, ToolSelector, Toolbox,
+    AgentFactory, ChatHistory, ToolSelector,
     agent::AgentSpec,
     config::SeedConfig,
     transmute::Transmuter,
-    ui::{AppEvent, AppEvents},
     utils::{AtomicBuffer, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
     workflow::{
-        nodes::{Finish, Flavor, Start},
+        nodes::{Finish, Start},
         runner::{ExecId, ExecState, NodeStateMap},
     },
 };
+
+#[cfg(feature = "ui")]
+use egui::{Color32, Stroke};
+
+#[cfg(feature = "ui")]
+use egui_snarl::ui::{PinInfo, WireStyle};
+
+#[cfg(feature = "ui")]
+use crate::{Toolbox, workflow::nodes::Flavor};
 
 pub mod nodes;
 pub mod runner;
@@ -54,6 +58,9 @@ pub use nodes::WorkNode;
 // Rust's primative floats don't allow this for fairly pedantic reasons.
 
 // type DynFuture<T> = Pin<Box<dyn Future<Output = T>>>;
+
+#[cfg(feature = "ui")]
+use crate::ui::{AppEvent, AppEvents};
 
 #[derive(Kinded, Debug, Clone, PartialEq, Serialize)]
 #[kinded(derive(Hash, Serialize, Deserialize))]
@@ -127,6 +134,7 @@ impl Default for ValueKind {
 }
 
 impl ValueKind {
+    #[cfg(feature = "ui")]
     pub fn color(&self) -> Color32 {
         use ValueKind::*;
         match self {
@@ -143,6 +151,7 @@ impl ValueKind {
         }
     }
 
+    #[cfg(feature = "ui")]
     pub fn default_pin(&self) -> PinInfo {
         let pin = if self.is_list() {
             PinInfo::square().with_fill(self.color())
@@ -190,6 +199,7 @@ impl AnyPin {
     }
 }
 
+#[cfg(feature = "ui")]
 #[derive(Clone, TypedBuilder)]
 pub struct EditContext {
     pub toolbox: Toolbox,
@@ -229,6 +239,7 @@ pub struct EditContext {
     pub edit_pin: Arc<ArcSwap<Option<AnyPin>>>,
 }
 
+#[cfg(feature = "ui")]
 impl EditContext {
     pub fn reset_out_pin(&self, pin_id: OutPinId) {
         let old_set = self.output_reset.load();
@@ -271,6 +282,7 @@ pub struct RunContext {
 
     pub metadata: Arc<ShadowMeta>,
 
+    #[cfg(feature = "ui")]
     #[builder(default)]
     pub events: Option<Arc<AppEvents>>,
 
@@ -314,6 +326,7 @@ pub struct RunContext {
 }
 
 impl RunContext {
+    #[cfg(feature = "ui")]
     #[inline]
     pub fn event(&self, event: AppEvent) {
         let Some(queue) = &self.events else {
@@ -373,18 +386,20 @@ impl RootContext {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MetaNode<T> {
     /// Node generic value.
     pub value: T,
 
     /// Position of the top-left corner of the node.
     /// This does not include frame margin.
-    pub pos: egui::Pos2,
+    pub pos: NodePos,
 
     /// Flag indicating that the node is open - not collapsed.
     pub open: bool,
 }
+
+impl<T: Eq> Eq for MetaNode<T> {}
 
 impl<T> Hash for MetaNode<T>
 where
@@ -392,7 +407,7 @@ where
 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.value.hash(state);
-        let egui::Pos2 { x, y } = self.pos;
+        let NodePos { x, y } = self.pos;
         let (x, y): (E32, E32) = (E32::assert(x), E32::assert(y));
         x.hash(state);
         y.hash(state);
@@ -432,6 +447,7 @@ impl Default for GraphId {
     }
 }
 
+#[cfg(feature = "ui")]
 impl GraphId {
     fn new() -> Self {
         Default::default()
@@ -1049,6 +1065,7 @@ pub trait DynNode {
         ValueKind::Placeholder
     }
 
+    #[cfg(feature = "ui")]
     fn connect(&mut self, in_pin: usize, kind: ValueKind, ctx: &EditContext) -> Result<(), String> {
         let _ = ctx;
         if !self.in_kinds(in_pin).contains(&kind) {
@@ -1074,6 +1091,7 @@ pub trait DynNode {
     }
 }
 
+#[cfg(feature = "ui")]
 pub trait UiNode: DynNode {
     /// Callback to enforce uniqueness after a node is duplicated using copy/paste
     fn on_paste(&mut self) {}
@@ -1137,11 +1155,24 @@ pub trait UiNode: DynNode {
     }
 }
 
+#[cfg(feature = "ui")]
 #[typetag::serde]
 pub trait FlexNode:
     Downcast + DynNode + UiNode + Debug + DynHash + DynEq + DynClone + Send + Sync
 {
+    fn node_type(&self) -> &str {
+        std::any::type_name_of_val(self)
+    }
 }
+
+#[cfg(not(feature = "ui"))]
+#[typetag::serde]
+pub trait FlexNode: Downcast + DynNode + Debug + DynHash + DynEq + DynClone + Send + Sync {
+    fn node_type(&self) -> &str {
+        std::any::type_name_of_val(self)
+    }
+}
+
 impl_downcast!(FlexNode);
 dyn_eq::eq_trait_object!(FlexNode);
 dyn_clone::clone_trait_object!(FlexNode);
@@ -1231,6 +1262,7 @@ impl From<ToolServerError> for WorkflowError {
     }
 }
 
+#[cfg(feature = "scripting")]
 impl From<Box<rhai::EvalAltResult>> for WorkflowError {
     fn from(value: Box<rhai::EvalAltResult>) -> Self {
         WorkflowError::Unknown(value.to_string())
@@ -1248,12 +1280,12 @@ pub fn fixup_workflow(mut snarl: Snarl<WorkNode>) -> Snarl<WorkNode> {
 
     if snarl.nodes().count() < 1 || !snarl.nodes().any(|n| n.is_start()) {
         tracing::info!("Inserting missing start node");
-        snarl.insert_node(egui::pos2(0.0, 0.0), Start::default().into());
+        snarl.insert_node(NodePos::new(0.0, 0.0), Start::default().into());
     }
 
     if !snarl.nodes().any(|n| n.is_finish()) {
         tracing::info!("Inserting missing finish node");
-        snarl.insert_node(egui::pos2(1000.0, 0.0), Finish::default().into());
+        snarl.insert_node(NodePos::new(1000.0, 0.0), Finish::default().into());
     }
 
     snarl

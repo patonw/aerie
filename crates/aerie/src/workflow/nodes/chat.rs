@@ -17,12 +17,15 @@ use serde_with::skip_serializing_none;
 
 use crate::{
     ChatContent, ToolSelector,
-    ui::{resizable_frame, shortcuts::squelch},
     utils::{CowExt as _, extract_json, message_text},
-    workflow::{FlexNode, WorkflowError},
+    workflow::{DynNode, FlexNode, RunContext, Value, ValueKind, WorkflowError},
 };
 
-use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
+#[cfg(feature = "ui")]
+use crate::{
+    ui::{resizable_frame, shortcuts::squelch},
+    workflow::{EditContext, UiNode},
+};
 
 // TODO: Hash & eq by hand to ignore chat
 #[skip_serializing_none]
@@ -78,6 +81,7 @@ impl DynNode for ChatNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for ChatNode {
     fn title(&self) -> &str {
         if self.name.is_empty() {
@@ -312,6 +316,7 @@ impl DynNode for StructuredChat {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for StructuredChat {
     fn title(&self) -> &str {
         if self.name.is_empty() {

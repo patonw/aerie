@@ -1,20 +1,29 @@
-use std::{borrow::Cow, convert::identity, sync::Arc};
+use std::{borrow::Cow, convert::identity};
 
-use egui::RichText;
-use egui_phosphor::regular::{ARROW_CIRCLE_DOWN, ARROW_CIRCLE_UP, TRASH};
-use egui_snarl::{InPinId, OutPinId};
 use im::vector;
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ui::{AppEvent, shortcuts::squelch},
     utils::message_text,
-    workflow::{AnyPin, FlexNode, WorkflowError},
+    workflow::{DynNode, FlexNode, RunContext, Value, ValueKind, WorkflowError},
 };
 
-use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
+#[cfg(feature = "ui")]
+use egui::RichText;
+#[cfg(feature = "ui")]
+use egui_phosphor::regular::{ARROW_CIRCLE_DOWN, ARROW_CIRCLE_UP, TRASH};
+#[cfg(feature = "ui")]
+use egui_snarl::{InPinId, OutPinId};
+#[cfg(feature = "ui")]
+use std::sync::Arc;
+
+#[cfg(feature = "ui")]
+use crate::{
+    ui::{AppEvent, shortcuts::squelch},
+    workflow::{AnyPin, EditContext, UiNode},
+};
 
 fn root_start_fields() -> im::Vector<(String, ValueKind)> {
     vector![
@@ -90,6 +99,7 @@ impl DynNode for Start {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Start {
     fn title(&self) -> &str {
         "Start"
@@ -319,6 +329,7 @@ impl DynNode for Finish {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Finish {
     fn title(&self) -> &str {
         "Finish"
@@ -568,6 +579,7 @@ impl DynNode for Fallback {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Fallback {
     fn title(&self) -> &str {
         "Fallback"
@@ -826,6 +838,7 @@ impl Matcher {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Matcher {
     fn title(&self) -> &str {
         "Match"
@@ -1054,6 +1067,7 @@ impl DynNode for Select {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Select {
     fn title(&self) -> &str {
         "Select"
@@ -1170,6 +1184,7 @@ impl DynNode for Demote {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Demote {
     fn title(&self) -> &str {
         "Demote"
@@ -1236,6 +1251,7 @@ impl DynNode for GateNode {
         self.kind
     }
 
+    #[cfg(feature = "ui")]
     fn connect(&mut self, in_pin: usize, kind: ValueKind, ctx: &EditContext) -> Result<(), String> {
         dbg!((&in_pin, kind));
         if in_pin == 1 {
@@ -1266,6 +1282,7 @@ impl DynNode for GateNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for GateNode {
     fn title(&self) -> &str {
         "Gate"

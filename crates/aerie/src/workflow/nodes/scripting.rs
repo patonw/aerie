@@ -2,21 +2,25 @@
 use std::{borrow::Cow, collections::BTreeSet, sync::Arc};
 
 use decorum::E64;
-use egui::RichText;
-use egui_phosphor::regular::{ARROW_CIRCLE_DOWN, ARROW_CIRCLE_UP, TRASH};
-use egui_snarl::{InPinId, OutPinId};
 use im::vector;
 use itertools::Itertools;
 use rhai::{Dynamic, Engine, Scope};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
+use crate::workflow::{Value, ValueKind, WorkflowError};
+
+#[cfg(feature = "ui")]
+use egui::RichText;
+#[cfg(feature = "ui")]
+use egui_phosphor::regular::{ARROW_CIRCLE_DOWN, ARROW_CIRCLE_UP, TRASH};
+#[cfg(feature = "ui")]
+use egui_snarl::{InPinId, OutPinId};
+
+#[cfg(feature = "ui")]
 use crate::{
     ui::{AppEvent, resizable_frame, shortcuts::squelch},
-    workflow::{
-        AnyPin, DynNode as _, EditContext, Value, ValueKind, WorkNode, WorkflowError,
-        nodes::GraphSubmenu,
-    },
+    workflow::{AnyPin, DynNode as _, EditContext, UiNode, WorkNode, nodes::GraphSubmenu},
 };
 
 #[skip_serializing_none]
@@ -225,7 +229,8 @@ fn rhai_to_value(data: &Dynamic, kind: ValueKind) -> Result<Value, &'static str>
     })
 }
 
-impl super::UiNode for RhaiNode {
+#[cfg(feature = "ui")]
+impl UiNode for RhaiNode {
     fn title(&self) -> &str {
         if self.name.is_empty() {
             "Rhai script"
@@ -545,15 +550,17 @@ impl super::UiNode for RhaiNode {
 #[typetag::serde]
 impl super::FlexNode for RhaiNode {}
 
+#[cfg(feature = "ui")]
 fn script_node_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
     ui.menu_button("Scripting", |ui| {
         if ui.button("Rhai").clicked() {
-            snarl.insert_node(pos, RhaiNode::default().into());
+            snarl.insert_node(pos.into(), RhaiNode::default().into());
             ui.close();
         }
     });
 }
 
+#[cfg(feature = "ui")]
 inventory::submit! {
     GraphSubmenu("scripting", script_node_menu)
 }

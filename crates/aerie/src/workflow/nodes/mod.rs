@@ -1,6 +1,10 @@
 use delegate::delegate;
+#[cfg(feature = "ui")]
 use egui::Ui;
-use egui_snarl::{NodeId, Snarl};
+// TODO: redefine NodeId and remove dependency on snarl
+use egui_snarl::NodeId;
+#[cfg(feature = "ui")]
+use egui_snarl::Snarl;
 use serde::{Deserialize, Serialize};
 use std::{
     hash::Hash,
@@ -29,9 +33,10 @@ pub use subgraph::*;
 pub const MIN_WIDTH: f32 = 128.0;
 pub const MIN_HEIGHT: f32 = 32.0;
 
-use crate::workflow::{FlexNode, WorkflowError};
+use crate::workflow::{DynNode, FlexNode, RunContext, Value, ValueKind, WorkflowError};
 
-pub use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
+#[cfg(feature = "ui")]
+use crate::workflow::{EditContext, UiNode};
 
 #[derive(Debug, Clone, Eq, Serialize, Deserialize)]
 pub struct WorkNode(pub Box<dyn FlexNode>);
@@ -56,28 +61,31 @@ impl<T: FlexNode> From<T> for WorkNode {
 
 impl WorkNode {
     delegate! {
-        // Pointless now
-        // TODO: deprecate and replace with trait method calls
         to self.0 {
-                #[call(deref)]
-                pub fn as_dyn(&self) -> &dyn DynNode;
+            #[call(deref)]
+            pub fn as_dyn(&self) -> &dyn DynNode;
 
-                #[call(deref_mut)]
-                pub fn as_dyn_mut(&mut self) -> &mut dyn DynNode;
+            #[call(deref_mut)]
+            pub fn as_dyn_mut(&mut self) -> &mut dyn DynNode;
 
-                #[call(deref)]
-                pub fn as_ui(&self) -> &dyn UiNode;
+            pub fn execute(&mut self, ctx: &RunContext, node_id: NodeId, inputs: Vec<Option<Value>>,) -> Result<Vec<Value>, WorkflowError>;
+        }
+    }
 
-                #[call(deref_mut)]
-                pub fn as_ui_mut(&mut self) -> &mut dyn UiNode;
+    #[cfg(feature = "ui")]
+    delegate! {
+        to self.0 {
+            #[call(deref)]
+            pub fn as_ui(&self) -> &dyn UiNode;
 
-                pub fn execute(&mut self, ctx: &RunContext, node_id: NodeId, inputs: Vec<Option<Value>>,) -> Result<Vec<Value>, WorkflowError>;
+            #[call(deref_mut)]
+            pub fn as_ui_mut(&mut self) -> &mut dyn UiNode;
         }
     }
 
     pub fn kind(&self) -> &str {
-        // type_name_of_val(self)
-        self.as_ui().title()
+        let full_name = self.0.as_ref().node_type();
+        full_name.split("::").last().unwrap_or(full_name)
     }
 
     #[inline]
@@ -130,9 +138,11 @@ impl WorkNode {
     }
 }
 
+#[cfg(feature = "ui")]
 pub struct GraphSubmenu(
     pub &'static str,
     pub fn(&mut Ui, &mut Snarl<WorkNode>, egui::Pos2),
 );
 
+#[cfg(feature = "ui")]
 inventory::collect!(GraphSubmenu);

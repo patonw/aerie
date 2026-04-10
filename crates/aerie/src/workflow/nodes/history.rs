@@ -10,12 +10,15 @@ use serde_with::skip_serializing_none;
 
 use crate::{
     ChatContent,
-    ui::{resizable_frame, shortcuts::squelch},
     utils::EVec2,
-    workflow::{FlexNode, WorkflowError},
+    workflow::{DynNode, FlexNode, RunContext, Value, ValueKind, WorkflowError},
 };
 
-use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
+#[cfg(feature = "ui")]
+use crate::{
+    ui::{resizable_frame, shortcuts::squelch},
+    workflow::{EditContext, UiNode},
+};
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
 pub struct GraftHistory {}
@@ -71,6 +74,7 @@ impl DynNode for GraftHistory {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for GraftHistory {
     fn title(&self) -> &str {
         "Side Conversation"
@@ -159,6 +163,7 @@ impl DynNode for MaskHistory {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for MaskHistory {
     fn title(&self) -> &str {
         "Mask Chat"
@@ -327,6 +332,7 @@ impl DynNode for CreateMessage {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for CreateMessage {
     fn title(&self) -> &str {
         "Create Message"
@@ -438,6 +444,7 @@ impl DynNode for ExtendHistory {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for ExtendHistory {
     fn title(&self) -> &str {
         "Extend History"
@@ -466,11 +473,13 @@ impl UiNode for ExtendHistory {
     }
 }
 
+#[cfg(feature = "ui")]
 fn history_node_menu(
     ui: &mut egui::Ui,
     snarl: &mut egui_snarl::Snarl<super::WorkNode>,
     pos: egui::Pos2,
 ) {
+    let pos = pos.into();
     ui.menu_button("History", |ui| {
         if ui.button("Create Message").clicked() {
             snarl.insert_node(pos, CreateMessage::default().into());
@@ -493,6 +502,8 @@ fn history_node_menu(
         }
     });
 }
+
+#[cfg(feature = "ui")]
 inventory::submit! {
     super::GraphSubmenu("history", history_node_menu)
 }

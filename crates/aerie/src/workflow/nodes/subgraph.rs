@@ -3,21 +3,25 @@ use std::{
     sync::{Arc, atomic::Ordering},
 };
 
-use egui::{Sense, UiBuilder};
-use egui_phosphor::regular::{GRAPH, LINE_SEGMENTS};
 use im::vector;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use serde_yaml_ng as serde_yml;
 
-use crate::{
-    ui::AppEvent,
-    workflow::{
-        DynNode, FlexNode, ShadowGraph, UiNode, Value, ValueKind, WorkNode, WorkflowError,
-        runner::WorkflowRunner,
-    },
+use crate::workflow::{
+    DynNode, FlexNode, ShadowGraph, Value, ValueKind, WorkNode, WorkflowError,
+    runner::WorkflowRunner,
 };
+
+#[cfg(feature = "ui")]
+use egui::{Sense, UiBuilder};
+
+#[cfg(feature = "ui")]
+use egui_phosphor::regular::{GRAPH, LINE_SEGMENTS};
+
+#[cfg(feature = "ui")]
+use crate::{ui::AppEvent, workflow::UiNode};
 
 // "serializing nested enums in YAML is not supported yet"
 // So we'll embed the enum into the node struct instead
@@ -136,6 +140,7 @@ impl Subgraph {
         let mut ctx = ctx.clone();
         ctx.is_subgraph = true;
 
+        #[cfg(feature = "ui")]
         let graph_id = self.graph.uuid;
 
         let lengths = input_lengths(&inputs);
@@ -149,6 +154,7 @@ impl Subgraph {
         let mut results = self.init_outputs();
 
         let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
+        #[cfg(feature = "ui")]
         ctx.event(AppEvent::ProgressBegin(graph_id.0, num_iters));
         for i in 0..num_iters {
             let sliced = par_slice(&inputs, i);
@@ -183,6 +189,7 @@ impl Subgraph {
                 }
             }
 
+            #[cfg(feature = "ui")]
             ctx.event(AppEvent::ProgressAdd(graph_id.0, 1));
 
             for (res, val) in results.iter_mut().zip(exec.outputs.into_iter()) {
@@ -190,6 +197,7 @@ impl Subgraph {
             }
         }
 
+        #[cfg(feature = "ui")]
         ctx.event(AppEvent::ProgressEnd(graph_id.0));
         results.push(Value::Placeholder(ValueKind::Failure));
 
@@ -220,6 +228,7 @@ impl Subgraph {
         let results = self.init_outputs();
 
         let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
+        #[cfg(feature = "ui")]
         ctx.event(AppEvent::ProgressBegin(graph_id.0, num_iters));
 
         let all_out = (0..num_iters)
@@ -265,6 +274,7 @@ impl Subgraph {
                     }
                 }
 
+                #[cfg(feature = "ui")]
                 ctx.event(AppEvent::ProgressAdd(graph_id.0, 1));
                 Ok(exec.outputs)
             })
@@ -288,6 +298,7 @@ impl Subgraph {
             );
 
         let mut results = all_out?;
+        #[cfg(feature = "ui")]
         ctx.event(AppEvent::ProgressEnd(graph_id.0));
         results.push(Value::Placeholder(ValueKind::Failure));
 
@@ -403,6 +414,7 @@ impl DynNode for Subgraph {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Subgraph {
     fn on_paste(&mut self) {
         let uuid = crate::workflow::GraphId::new();
@@ -617,21 +629,23 @@ fn par_slice(inputs: &[Option<Value>], i: usize) -> Vec<Option<Value>> {
         .collect_vec()
 }
 
+#[cfg(feature = "ui")]
 fn subgraph_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
     ui.menu_button("Subgraph", |ui| {
         if ui.button("Simple").clicked() {
-            snarl.insert_node(pos, Subgraph::default().into());
+            snarl.insert_node(pos.into(), Subgraph::default().into());
         }
 
         if ui.button("Iterative").clicked() {
             snarl.insert_node(
-                pos,
+                pos.into(),
                 Subgraph::default().with_flavor(Flavor::Iterative).into(),
             );
         }
     });
 }
 
+#[cfg(feature = "ui")]
 inventory::submit! {
     super::GraphSubmenu("subgraph", subgraph_menu)
 }

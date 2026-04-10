@@ -8,12 +8,15 @@ use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
-    ui::{resizable_frame, shortcuts::squelch},
     utils::{message_party, message_text},
-    workflow::{DynNode, EditContext, FlexNode, RunContext, UiNode, Value, WorkflowError},
+    workflow::{DynNode, FlexNode, RunContext, Value, ValueKind, WorkflowError},
 };
 
-use super::ValueKind;
+#[cfg(feature = "ui")]
+use crate::{
+    ui::{resizable_frame, shortcuts::squelch},
+    workflow::{EditContext, UiNode},
+};
 
 static ENV_JSON: LazyLock<Arc<serde_json::Value>> = LazyLock::new(|| {
     let entries = std::env::vars()
@@ -44,6 +47,7 @@ impl DynNode for CommentNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for CommentNode {
     fn title(&self) -> &str {
         "Comment"
@@ -69,6 +73,7 @@ impl UiNode for CommentNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl CommentNode {
     pub fn bg_color() -> egui::Color32 {
         egui::Color32::LIGHT_YELLOW.gamma_multiply(0.75)
@@ -173,6 +178,7 @@ impl DynNode for TemplateNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for TemplateNode {
     fn title(&self) -> &str {
         "Template"
@@ -263,6 +269,7 @@ impl DynNode for EnvironmentNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for EnvironmentNode {
     fn title(&self) -> &str {
         "Environment"

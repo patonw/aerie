@@ -475,6 +475,7 @@ impl WorkflowViewer {
     }
 }
 
+#[cfg(feature = "ui")]
 impl SnarlViewer<WorkNode> for WorkflowViewer {
     fn title(&mut self, node: &WorkNode) -> String {
         node.as_ui().title().to_string()
@@ -740,6 +741,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
     }
 
     fn show_graph_menu(&mut self, pos: egui::Pos2, ui: &mut Ui, snarl: &mut Snarl<WorkNode>) {
+        let pos = pos.into();
         ui.menu_button("Control", |ui| {
             if ui.button("Fallback").clicked() {
                 snarl.insert_node(pos, Fallback::default().into());
@@ -831,7 +833,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
             .collect_vec();
 
         for cb in menus {
-            (cb.1)(ui, snarl, pos);
+            (cb.1)(ui, snarl, pos.into());
         }
 
         if ui.button("Preview").clicked() {
@@ -1023,8 +1025,10 @@ pub fn filter_graph(
         .into_iter()
         .filter(|n| keep.contains(&n.0))
         .map(|(id, meta)| {
+            let pos: egui::Pos2 = meta.pos.into();
+            let pos = pos - offset;
             let meta = MetaNode {
-                pos: meta.pos - offset,
+                pos: pos.into(),
                 ..meta
             };
             (id, meta)
@@ -1079,11 +1083,12 @@ pub fn merge_graphs(
             node_map.insert(id, new_id);
         } else if !value.is_protected() {
             value.as_ui_mut().on_paste();
+            let pos: egui::Pos2 = pos.into();
 
             let new_id = if open {
-                snarl.insert_node(pos + offset, value)
+                snarl.insert_node((pos + offset).into(), value)
             } else {
-                snarl.insert_node_collapsed(pos + offset, value)
+                snarl.insert_node_collapsed((pos + offset).into(), value)
             };
 
             *target = target.with_node(&new_id, snarl.get_node_info(new_id));

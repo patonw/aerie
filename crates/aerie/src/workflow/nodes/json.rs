@@ -1,24 +1,26 @@
 use std::{borrow::Cow, sync::Arc};
 
-use egui_snarl::OutPinId;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
+    utils::{extract_json, message_party, message_text},
+    workflow::{DynNode, FlexNode, RunContext, Value, ValueKind, WorkflowError},
+};
+
+#[cfg(feature = "ui")]
+use egui_snarl::OutPinId;
+
+#[cfg(feature = "ui")]
+use crate::{
     ui::{
         resizable_frame,
         shortcuts::{Shortcut, squelch},
     },
-    utils::{extract_json, message_party, message_text},
-    workflow::{
-        DynNode, EditContext, FlexNode, RunContext, UiNode, Value, WorkNode, WorkflowError,
-        nodes::GraphSubmenu,
-    },
+    workflow::{EditContext, UiNode, WorkNode, nodes::GraphSubmenu},
 };
-
-use super::ValueKind;
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +97,7 @@ impl DynNode for ParseJson {
     }
 }
 
+#[cfg(feature = "ui")]
 pub fn json_editor(
     ui: &mut egui::Ui,
     buffer: &mut dyn egui::TextBuffer,
@@ -146,6 +149,7 @@ pub fn json_editor(
     squelch(resp)
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for ParseJson {
     fn title(&self) -> &str {
         "Parse JSON"
@@ -295,6 +299,7 @@ impl DynNode for ValidateJson {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for ValidateJson {
     fn title(&self) -> &str {
         "Validate JSON"
@@ -449,6 +454,7 @@ impl DynNode for TransformJson {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for TransformJson {
     fn title(&self) -> &str {
         "Transform JSON"
@@ -587,6 +593,7 @@ impl DynNode for GatherJson {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for GatherJson {
     fn title(&self) -> &str {
         "Gather JSON"
@@ -703,6 +710,7 @@ impl DynNode for UnwrapJson {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for UnwrapJson {
     fn title(&self) -> &str {
         "Unwrap JSON"
@@ -749,7 +757,9 @@ impl UiNode for UnwrapJson {
     }
 }
 
+#[cfg(feature = "ui")]
 fn json_node_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
+    let pos = pos.into();
     ui.menu_button("JSON", |ui| {
         if ui.button("Parse JSON").clicked() {
             snarl.insert_node(pos, ParseJson::default().into());
@@ -778,6 +788,7 @@ fn json_node_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, po
     });
 }
 
+#[cfg(feature = "ui")]
 inventory::submit! {
     GraphSubmenu("json", json_node_menu)
 }

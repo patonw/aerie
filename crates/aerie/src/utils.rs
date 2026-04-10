@@ -3,13 +3,12 @@ use std::{
     cmp::{Eq, PartialEq},
     collections::BinaryHeap,
     hash::Hash,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use crate::rig::message::{AssistantContent, Message, ToolResultContent, UserContent};
 use arc_swap::ArcSwap;
 use decorum::E32;
-use egui::mutex::Mutex;
 use itertools::{Itertools, iproduct};
 use rpds::{List, ListSync};
 use serde::{Deserialize, Serialize};
@@ -21,6 +20,7 @@ pub struct EVec2 {
     pub y: E32,
 }
 
+#[cfg(feature = "ui")]
 impl From<egui::Vec2> for EVec2 {
     fn from(value: egui::Vec2) -> Self {
         Self {
@@ -30,6 +30,7 @@ impl From<egui::Vec2> for EVec2 {
     }
 }
 
+#[cfg(feature = "ui")]
 impl From<EVec2> for egui::Vec2 {
     fn from(value: EVec2) -> Self {
         Self {
@@ -97,14 +98,14 @@ impl<T: Ord + std::fmt::Debug> PriorityQueue<T> {
     }
 
     pub fn insert(&self, value: T) {
-        let mut data = self.0.lock();
+        let mut data = self.0.lock().unwrap();
         let count = data.0;
         data.1.push((value, count));
         data.0 -= 1;
     }
 
     pub fn pop(&self) -> Option<T> {
-        let mut data = self.0.lock();
+        let mut data = self.0.lock().unwrap();
         data.1.pop().map(|(t, _)| t)
     }
 
@@ -112,7 +113,7 @@ impl<T: Ord + std::fmt::Debug> PriorityQueue<T> {
     pub fn retain(&self, f: impl Fn(&T) -> bool) -> Vec<T> {
         let mut remainder = vec![];
         let mut target = BinaryHeap::new();
-        let mut data = self.0.lock();
+        let mut data = self.0.lock().unwrap();
         while let Some((item, i)) = data.1.pop() {
             if f(&item) {
                 target.push((item, i));
