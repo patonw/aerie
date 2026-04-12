@@ -364,7 +364,7 @@ pub fn canonicalize_msg(msg: Message) -> Result<Message, Vec<anyhow::Error>> {
             let items = content.iter().map(|content| -> anyhow::Result<_> {
                 match &content {
                     UserContent::Image(image) => {
-                        let image = preprocess_image(image)?;
+                        let image = preprocess_image(image, false)?;
                         Ok(Cow::Owned(UserContent::Image(image.into_owned())))
                     }
                     _ => Ok(Cow::Borrowed(content)),

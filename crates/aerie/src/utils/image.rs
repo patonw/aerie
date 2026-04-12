@@ -25,6 +25,7 @@ pub static MAX_IMAGE_DIM: AtomicU32 = AtomicU32::new(512);
 /// Load image into memory and downscale as JPEG base64
 pub fn preprocess_image(
     image: &rig::message::Image,
+    allow_local: bool,
 ) -> anyhow::Result<Cow<'_, rig::message::Image>> {
     use base64::{Engine, prelude::BASE64_STANDARD};
     match image {
@@ -57,7 +58,7 @@ pub fn preprocess_image(
             data: rig::message::DocumentSourceKind::Url(url),
             ..
         } => {
-            let image = image_url_rig(url)?;
+            let image = image_url_rig(url, allow_local)?;
 
             Ok(Cow::Owned(image))
         }
@@ -72,9 +73,9 @@ pub fn preprocess_image(
     time = 300,
     time_refresh = true
 )]
-pub fn image_url_rig(url: &str) -> anyhow::Result<rig::message::Image> {
+pub fn image_url_rig(url: &str, allow_local: bool) -> anyhow::Result<rig::message::Image> {
     use base64::{Engine, prelude::BASE64_STANDARD};
-    let (image_bytes, format) = resolve_image(url)?;
+    let (image_bytes, format) = resolve_image(url, allow_local)?;
     let (image_bytes, format) = downscale_image(&image_bytes, format)?;
     let media_type = format
         .map(|f| f.to_mime_type())
@@ -90,14 +91,18 @@ pub fn image_url_rig(url: &str) -> anyhow::Result<rig::message::Image> {
     Ok(image)
 }
 
-pub fn resolve_image(image: &str) -> anyhow::Result<(Vec<u8>, Option<ImageFormat>)> {
+pub fn resolve_image(
+    image: &str,
+    allow_local: bool,
+) -> anyhow::Result<(Vec<u8>, Option<ImageFormat>)> {
     let path = if image.starts_with("file://") {
         image.strip_prefix("file://").unwrap()
     } else {
         image
     };
 
-    let (image_bytes, media_type) = if let Ok(exists) = std::fs::exists(path)
+    let (image_bytes, media_type) = if allow_local
+        && let Ok(exists) = std::fs::exists(path)
         && exists
     {
         load_image_file(image)?
