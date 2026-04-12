@@ -335,7 +335,7 @@ impl DynNode for CreateMessage {
                             rig::OneOrMany::one(rig::message::UserContent::text(&*text));
 
                         for url in &images {
-                            let image = image_url_rig(url)?;
+                            let image = image_url_rig(url, false)?;
                             content.push(rig::message::UserContent::Image(image));
                         }
 

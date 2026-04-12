@@ -5,7 +5,7 @@ use aerie::{
     rig::message::UserContent,
     storage::CachedDirStore as _,
     toolbox::ToolStore,
-    utils::message_text,
+    utils::{message_text, preprocess_image},
     workflow::{
         RootContext, RunContext, Workflow,
         runner::WorkflowRunner,
@@ -256,7 +256,12 @@ fn main() -> anyhow::Result<()> {
     for run_count in 0..=*autoruns {
         let mut extra_content = Vec::new();
         for image in &images {
-            let content = UserContent::image_url(image, None, None);
+            let image = aerie::rig::message::Image {
+                data: aerie::rig::message::DocumentSourceKind::Url(image.into()),
+                ..Default::default()
+            };
+            let image = preprocess_image(&image, run_count == 0)?;
+            let content = UserContent::Image(image.into_owned());
 
             extra_content.push(content);
         }
