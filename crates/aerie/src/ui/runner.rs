@@ -13,7 +13,7 @@ use scopeguard::defer;
 use crate::{
     config::ConfigExt as _,
     rig,
-    utils::ErrorDistiller as _,
+    utils::{ErrorDistiller as _, preprocess_image},
     workflow::{
         RootContext, RunContext,
         runner::{WorkflowRun, WorkflowRunner},
@@ -52,10 +52,21 @@ impl super::AppState {
                 .streaming(self.settings.view(|s| s.streaming))
                 .build();
 
+            let run_count = self.run_count;
+            let errors = self.errors.clone();
             let extra_content = self
                 .images
                 .iter()
-                .map(|image| rig::message::UserContent::image_url(image, None, None))
+                .filter_map(|image| {
+                    let image = rig::message::Image {
+                        data: rig::message::DocumentSourceKind::Url(image.into()),
+                        ..Default::default()
+                    };
+
+                    errors
+                        .distil(preprocess_image(&image, run_count == 0))
+                        .map(|image| rig::message::UserContent::Image(image.into_owned()))
+                })
                 .collect_vec();
 
             let inputs = RootContext::builder()
