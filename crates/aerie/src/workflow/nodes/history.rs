@@ -243,7 +243,12 @@ impl DynNode for CreateMessage {
     fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
         match in_pin {
             0 => Cow::Borrowed(&[ValueKind::Text, ValueKind::Json]),
-            1 => Cow::Borrowed(&[ValueKind::TextList, ValueKind::Text, ValueKind::Json]),
+            1 => Cow::Borrowed(&[
+                ValueKind::Images,
+                ValueKind::TextList,
+                ValueKind::Text,
+                ValueKind::Json,
+            ]),
             _ => unreachable!(),
         }
     }
@@ -309,19 +314,25 @@ impl DynNode for CreateMessage {
                     _ => unreachable!(),
                 };
 
-                let images = match &inputs[1] {
-                    Some(Value::TextList(texts)) => texts.clone(),
-                    Some(Value::Text(text)) => im::vector![text.clone()],
+                let images: im::Vector<_> = match &inputs[1] {
+                    Some(Value::TextList(texts)) => texts
+                        .iter()
+                        .map(|url| image_url_rig(url, false))
+                        .collect::<anyhow::Result<_>>()?,
+                    Some(Value::Text(text)) => {
+                        im::vector![image_url_rig(text, false)?]
+                    }
                     Some(Value::Json(data)) if data.is_array() => data
                         .as_array()
                         .unwrap()
                         .iter()
                         .filter_map(|it| it.as_str())
-                        .map(|s| Arc::new(s.to_string()))
-                        .collect(),
+                        .map(|s| image_url_rig(s, false))
+                        .collect::<anyhow::Result<_>>()?,
                     Some(Value::Json(data)) if data.is_string() => {
-                        im::vector!(Arc::new(data.as_str().unwrap().to_string()))
+                        im::vector!(image_url_rig(data.as_str().unwrap(), false)?)
                     }
+                    Some(Value::Images(data)) => data.clone(),
                     None => Default::default(),
                     _ => unreachable!(),
                 };
@@ -334,8 +345,7 @@ impl DynNode for CreateMessage {
                         let mut content =
                             rig::OneOrMany::one(rig::message::UserContent::text(&*text));
 
-                        for url in &images {
-                            let image = image_url_rig(url, false)?;
+                        for image in images {
                             content.push(rig::message::UserContent::Image(image));
                         }
 
