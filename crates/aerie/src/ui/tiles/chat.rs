@@ -5,7 +5,7 @@ use crate::{
 use eframe::egui;
 use egui_commonmark::*;
 use egui_extras::{Size, StripBuilder};
-use egui_phosphor::regular::{GIT_BRANCH, GLOBE, IMAGES, TRASH};
+use egui_phosphor::regular::{GIT_BRANCH, GLOBE, IMAGES, TRASH, X_CIRCLE};
 use itertools::Itertools;
 use std::{borrow::Cow, collections::VecDeque, sync::atomic::Ordering};
 
@@ -53,10 +53,20 @@ impl super::AppState {
                                     };
 
                                     let resp = ui.image(&*path).on_hover_ui(|ui| {
-                                        // TODO: set size to 2/3 viewport
-                                        ui.set_max_size(egui::vec2(800.0, 800.0));
-                                        ui.image(&*path);
+                                        ui.add(
+                                            egui::Image::new(&*path)
+                                                .max_size(ui.ctx().content_rect().size() * 0.75),
+                                        );
                                     });
+
+                                    let button = egui::Button::new(X_CIRCLE)
+                                        .small()
+                                        .fill(egui::Color32::from_black_alpha(0));
+                                    let rect = egui::Rect::from_center_size(
+                                        resp.rect.left_top() + egui::vec2(8.0, 4.0),
+                                        egui::vec2(8.0, 8.0),
+                                    );
+                                    let resp = ui.place(rect, button);
 
                                     if resp.interact(egui::Sense::click()).clicked() {
                                         remove_idx = Some(i);
@@ -508,22 +518,31 @@ pub fn render_message_width(
                                 let mut cache = IMAGE_CACHE.lock();
                                 let mut image = text;
 
-                                ui.horizontal(|ui| {
-                                    loop {
-                                        if let Some(image) = cache.get(&image) {
-                                            ui.set_min_height(100.0);
-                                            ui.image(image.clone()).on_hover_ui(|ui| {
-                                                ui.set_max_size(egui::vec2(800.0, 800.0));
-                                                ui.image(image.clone());
-                                            });
-                                        }
+                                egui::ScrollArea::horizontal().show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        loop {
+                                            if let Some(image) = cache.get(&image) {
+                                                let widget = egui::Image::new(image.clone())
+                                                    .fit_to_exact_size(egui::vec2(100.0, 100.0));
+                                                ui.add(widget).on_hover_ui(|ui| {
+                                                    ui.add(
+                                                        egui::Image::new(image.clone()).max_size(
+                                                            ui.ctx().content_rect().size() * 0.75,
+                                                        ),
+                                                    );
+                                                });
+                                            }
 
-                                        if matches!(dq.front(), Some((_, (_, FormatOpts::Image)))) {
-                                            image = dq.pop_front().unwrap().1.0;
-                                        } else {
-                                            break;
+                                            if matches!(
+                                                dq.front(),
+                                                Some((_, (_, FormatOpts::Image)))
+                                            ) {
+                                                image = dq.pop_front().unwrap().1.0;
+                                            } else {
+                                                break;
+                                            }
                                         }
-                                    }
+                                    });
                                 });
                             }
                             FormatOpts::Unknown => {
@@ -580,9 +599,9 @@ pub fn render_message_width(
                                         if let Some(image) = cache.get(&image) {
                                             ui.set_min_height(100.0);
                                             ui.image(image.clone()).on_hover_ui(|ui| {
-                                                // TODO: set size to 2/3 viewport
-                                                ui.set_max_size(egui::vec2(800.0, 800.0));
-                                                ui.image(image.clone());
+                                                ui.add(egui::Image::new(image.clone()).max_size(
+                                                    ui.ctx().content_rect().size() * 0.75,
+                                                ));
                                             });
                                         }
 
