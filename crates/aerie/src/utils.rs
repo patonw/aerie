@@ -2,20 +2,22 @@ use std::{
     borrow::Cow,
     cmp::{Eq, PartialEq},
     collections::BinaryHeap,
-    hash::{DefaultHasher, Hash, Hasher},
-    sync::{Arc, LazyLock},
+    hash::Hash,
+    sync::Arc,
 };
 
-use crate::rig::message::{AssistantContent, Message, ToolResultContent, UserContent};
 use arc_swap::ArcSwap;
 use decorum::E32;
 use egui::mutex::Mutex;
 use itertools::{Itertools, iproduct};
-use lru::LruCache;
-use rig_dynclient::rig::{self, message::DocumentSourceKind};
 use rpds::{List, ListSync};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+use crate::rig::{
+    self,
+    message::{AssistantContent, Message, ToolResultContent, UserContent},
+};
 
 pub mod image;
 pub use image::*;
@@ -393,21 +395,6 @@ pub fn canonicalize_msg(msg: Message) -> Result<Message, Vec<anyhow::Error>> {
     }
 }
 
-// TODO: prune cache and remove from egui ctx
-pub static IMAGE_CACHE: LazyLock<Mutex<LruCache<String, egui::ImageSource<'static>>>> =
-    LazyLock::new(|| Mutex::new(LruCache::unbounded()));
-
-pub fn prune_image_cache(ctx: &egui::Context) {
-    let mut cache = IMAGE_CACHE.lock();
-    while cache.len() > 100
-        && let Some((_, item)) = cache.pop_lru()
-    {
-        if let Some(uri) = item.uri() {
-            ctx.forget_image(uri);
-        }
-    }
-}
-
 pub fn extract_user_content(content: &UserContent) -> Vec<(String, FormatOpts)> {
     match content {
         UserContent::Text(text) => vec![(text.text.clone(), FormatOpts::Markdown)],
@@ -425,50 +412,7 @@ pub fn extract_user_content(content: &UserContent) -> Vec<(String, FormatOpts)> 
             })
             .collect_vec(),
         UserContent::Image(img) => {
-            let mut s = DefaultHasher::new();
-            match &img.data {
-                DocumentSourceKind::Url(url) => url.hash(&mut s),
-                DocumentSourceKind::Base64(data) => data.hash(&mut s),
-                DocumentSourceKind::Raw(items) => items.hash(&mut s),
-                _ => todo!(),
-            }
-
-            let h = s.finish();
-            let key = format!("{h:x}");
-            let mut cache = IMAGE_CACHE.lock();
-            if cache.contains(&key) {
-                cache.promote(&key);
-            } else if let DocumentSourceKind::Url(url) = &img.data {
-                let url = if let Ok(exists) = std::fs::exists(url)
-                    && exists
-                {
-                    format!("file://{url}")
-                } else {
-                    url.clone()
-                };
-
-                tracing::trace!("[{key}] Inserting url to image cache: {url}");
-                cache.put(key.clone(), url.into());
-            } else if let Some(media) = &img.media_type {
-                let data = match &img.data {
-                    DocumentSourceKind::Base64(data) => {
-                        use base64::{Engine, prelude::BASE64_STANDARD};
-                        let bytes = BASE64_STANDARD.decode(data).unwrap();
-                        egui::ImageSource::from((
-                            format!("bytes://{key}.{media:?}").to_lowercase(),
-                            bytes.clone(),
-                        ))
-                    }
-                    DocumentSourceKind::Raw(bytes) => egui::ImageSource::from((
-                        format!("bytes://{key}.{media:?}").to_lowercase(),
-                        bytes.clone(),
-                    )),
-                    _ => todo!(),
-                };
-
-                tracing::trace!("[{key}] Inserting bytes to image cache: {:?}", data.uri());
-                cache.put(key.clone(), data);
-            }
+            let key = cache_image(img);
 
             vec![(key, FormatOpts::Image)]
         }

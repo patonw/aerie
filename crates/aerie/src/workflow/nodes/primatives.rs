@@ -1,7 +1,6 @@
 use std::{borrow::Cow, convert::identity, str::FromStr as _, sync::Arc};
 
 use decorum::E64;
-use egui::RichText;
 use egui_commonmark::CommonMarkCache;
 use egui_phosphor::regular::{BRACKETS_SQUARE, NUMPAD};
 use serde::{Deserialize, Serialize};
@@ -10,7 +9,7 @@ use serde_with::skip_serializing_none;
 use crate::{
     ChatContent,
     ui::{AppEvent, resizable_frame, shortcuts::squelch, tiles::chat::render_message_width},
-    utils::{message_party, message_text},
+    utils::{IMAGE_CACHE, cache_image, message_text},
     workflow::{FlexNode, GraphId, WorkflowError},
 };
 
@@ -473,9 +472,7 @@ impl UiNode for Preview {
                                 ui.vertical(|ui| {
                                     for entry in history.iter() {
                                         if let ChatContent::Message(msg) = &entry.content {
-                                            ui.label(RichText::new(message_party(msg)).strong());
-                                            ui.add(egui::Label::new(message_text(msg)).wrap());
-                                            ui.separator();
+                                            render_message_width(ui, &mut cache, msg, Some(600.0));
                                         }
                                     }
                                 });
@@ -506,6 +503,27 @@ impl UiNode for Preview {
                                 } else {
                                     ui.add(egui::Label::new(format!("{:?}", value)).wrap());
                                 }
+                            }
+                            Value::Images(images) => {
+                                ui.vertical(|ui| {
+                                    ui.set_width(200.0);
+                                    ui.set_max_height(
+                                        3.0 * ui.available_width() * images.len() as f32,
+                                    );
+
+                                    for image in images {
+                                        let key = cache_image(image);
+                                        let mut cache = IMAGE_CACHE.lock();
+                                        if let Some(image) = cache.get(&key) {
+                                            let widget = egui::Image::new(image.clone())
+                                                .max_size(egui::vec2(200.0, 200.0));
+                                            ui.add(widget).on_hover_ui(|ui| {
+                                                ui.set_max_size(egui::vec2(800.0, 800.0));
+                                                ui.image(image.clone());
+                                            });
+                                        }
+                                    }
+                                });
                             }
                             unk => {
                                 ui.add(egui::Label::new(format!("{unk:?}")).wrap());

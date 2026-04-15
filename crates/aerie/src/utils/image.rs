@@ -1,9 +1,12 @@
 use ::image::ImageFormat;
 use anyhow::Context as _;
 use cached::proc_macro::cached;
+use egui::mutex::Mutex;
+use lru::LruCache;
 use regex::Regex;
 use std::{
     borrow::Cow,
+    hash::{DefaultHasher, Hash, Hasher},
     path::Path,
     sync::{LazyLock, atomic::AtomicU32},
 };
@@ -21,6 +24,72 @@ pub static MERMAID_MD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?ms)```mermaid(.*)```").unwrap());
 
 pub static MAX_IMAGE_DIM: AtomicU32 = AtomicU32::new(512);
+
+pub static IMAGE_CACHE: LazyLock<Mutex<LruCache<String, egui::ImageSource<'static>>>> =
+    LazyLock::new(|| Mutex::new(LruCache::unbounded()));
+
+pub fn prune_image_cache(ctx: &egui::Context) {
+    let mut cache = IMAGE_CACHE.lock();
+    while cache.len() > 100
+        && let Some((_, item)) = cache.pop_lru()
+    {
+        if let Some(uri) = item.uri() {
+            ctx.forget_image(uri);
+        }
+    }
+}
+
+/// Converts a rig image to egui, caching the result and returning a lookup key
+pub fn cache_image(img: &rig::message::Image) -> String {
+    let key = format!("{:x}", image_fingerprint(img));
+    let mut cache = IMAGE_CACHE.lock();
+    if cache.contains(&key) {
+        cache.promote(&key);
+    } else if let DocumentSourceKind::Url(url) = &img.data {
+        let url = if let Ok(exists) = std::fs::exists(url)
+            && exists
+        {
+            format!("file://{url}")
+        } else {
+            url.clone()
+        };
+
+        tracing::trace!("[{key}] Inserting url to image cache: {url}");
+        cache.put(key.clone(), url.into());
+    } else if let Some(media) = &img.media_type {
+        let data = match &img.data {
+            DocumentSourceKind::Base64(data) => {
+                use base64::{Engine, prelude::BASE64_STANDARD};
+                let bytes = BASE64_STANDARD.decode(data).unwrap();
+                egui::ImageSource::from((
+                    format!("bytes://{key}.{media:?}").to_lowercase(),
+                    bytes.clone(),
+                ))
+            }
+            DocumentSourceKind::Raw(bytes) => egui::ImageSource::from((
+                format!("bytes://{key}.{media:?}").to_lowercase(),
+                bytes.clone(),
+            )),
+            _ => todo!(),
+        };
+
+        tracing::trace!("[{key}] Inserting bytes to image cache: {:?}", data.uri());
+        cache.put(key.clone(), data);
+    }
+    key
+}
+
+pub fn image_fingerprint(img: &rig::message::Image) -> u64 {
+    let mut s = DefaultHasher::new();
+    match &img.data {
+        DocumentSourceKind::Url(url) => url.hash(&mut s),
+        DocumentSourceKind::Base64(data) => data.hash(&mut s),
+        DocumentSourceKind::Raw(items) => items.hash(&mut s),
+        _ => todo!(),
+    }
+
+    s.finish()
+}
 
 /// Load image into memory and downscale as JPEG base64
 pub fn preprocess_image(

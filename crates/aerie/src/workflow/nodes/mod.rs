@@ -11,6 +11,7 @@ pub mod agent;
 pub mod chat;
 pub mod history;
 pub mod json;
+pub mod media;
 pub mod misc;
 pub mod primatives;
 pub mod scaffold;

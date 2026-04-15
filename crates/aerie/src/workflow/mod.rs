@@ -36,6 +36,7 @@ use crate::{
     AgentFactory, ChatHistory, ToolSelector, Toolbox,
     agent::AgentSpec,
     config::SeedConfig,
+    rig::message::Image,
     transmute::Transmuter,
     ui::{AppEvent, AppEvents},
     utils::{AtomicBuffer, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
@@ -73,6 +74,7 @@ pub enum Value {
     Chat(Arc<ChatHistory>),
     Message(Arc<Message>),
     MsgList(Vector<Arc<Message>>),
+    Images(Vector<Image>),
 }
 
 impl Default for Value {
@@ -141,6 +143,7 @@ impl ValueKind {
             Tools => Color32::PURPLE,
             Chat => Color32::GOLD,
             Message | MsgList => Color32::from_rgb(0xe9, 0x74, 0x51),
+            Images => Color32::LIGHT_GREEN,
         }
     }
 
@@ -157,7 +160,7 @@ impl ValueKind {
 
     pub fn is_list(&self) -> bool {
         use ValueKind::*;
-        matches!(self, TextList | FloatList | IntList | MsgList)
+        matches!(self, TextList | FloatList | IntList | MsgList | Images)
     }
 }
 
