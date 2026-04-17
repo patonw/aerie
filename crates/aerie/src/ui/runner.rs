@@ -13,7 +13,7 @@ use scopeguard::defer;
 use crate::{
     config::ConfigExt as _,
     rig,
-    utils::{ErrorDistiller as _, preprocess_image},
+    utils::{ErrorDistiller as _, ImageResolver},
     workflow::{
         RootContext, RunContext,
         runner::{WorkflowRun, WorkflowRunner},
@@ -64,7 +64,12 @@ impl super::AppState {
                     };
 
                     errors
-                        .distil(preprocess_image(&image, run_count == 0))
+                        .distil({
+                            ImageResolver::builder()
+                                .allow_local(run_count == 0)
+                                .build()
+                                .preprocess(&image)
+                        })
                         .map(|image| rig::message::UserContent::Image(image.into_owned()))
                 })
                 .collect_vec();

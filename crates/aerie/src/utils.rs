@@ -366,7 +366,7 @@ pub fn canonicalize_msg(msg: Message) -> Result<Message, Vec<anyhow::Error>> {
             let items = content.iter().map(|content| -> anyhow::Result<_> {
                 match &content {
                     UserContent::Image(image) => {
-                        let image = preprocess_image(image, false)?;
+                        let image = ImageResolver::default().preprocess(image)?;
                         Ok(Cow::Owned(UserContent::Image(image.into_owned())))
                     }
                     _ => Ok(Cow::Borrowed(content)),
@@ -412,7 +412,7 @@ pub fn extract_user_content(content: &UserContent) -> Vec<(String, FormatOpts)> 
             })
             .collect_vec(),
         UserContent::Image(img) => {
-            let key = cache_image(img);
+            let key = rig_image_to_egui(img);
 
             vec![(key, FormatOpts::Image)]
         }
@@ -431,8 +431,10 @@ pub fn extract_assistant_content(content: &AssistantContent) -> Vec<(String, For
         AssistantContent::Reasoning(reasoning) => {
             vec![(reasoning.display_text(), FormatOpts::Markdown)]
         }
-        AssistantContent::Image(_img) => {
-            vec![]
+        AssistantContent::Image(img) => {
+            let key = rig_image_to_egui(img);
+
+            vec![(key, FormatOpts::Image)]
         }
     }
 }

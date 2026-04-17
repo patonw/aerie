@@ -10,6 +10,7 @@ use std::{
     path::Path,
     sync::{LazyLock, atomic::AtomicU32},
 };
+use typed_builder::TypedBuilder;
 
 use crate::rig::{
     self,
@@ -40,7 +41,7 @@ pub fn prune_image_cache(ctx: &egui::Context) {
 }
 
 /// Converts a rig image to egui, caching the result and returning a lookup key
-pub fn cache_image(img: &rig::message::Image) -> String {
+pub fn rig_image_to_egui(img: &rig::message::Image) -> String {
     let key = format!("{:x}", image_fingerprint(img));
     let mut cache = IMAGE_CACHE.lock();
     if cache.contains(&key) {
@@ -91,61 +92,101 @@ pub fn image_fingerprint(img: &rig::message::Image) -> u64 {
     s.finish()
 }
 
-/// Load image into memory and downscale as JPEG base64
-pub fn preprocess_image(
-    image: &rig::message::Image,
-    allow_local: bool,
-) -> anyhow::Result<Cow<'_, rig::message::Image>> {
-    use base64::{Engine, prelude::BASE64_STANDARD};
-    match image {
-        img @ rig::message::Image {
-            data: rig::message::DocumentSourceKind::Raw(bytes),
-            ..
-        } => {
-            let format = img
-                .media_type
-                .as_ref()
-                .and_then(|m| ImageFormat::from_mime_type(m.to_mime_type()));
+#[derive(TypedBuilder)]
+pub struct ImageResolver {
+    #[builder(default)]
+    pub allow_local: bool,
 
-            let (image_base64, media_type) = if let Ok((image_bytes, format)) =
-                downscale_image(bytes, format)
-            {
-                let media = format.and_then(|m| ImageMediaType::from_mime_type(m.to_mime_type()));
-                (BASE64_STANDARD.encode(&image_bytes), media)
-            } else {
-                (BASE64_STANDARD.encode(bytes), img.media_type.clone())
-            };
+    #[builder(default_code = r#" {
+        let max_dim = MAX_IMAGE_DIM.load(std::sync::atomic::Ordering::Relaxed);
+        Some((max_dim, max_dim))
+    } "#)]
+    pub max_size: Option<(u32, u32)>,
+}
 
-            Ok(Cow::Owned(rig::message::Image {
-                data: DocumentSourceKind::Base64(image_base64),
+impl Default for ImageResolver {
+    fn default() -> Self {
+        Self::builder().build()
+    }
+}
+
+impl ImageResolver {
+    /// Fetch the image by URL and return a rig Image
+    pub fn to_rig_image(&self, url: &str) -> anyhow::Result<rig::message::Image> {
+        rig_image_from_path(url, self.allow_local, self.max_size)
+    }
+
+    /// Fetch the image by URL and return a base64-encoded data URI
+    pub fn to_data_uri(&self, url: &str) -> anyhow::Result<String> {
+        data_uri_from_image_path(url, self.allow_local, self.max_size)
+    }
+
+    /// Take an existing rig Image, inline remote data nad downsample
+    pub fn preprocess<'a>(
+        &self,
+        image: &'a rig::message::Image,
+    ) -> anyhow::Result<Cow<'a, rig::message::Image>> {
+        use base64::{Engine, prelude::BASE64_STANDARD};
+        match image {
+            rig::message::Image {
+                data: rig::message::DocumentSourceKind::Raw(bytes),
                 media_type,
-                detail: None,
-                additional_params: None,
-            }))
-        }
-        rig::message::Image {
-            data: rig::message::DocumentSourceKind::Url(url),
-            ..
-        } => {
-            let image = image_url_rig(url, allow_local)?;
+                ..
+            } => {
+                let format = media_type
+                    .as_ref()
+                    .and_then(|m| ImageFormat::from_mime_type(m.to_mime_type()));
 
-            Ok(Cow::Owned(image))
+                let (image_base64, media_type) = if let Some((w, h)) = self.max_size
+                    && let Ok((image_bytes, format)) = downsample_image_bytes(bytes, format, w, h)
+                {
+                    let media =
+                        format.and_then(|m| ImageMediaType::from_mime_type(m.to_mime_type()));
+                    (BASE64_STANDARD.encode(&image_bytes), media)
+                } else {
+                    (BASE64_STANDARD.encode(bytes), media_type.clone())
+                };
+
+                Ok(Cow::Owned(rig::message::Image {
+                    data: DocumentSourceKind::Base64(image_base64),
+                    media_type,
+                    detail: None,
+                    additional_params: None,
+                }))
+            }
+            rig::message::Image {
+                data: rig::message::DocumentSourceKind::Url(url),
+                ..
+            } => {
+                let image = { self.to_rig_image(url) }?;
+
+                Ok(Cow::Owned(image))
+            }
+            img => Ok(Cow::Borrowed(img)),
         }
-        img => Ok(Cow::Borrowed(img)),
     }
 }
 
 #[cached(
     result = true,
     key = "String",
-    convert = r#"{ format!("{}", url) }"#,
+    convert = r#"{ format!("{}", path) }"#,
     time = 300,
     time_refresh = true
 )]
-pub fn image_url_rig(url: &str, allow_local: bool) -> anyhow::Result<rig::message::Image> {
+fn rig_image_from_path(
+    path: &str,
+    allow_local: bool,
+    max_size: Option<(u32, u32)>,
+) -> anyhow::Result<rig::message::Image> {
     use base64::{Engine, prelude::BASE64_STANDARD};
-    let (image_bytes, format) = resolve_image(url, allow_local)?;
-    let (image_bytes, format) = downscale_image(&image_bytes, format)?;
+    let (image_bytes, format) = resolve_image_to_bytes(path, allow_local)?;
+    let (image_bytes, format) = if let Some((w, h)) = max_size {
+        downsample_image_bytes(&image_bytes, format, w, h)?
+    } else {
+        (image_bytes, format)
+    };
+
     let media_type = format
         .map(|f| f.to_mime_type())
         .and_then(ImageMediaType::from_mime_type);
@@ -160,7 +201,32 @@ pub fn image_url_rig(url: &str, allow_local: bool) -> anyhow::Result<rig::messag
     Ok(image)
 }
 
-pub fn resolve_image(
+#[cached(
+    result = true,
+    key = "String",
+    convert = r#"{ format!("{}", path) }"#,
+    time = 300,
+    time_refresh = true
+)]
+fn data_uri_from_image_path(
+    path: &str,
+    allow_local: bool,
+    max_size: Option<(u32, u32)>,
+) -> anyhow::Result<String> {
+    use base64::{Engine, prelude::BASE64_STANDARD};
+    let (image_bytes, format) = resolve_image_to_bytes(path, allow_local)?;
+    let (image_bytes, format) = if let Some((w, h)) = max_size {
+        downsample_image_bytes(&image_bytes, format, w, h)?
+    } else {
+        (image_bytes, format)
+    };
+
+    let image_base64 = BASE64_STANDARD.encode(&image_bytes);
+    let mime_type = format.map(|f| f.to_mime_type()).unwrap_or_default();
+    Ok(format!("data:{mime_type};base64,{image_base64}"))
+}
+
+fn resolve_image_to_bytes(
     image: &str,
     allow_local: bool,
 ) -> anyhow::Result<(Vec<u8>, Option<ImageFormat>)> {
@@ -254,30 +320,29 @@ fn load_image_file(image: impl AsRef<Path>) -> anyhow::Result<(Vec<u8>, Option<I
     Ok((image_bytes, media_type))
 }
 
-pub fn downscale_image(
+fn downsample_image_bytes(
     image_bytes: &[u8],
     format: Option<ImageFormat>,
-) -> anyhow::Result<(Vec<u8>, Option<ImageFormat>)> {
+    max_width: u32,
+    max_height: u32,
+) -> Result<(Vec<u8>, Option<ImageFormat>), anyhow::Error> {
     use image::{
         ImageEncoder, ImageReader, codecs::jpeg::JpegEncoder, imageops::FilterType::Lanczos3,
     };
-
-    let max_dim = MAX_IMAGE_DIM.load(std::sync::atomic::Ordering::Relaxed);
-
     let mut image_reader = ImageReader::new(std::io::Cursor::new(image_bytes));
     if let Some(format) = format {
         image_reader.set_format(format);
     }
 
     let image = image_reader.decode().unwrap();
-    let image = if image.width() > max_dim || image.height() > max_dim {
+    let image = if image.width() > max_width || image.height() > max_height {
         tracing::debug!(
-            "Downscaling image from {}x{} to {max_dim}x{max_dim}",
+            "Downscaling image from {}x{} to {max_width}x{max_height}",
             image.width(),
             image.height()
         );
 
-        image.resize(max_dim, max_dim, Lanczos3)
+        image.resize(max_width, max_height, Lanczos3)
     } else if format == Some(ImageFormat::Jpeg) {
         // Avoid re-compression
         return Ok((image_bytes.to_vec(), format));
