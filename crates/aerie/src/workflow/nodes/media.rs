@@ -1,13 +1,9 @@
 use egui_phosphor::regular::{IMAGE_BROKEN, IMAGES, X_CIRCLE};
-use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
 use crate::{
-    utils::{
-        ErrorDistiller as _, IMAGE_CACHE, cache_image, downscale_image, image_url_rig,
-        resolve_image,
-    },
+    utils::{ErrorDistiller as _, IMAGE_CACHE, ImageResolver, rig_image_to_egui},
     workflow::{DynNode, FlexNode, UiNode, Value, ValueKind, WorkNode, nodes::GraphSubmenu},
 };
 
@@ -40,7 +36,7 @@ impl DynNode for LoadImages {
         let images = self
             .images
             .iter()
-            .map(|uri| image_url_rig(uri, false))
+            .map(|uri| ImageResolver::default().to_rig_image(uri))
             .collect::<anyhow::Result<im::Vector<_>>>()?;
 
         Ok(vec![Value::Images(images)])
@@ -73,9 +69,9 @@ impl UiNode for LoadImages {
                     let mut remove_idx = None;
                     for (i, uri) in self.images.iter().enumerate() {
                         // TODO: needs optimization
-                        let resp = match image_url_rig(uri, false) {
+                        let resp = match ImageResolver::default().to_rig_image(uri) {
                             Ok(image) => {
-                                let key = cache_image(&image);
+                                let key = rig_image_to_egui(&image);
                                 let mut cache = IMAGE_CACHE.lock();
                                 if let Some(image) = cache.get(&key) {
                                     let widget = egui::Image::new(image.clone())
@@ -145,13 +141,10 @@ impl UiNode for LoadImages {
 
                 let images = paths
                     .map(|p| {
-                        resolve_image(&p, true).and_then(|(im, fmt)| downscale_image(&im, fmt))
-                    })
-                    .map_ok(|(bytes, format)| {
-                        use base64::{Engine, prelude::BASE64_STANDARD};
-                        let image_base64 = BASE64_STANDARD.encode(&bytes);
-                        let mime_type = format.map(|f| f.to_mime_type()).unwrap_or_default();
-                        format!("data:{mime_type};base64,{image_base64}")
+                        ImageResolver::builder()
+                            .allow_local(true)
+                            .build()
+                            .to_data_uri(&p)
                     })
                     .collect::<Result<Vec<_>, _>>();
 
@@ -206,7 +199,7 @@ impl DynNode for FetchImages {
 
         let images = texts
             .iter()
-            .map(|uri| image_url_rig(uri, false))
+            .map(|uri| ImageResolver::default().to_rig_image(uri))
             .collect::<anyhow::Result<im::Vector<_>>>()?;
 
         Ok(vec![Value::Images(images)])

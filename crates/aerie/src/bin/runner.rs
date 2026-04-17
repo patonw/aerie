@@ -5,7 +5,7 @@ use aerie::{
     rig::message::UserContent,
     storage::CachedDirStore as _,
     toolbox::ToolStore,
-    utils::{message_text, preprocess_image},
+    utils::{ImageResolver, message_text},
     workflow::{
         RootContext, RunContext, Workflow,
         runner::WorkflowRunner,
@@ -259,7 +259,12 @@ fn main() -> anyhow::Result<()> {
                 data: aerie::rig::message::DocumentSourceKind::Url(image.into()),
                 ..Default::default()
             };
-            let image = preprocess_image(&image, run_count == 0)?;
+            let image = {
+                ImageResolver::builder()
+                    .allow_local(run_count == 0)
+                    .build()
+                    .preprocess(&image)
+            }?;
             let content = UserContent::Image(image.into_owned());
 
             extra_content.push(content);
