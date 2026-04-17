@@ -5,7 +5,7 @@ use crate::{
         OneOrMany,
         message::{AssistantContent, Message, ToolCall, ToolFunction},
     },
-    utils::image_url_rig,
+    utils::ImageResolver,
 };
 use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
@@ -317,20 +317,20 @@ impl DynNode for CreateMessage {
                 let images: im::Vector<_> = match &inputs[1] {
                     Some(Value::TextList(texts)) => texts
                         .iter()
-                        .map(|url| image_url_rig(url, false))
+                        .map(|url| ImageResolver::default().to_rig_image(url))
                         .collect::<anyhow::Result<_>>()?,
                     Some(Value::Text(text)) => {
-                        im::vector![image_url_rig(text, false)?]
+                        im::vector![ImageResolver::default().to_rig_image(text)?]
                     }
                     Some(Value::Json(data)) if data.is_array() => data
                         .as_array()
                         .unwrap()
                         .iter()
                         .filter_map(|it| it.as_str())
-                        .map(|s| image_url_rig(s, false))
+                        .map(|s| ImageResolver::default().to_rig_image(s))
                         .collect::<anyhow::Result<_>>()?,
                     Some(Value::Json(data)) if data.is_string() => {
-                        im::vector!(image_url_rig(data.as_str().unwrap(), false)?)
+                        im::vector![ImageResolver::default().to_rig_image(data.as_str().unwrap())?]
                     }
                     Some(Value::Images(data)) => data.clone(),
                     None => Default::default(),
@@ -356,8 +356,7 @@ impl DynNode for CreateMessage {
                         let mut content =
                             rig::OneOrMany::one(rig::message::AssistantContent::text(&*text));
 
-                        for url in &images {
-                            let image = image_url_rig(url, false)?;
+                        for image in images {
                             content.push(rig::message::AssistantContent::Image(image));
                         }
 
