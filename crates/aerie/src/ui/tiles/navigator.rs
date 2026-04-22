@@ -2,12 +2,11 @@ use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular::{DOWNLOAD_SIMPLE, MAGIC_WAND, PENCIL, ROCKET, TRASH, UPLOAD_SIMPLE};
 use std::{collections::BTreeSet, sync::atomic::Ordering};
 
-use crate::{config::ConfigExt as _, utils::ErrorDistiller as _};
+use crate::utils::ErrorDistiller as _;
 
 impl super::AppState {
     pub fn nav_ui(&mut self, ui: &mut egui::Ui) {
         let session = self.session.clone();
-        let settings = self.settings.clone();
         let errors = self.errors.clone();
 
         let running = self.task_count.load(Ordering::Relaxed) > 0;
@@ -19,7 +18,7 @@ impl super::AppState {
                         if editor.lost_focus() {
                             if !renaming.is_empty() {
                                 errors.distil(self.session.rename(renaming));
-                                settings.update(|sets| sets.session = self.session.name_opt());
+                                self.state.set_session(self.session.name());
                             }
                             self.rename_session = None;
                         }
@@ -43,7 +42,7 @@ impl super::AppState {
 
                                 if current != &original {
                                     errors.distil(self.session.switch(current));
-                                    settings.update(|sets| sets.session = self.session.name_opt());
+                                    self.state.set_session(self.session.name());
                                 }
                             });
                     }
@@ -67,9 +66,7 @@ impl super::AppState {
                                                     .to_string();
                                                 errors.distil(self.session.switch(&timestamp));
                                                 errors.distil(self.session.save());
-                                                settings.update(|sets| {
-                                                    sets.session = self.session.name_opt()
-                                                });
+                                                self.state.set_session(self.session.name());
                                             }
                                         });
                                         strip.cell(|ui| {
@@ -83,18 +80,10 @@ impl super::AppState {
                                                 .on_hover_text("Import")
                                                 .clicked()
                                                 && let Some(path) = rfd::FileDialog::new()
-                                                    .set_directory(
-                                                        settings
-                                                            .view(|s| s.last_export_dir.clone()),
-                                                    )
+                                                    .set_directory(&self.state.export_dir)
                                                     .pick_file()
                                             {
-                                                settings.update(|s| {
-                                                    s.last_export_dir = path
-                                                        .parent()
-                                                        .map(|p| p.to_path_buf())
-                                                        .unwrap_or_default()
-                                                });
+                                                self.state.set_export_dir(path.parent());
                                                 errors.distil(self.session.import(&path));
                                             }
                                         });
@@ -104,22 +93,14 @@ impl super::AppState {
                                                 .on_hover_text("Export")
                                                 .clicked()
                                                 && let Some(path) = rfd::FileDialog::new()
-                                                    .set_directory(
-                                                        settings
-                                                            .view(|s| s.last_export_dir.clone()),
-                                                    )
+                                                    .set_directory(&self.state.export_dir)
                                                     .set_file_name(format!(
                                                         "{}.yml",
                                                         session.name()
                                                     ))
                                                     .save_file()
                                             {
-                                                settings.update(|s| {
-                                                    s.last_export_dir = path
-                                                        .parent()
-                                                        .map(|p| p.to_path_buf())
-                                                        .unwrap_or_default()
-                                                });
+                                                self.state.set_export_dir(path.parent());
                                                 errors.distil(self.session.export(&path));
                                             }
                                         });
@@ -129,9 +110,7 @@ impl super::AppState {
                                                     let old_name = session.name();
                                                     errors.distil(self.session.switch(""));
                                                     errors.distil(self.session.delete(&old_name));
-                                                    settings.update(|sets| {
-                                                        sets.session = self.session.name_opt()
-                                                    });
+                                                    self.state.set_session(self.session.name());
                                                     ui.close();
                                                 }
                                             })

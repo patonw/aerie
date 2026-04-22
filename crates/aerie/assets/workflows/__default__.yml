@@ -1,11 +1,11 @@
----
+uuid: 9310277c-ef04-459b-92f1-d1db352a4439
 nodes:
   0:
     value:
       Start: {}
     pos:
-      x: 0
-      y: 0
+      x: 0.0
+      y: 0.0
     open: true
   1:
     value:
@@ -16,56 +16,67 @@ nodes:
     open: true
   2:
     value:
-      AgentNode: {}
+      OutputNode:
+        label: response
     pos:
-      x: 311.34375
-      y: -287.66797
+      x: 1089.5742
+      y: 322.47266
     open: true
   3:
     value:
       ChatNode:
-        prompt: ""
+        prompt: ''
         size:
-          x: 300
-          y: 150
+          x: 300.0
+          y: 150.0
     pos:
       x: 709.1914
       y: 45.69922
     open: true
+  4:
+    value:
+      RoleAgent:
+        role: default
+    pos:
+      x: 292.46094
+      y: -197.36328
+    open: true
 wires:
-  - out_pin:
-      node: 0
-      output: 0
-    in_pin:
-      node: 2
-      input: 1
-  - out_pin:
-      node: 0
-      output: 1
-    in_pin:
-      node: 2
-      input: 2
-  - out_pin:
-      node: 0
-      output: 2
-    in_pin:
-      node: 3
-      input: 1
-  - out_pin:
-      node: 0
-      output: 4
-    in_pin:
-      node: 3
-      input: 2
-  - out_pin:
-      node: 2
-      output: 0
-    in_pin:
-      node: 3
-      input: 0
-  - out_pin:
-      node: 3
-      output: 0
-    in_pin:
-      node: 1
-      input: 0
+- out_pin:
+    node: 0
+    output: 1
+  in_pin:
+    node: 4
+    input: 2
+- out_pin:
+    node: 0
+    output: 2
+  in_pin:
+    node: 3
+    input: 1
+- out_pin:
+    node: 0
+    output: 4
+  in_pin:
+    node: 3
+    input: 2
+- out_pin:
+    node: 3
+    output: 0
+  in_pin:
+    node: 1
+    input: 0
+- out_pin:
+    node: 3
+    output: 1
+  in_pin:
+    node: 2
+    input: 0
+- out_pin:
+    node: 4
+    output: 0
+  in_pin:
+    node: 3
+    input: 0
+start: 0
+finish: 1

@@ -5,7 +5,7 @@ use crate::config::ConfigExt as _;
 impl super::AppState {
     pub fn logview_ui(&mut self, ui: &mut egui::Ui) {
         let scroll_bottom =
-            self.task_count.load(Ordering::Relaxed) > 0 && self.settings.view(|s| s.autoscroll);
+            self.task_count.load(Ordering::Relaxed) > 0 && self.prefs.view(|s| s.autoscroll);
 
         egui::ScrollArea::both().show(ui, |ui| {
             let language = "json";

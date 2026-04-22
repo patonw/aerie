@@ -6,12 +6,11 @@ use crate::{config::ConfigExt as _, utils::ErrorDistiller as _, workflow::write_
 
 impl super::AppState {
     pub fn outputs_ui(&mut self, ui: &mut egui::Ui) {
-        let settings = self.settings.clone();
         let errors = self.errors.clone();
         let mut trash_idx = None;
 
         let scroll_bottom =
-            self.task_count.load(Ordering::Relaxed) > 0 && self.settings.view(|s| s.autoscroll);
+            self.task_count.load(Ordering::Relaxed) > 0 && self.prefs.view(|s| s.autoscroll);
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -71,9 +70,7 @@ impl super::AppState {
                                     |ui| {
                                         if ui.button(FLOPPY_DISK).on_hover_text("Save").clicked()
                                             && let Some(path) = rfd::FileDialog::new()
-                                                .set_directory(
-                                                    settings.view(|s| s.last_output_dir.clone()),
-                                                )
+                                                .set_directory(&self.state.output_dir)
                                                 .set_file_name(k)
                                                 .save_file()
                                             && let Some(mut fh) = errors.distil(
@@ -85,13 +82,7 @@ impl super::AppState {
                                                     .map_err(|e| e.into()),
                                             )
                                         {
-                                            settings.update(|s| {
-                                                s.last_output_dir = path
-                                                    .as_path()
-                                                    .parent()
-                                                    .map(|p| p.to_path_buf())
-                                                    .unwrap_or_default()
-                                            });
+                                            self.state.set_output_dir(path.parent());
                                             errors.distil(write_value(&mut fh, v));
                                         }
                                     },

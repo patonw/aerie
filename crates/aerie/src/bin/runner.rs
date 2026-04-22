@@ -11,7 +11,7 @@ use std::{
 };
 
 use aerie::{
-    AgentFactory, ChatSession, Settings,
+    AgentFactory, ChatSession, Preferences,
     config::ModelRole,
     rig::message::UserContent,
     storage::CachedDirStore as _,
@@ -189,7 +189,7 @@ struct Scaffolding {
     pub models: Arc<BTreeMap<ModelRole, String>>,
     pub workflow_store: Option<WorkflowStoreDir>,
     pub session: ChatSession,
-    pub settings: Settings,
+    pub settings: Preferences,
     pub rt: Runtime,
     pub agent_factory: AgentFactory,
 }
@@ -237,7 +237,7 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
         let text = std::fs::read_to_string(&settings_path)?;
         serde_yml::from_str(&text)?
     } else {
-        Settings::default()
+        Preferences::default()
     };
     tracing::debug!("Loaded settings {settings:?}");
     if let Some(profile) = &args.profile {
@@ -287,7 +287,7 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
 
     let mut agent_factory = AgentFactory::builder()
         .rt(rt.handle().clone())
-        .settings(Arc::new(ArcSwap::from_pointee(settings.clone())))
+        .prefs(Arc::new(ArcSwap::from_pointee(settings.clone())))
         .tools(tool_store)
         .store(workflow_store.clone())
         .next_workflow(next_workflow.clone())
