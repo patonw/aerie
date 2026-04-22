@@ -1,4 +1,4 @@
-use crate::rmcp::model::Tool;
+use crate::{config::ConfigStateStore, rmcp::model::Tool};
 use arc_swap::ArcSwap;
 use eframe::egui;
 use egui::WidgetText;
@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use super::{Pane, workflow::ViewStack};
 use crate::{
-    AgentFactory, LogEntry, Settings, ToolSpec,
+    AgentFactory, LogEntry, Preferences, ToolSpec,
     chat::ChatSession,
     config::ConfigExt as _,
     toolbox::ToolStore,
@@ -66,7 +66,9 @@ pub struct AppState {
     #[builder(default)]
     pub errors: ErrorList<anyhow::Error>,
 
-    pub settings: Arc<ArcSwap<Settings>>,
+    pub prefs: Arc<ArcSwap<Preferences>>,
+
+    pub state: ConfigStateStore,
 
     pub tools: ToolStore,
 
@@ -187,7 +189,7 @@ impl AppState {
                         self.workflows.reset_nodes(
                             *graph_id,
                             nodes.clone(),
-                            self.settings.view(|s| s.cascade),
+                            self.prefs.view(|s| s.cascade),
                         );
                         true
                     }
@@ -195,7 +197,7 @@ impl AppState {
                         self.workflows.reset_nodes(
                             *graph_id,
                             nodes.into(),
-                            self.settings.view(|s| s.cascade),
+                            self.prefs.view(|s| s.cascade),
                         );
                         self.exec_workflow();
                         executed = true;
@@ -327,13 +329,15 @@ pub struct WorkflowState<W: WorkflowStore> {
 
 impl<W: WorkflowStore> WorkflowState<W> {
     pub fn new(store: W, current: Option<String>) -> Self {
-        let edit_workflow = current
-            .filter(|n| store.exists(n))
-            .unwrap_or("basic".to_string());
+        let (name, graph) = if let Some(name) = current.filter(|n| store.exists(n))
+            && let Some(baseline) = store.get(name.as_ref())
+        {
+            (name, baseline)
+        } else {
+            Default::default()
+        };
 
-        let baseline = store.get(edit_workflow.as_ref()).unwrap_or_default();
-
-        let view_stack = ViewStack::from_root(&edit_workflow, baseline.clone());
+        let view_stack = ViewStack::from_root(&name, graph.clone());
 
         Self {
             view_stack,
@@ -341,12 +345,12 @@ impl<W: WorkflowStore> WorkflowState<W> {
             frozen: false,
             running: Arc::new(AtomicBool::new(false)),
             interrupt: Arc::new(AtomicBool::new(false)),
-            editing: edit_workflow.clone(),
+            editing: name.clone(),
             meta_edit: Default::default(),
             renaming: None,
             store,
-            baseline: baseline.clone(),
-            shadow: baseline.clone(),
+            baseline: graph.clone(),
+            shadow: graph.clone(),
             modtime: SystemTime::now(),
             switch_count: Default::default(),
             node_state: Default::default(),

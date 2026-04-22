@@ -1,14 +1,17 @@
 use arc_swap::ArcSwap;
 use cached::proc_macro::cached;
+use delegate::delegate;
 use glob::{Pattern, PatternError};
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    path::PathBuf,
+    ops::Deref,
+    path::{Path, PathBuf},
     sync::{
         Arc, RwLock,
         atomic::{AtomicU64, Ordering},
     },
+    time::Instant,
 };
 
 use crate::rmcp::model::Tool;
@@ -124,8 +127,8 @@ pub enum ModelRole {
     #[strum(message = "Model specializing in structured outputs and tool calls")]
     Structured,
 
-    #[strum(message = "A long context model for creating summaries of documents or conversations")]
-    Summarize,
+    #[strum(message = "A long context model for summarizing large documents")]
+    Condenser,
 
     #[strum(message = "A visual language model that reads both texts and images")]
     Vision,
@@ -142,20 +145,194 @@ pub struct RoleEntry {
     pub roles: im::OrdSet<ModelRole>,
 }
 
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct ProfileMap(im::OrdMap<String, im::Vector<RoleEntry>>);
+
+impl Default for ProfileMap {
+    fn default() -> Self {
+        Self(im::ordmap!(
+                "default".into() => im::vector![Default::default()]
+        ))
+    }
+}
+
+impl ProfileMap {
+    delegate! {
+        to self.0 {
+            pub fn is_empty(&self) -> bool;
+            pub fn keys(&self) -> impl Iterator<Item=&String>;
+            pub fn get(&self, key: &str) -> Option<&im::Vector<RoleEntry>>;
+            pub fn insert(&mut self, key: String, value: im::Vector<RoleEntry>) -> Option<im::Vector<RoleEntry>>;
+            pub fn remove(&mut self, key: &str) -> Option<im::Vector<RoleEntry>>;
+        }
+    }
+
+    pub fn first_key(&self) -> Option<String> {
+        self.0.keys().next().cloned()
+    }
+
+    pub fn get_or_create(&mut self, key: String) -> &mut im::Vector<RoleEntry> {
+        self.0.entry(key).or_default()
+    }
+}
+
+/// Persistent settings managed exclusively from the UI thread.
+///
+/// User configured preferences are stored in `Settings` instead.
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
-pub struct Settings {
-    /// Deprecated model setting
-    #[serde(default)]
-    pub llm_model: String,
-
+pub struct ConfigState {
     /// Models previously used in the UI
     #[serde(default, skip_serializing_if = "im::Vector::is_empty")]
     pub prev_models: im::Vector<String>,
 
+    /// Name of the active workflow
+    #[serde(default)]
+    pub workflow: String,
+
+    #[serde(default)]
+    pub session: String,
+
+    /// Directory to export workflows
+    #[serde(default)]
+    pub export_dir: PathBuf,
+
+    /// Directory to save outputs to
+    #[serde(default)]
+    pub output_dir: PathBuf,
+}
+
+/// Manages synchronizing state between memory and disk
+pub struct ConfigStateStore {
+    // Currently, facilitates UI repainting
+    modtime: Instant,
+
+    /// The backing disk store
+    db: sled::Db,
+
+    /// The live in-memory state
+    state: ConfigState,
+}
+
+impl Deref for ConfigStateStore {
+    type Target = ConfigState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl ConfigStateStore {
+    pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let mut this = Self {
+            modtime: Instant::now(),
+            db: sled::open(path)?,
+            state: Default::default(),
+        };
+
+        this.refresh()?;
+
+        Ok(this)
+    }
+
+    pub fn modtime(&self) -> Instant {
+        self.modtime
+    }
+
+    /// Load settings from disk
+    pub fn refresh(&mut self) -> anyhow::Result<&ConfigState> {
+        if let Some(bytes) = self.db.get(b"prev_models")? {
+            self.state.prev_models = postcard::from_bytes(&bytes)?;
+        }
+
+        if let Some(bytes) = self.db.get(b"workflow")? {
+            self.state.workflow = postcard::from_bytes(&bytes)?;
+        }
+
+        if let Some(bytes) = self.db.get(b"session")? {
+            self.state.session = postcard::from_bytes(&bytes)?;
+        }
+
+        if let Some(bytes) = self.db.get(b"export_dir")? {
+            self.state.export_dir = postcard::from_bytes(&bytes)?;
+        }
+
+        if let Some(bytes) = self.db.get(b"output_dir")? {
+            self.state.output_dir = postcard::from_bytes(&bytes)?;
+        }
+
+        self.modtime = Instant::now();
+
+        Ok(&self.state)
+    }
+
+    /// Runs the callback and writes any state changes to disk
+    pub fn update<T>(&mut self, cb: impl FnOnce(&mut ConfigState) -> T) -> anyhow::Result<T> {
+        let baseline = self.state.clone();
+        let result = cb(&mut self.state);
+
+        if baseline != self.state {
+            self.modtime = Instant::now();
+
+            if baseline.prev_models != self.state.prev_models {
+                let bytes = postcard::to_allocvec(&self.state.prev_models)?;
+                self.db.insert(b"prev_models", bytes)?;
+            }
+
+            if baseline.workflow != self.state.workflow {
+                let bytes = postcard::to_allocvec(&self.state.workflow)?;
+                self.db.insert(b"workflow", bytes)?;
+            }
+
+            if baseline.session != self.state.session {
+                let bytes = postcard::to_allocvec(&self.state.session)?;
+                self.db.insert(b"session", bytes)?;
+            }
+
+            if baseline.export_dir != self.state.export_dir {
+                let bytes = postcard::to_allocvec(&self.state.export_dir)?;
+                self.db.insert(b"export_dir", bytes)?;
+            }
+
+            if baseline.output_dir != self.state.output_dir {
+                let bytes = postcard::to_allocvec(&self.state.output_dir)?;
+                self.db.insert(b"output_dir", bytes)?;
+            }
+        }
+
+        Ok(result)
+    }
+
+    pub fn set_output_dir(&mut self, target: Option<impl AsRef<Path>>) {
+        let _ = self.update(|state| {
+            if let Some(path) = target.map(|p| p.as_ref().to_path_buf()) {
+                state.output_dir = path;
+            }
+        });
+    }
+
+    pub fn set_export_dir(&mut self, target: Option<impl AsRef<Path>>) {
+        let _ = self.update(|state| {
+            if let Some(path) = target.map(|p| p.as_ref().to_path_buf()) {
+                state.export_dir = path;
+            }
+        });
+    }
+
+    pub fn set_session(&mut self, value: impl Into<String>) {
+        let _ = self.update(|state| {
+            state.session = value.into();
+        });
+    }
+}
+
+/// User managed preferences via file or settings tile in UI.
+#[skip_serializing_none]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
+pub struct Preferences {
     /// Profiles containing models tagged with roles
-    #[serde(default, skip_serializing_if = "im::OrdMap::is_empty")]
-    pub models: im::OrdMap<String, im::Vector<RoleEntry>>,
+    #[serde(default, skip_serializing_if = "ProfileMap::is_empty")]
+    pub models: ProfileMap,
 
     /// The active model profile
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -164,10 +341,8 @@ pub struct Settings {
     #[serde(default)]
     pub temperature: f64,
 
+    /// PRNG seed for completion providers (which typically ignore it)
     pub seed: Option<SeedConfig>,
-
-    #[serde(default)]
-    pub show_logs: bool,
 
     #[serde(default)]
     pub autoscroll: bool,
@@ -177,19 +352,7 @@ pub struct Settings {
     pub cascade: bool,
 
     #[serde(default)]
-    pub automation: Option<String>,
-
-    #[serde(default)]
     pub autoruns: usize,
-
-    #[serde(default)]
-    pub session: Option<String>,
-
-    #[serde(default)]
-    pub last_export_dir: PathBuf,
-
-    #[serde(default)]
-    pub last_output_dir: PathBuf,
 
     // Making this configurable since not 100% confident in the streaming implementation
     // The runner will fall back to non-streaming.
@@ -208,7 +371,7 @@ pub struct Settings {
     pub _extra: im::OrdMap<String, serde_json::Value>,
 }
 
-impl Settings {
+impl Preferences {
     pub fn get_model_map(&self) -> BTreeMap<ModelRole, String> {
         let profile = if self.profile.is_empty() {
             "default"
@@ -228,19 +391,19 @@ impl Settings {
 }
 
 pub trait ConfigExt {
-    fn view<T>(&self, cb: impl FnMut(&Settings) -> T) -> T;
+    fn view<T>(&self, cb: impl FnMut(&Preferences) -> T) -> T;
 
-    fn update<T>(&self, cb: impl FnOnce(&mut Settings) -> T) -> T;
+    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> T;
 }
 
-impl ConfigExt for Arc<RwLock<Settings>> {
-    fn view<T>(&self, mut cb: impl FnMut(&Settings) -> T) -> T {
+impl ConfigExt for Arc<RwLock<Preferences>> {
+    fn view<T>(&self, mut cb: impl FnMut(&Preferences) -> T) -> T {
         let settings = self.read().unwrap();
         cb(&settings)
     }
 
     // TODO: handle auto-save
-    fn update<T>(&self, cb: impl FnOnce(&mut Settings) -> T) -> T {
+    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> T {
         let mut settings = self.write().unwrap();
         cb(&mut settings)
     }
@@ -248,15 +411,15 @@ impl ConfigExt for Arc<RwLock<Settings>> {
 
 // Ideally have a macro take the arc, a field and callback.
 // Only clones if callback returns different value for field.
-impl ConfigExt for Arc<ArcSwap<Settings>> {
-    fn view<T>(&self, mut cb: impl FnMut(&Settings) -> T) -> T {
+impl ConfigExt for Arc<ArcSwap<Preferences>> {
+    fn view<T>(&self, mut cb: impl FnMut(&Preferences) -> T) -> T {
         let settings = self.load();
         cb(&settings)
     }
 
     // Clone to stack for working copy. Not sure which way is better
     // This compares every field
-    fn update<T>(&self, cb: impl FnOnce(&mut Settings) -> T) -> T {
+    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> T {
         let mut settings = self.load().as_ref().clone();
 
         let result = cb(&mut settings);

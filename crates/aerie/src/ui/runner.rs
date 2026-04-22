@@ -28,12 +28,13 @@ impl super::AppState {
 
         let prompt = self.prompt.clone();
 
-        self.settings
-            .update(|s| s.automation = Some(self.workflows.editing.clone()));
+        let _ = self
+            .state
+            .update(|state| state.workflow = self.workflows.editing.clone());
 
         self.session.scratch.clear();
 
-        let model_map = self.settings.view(|s| s.get_model_map());
+        let model_map = self.prefs.view(|s| s.get_model_map());
 
         let exec_id = self.workflows.shadow.graph.uuid.into();
         let mut exec = {
@@ -48,10 +49,10 @@ impl super::AppState {
                 .transmuter(self.transmuter.clone())
                 .interrupt(self.workflows.interrupt.clone())
                 .history(self.session.history.clone())
-                .seed(self.settings.view(|s| s.seed.clone()))
+                .seed(self.prefs.view(|s| s.seed.clone()))
                 .errors(self.errors.clone())
                 .scratch(Some(self.session.scratch.clone()))
-                .streaming(self.settings.view(|s| s.streaming))
+                .streaming(self.prefs.view(|s| s.streaming))
                 .models(Arc::new(model_map))
                 .build();
 
@@ -83,7 +84,7 @@ impl super::AppState {
                 .user_prompt(prompt)
                 .extra_content(extra_content)
                 .model("default".into())
-                .temperature(self.settings.view(|s| s.temperature))
+                .temperature(self.prefs.view(|s| s.temperature))
                 .build()
                 .inputs()
                 .unwrap();

@@ -19,7 +19,6 @@ use crate::{
 // Too many refs to self for a free function. Need to clean this up
 impl super::AppState {
     pub fn chat_ui(&mut self, ui: &mut egui::Ui) {
-        let settings = self.settings.clone();
         let errors = self.errors.clone();
         let workflows = self.workflows.names().map(|s| s.to_string()).collect_vec();
 
@@ -114,9 +113,7 @@ impl super::AppState {
                                                         .on_hover_text("Load Images (filesystem)")
                                                         .clicked()
                                                         && let Some(paths) = rfd::FileDialog::new()
-                                                            .set_directory(settings.view(|s| {
-                                                                s.last_export_dir.clone()
-                                                            }))
+                                                            .set_directory(&self.state.export_dir)
                                                             .add_filter(
                                                                 "images",
                                                                 &["png", "jpg", "jpeg", "webp"],
@@ -154,26 +151,24 @@ impl super::AppState {
 
                             ui.add_space(16.0);
 
-                            settings.update(|settings_rw| {
+                            self.errors.distil(self.state.update(|state| {
                                 egui::ComboBox::from_label("Workflow")
-                                    .selected_text(
-                                        settings_rw.automation.as_ref().unwrap_or(&String::new()),
-                                    )
+                                    .selected_text(&state.workflow)
                                     .show_ui(ui, |ui| {
-                                        ui.selectable_value(&mut settings_rw.automation, None, "");
+                                        ui.selectable_value(&mut state.workflow, String::new(), "");
 
                                         for flow in &workflows {
                                             if !flow.starts_with("__") {
                                                 ui.selectable_value(
-                                                    &mut settings_rw.automation,
-                                                    Some(flow.clone()),
+                                                    &mut state.workflow,
+                                                    flow.clone(),
                                                     flow,
                                                 )
                                                 .on_hover_text(self.workflows.description(flow));
                                             }
                                         }
                                     });
-                            });
+                            }));
                         });
                     });
 
@@ -193,18 +188,15 @@ impl super::AppState {
                 });
 
                 if submitted {
-                    let automation = self
-                        .settings
-                        .view(|s| s.automation.clone())
-                        .unwrap_or_default();
+                    let workflow = self.state.workflow.as_str();
 
-                    if automation.is_empty() || workflows.contains(&automation) {
+                    if workflow.is_empty() || workflows.contains(&workflow.to_string()) {
                         // TODO: deal with this nuking any edits in progress
-                        self.workflows.switch(&automation);
+                        self.workflows.switch(workflow);
                         self.events.insert(AppEvent::UserRunWorkflow);
                         self.events.insert(AppEvent::SetPrompt(String::new()));
                     } else {
-                        errors.push(anyhow::anyhow!("Workflow {automation} does not exist."));
+                        errors.push(anyhow::anyhow!("Workflow {workflow} does not exist."));
                     }
                 }
 
@@ -232,7 +224,7 @@ impl super::AppState {
                 ui.set_width(ui.available_width());
 
                 let scroll_bottom = self.task_count.load(Ordering::Relaxed) > 0
-                    && (self.settings.view(|s| s.autoscroll)
+                    && (self.prefs.view(|s| s.autoscroll)
                         || ui.button("Scroll to bottom.").clicked());
 
                 let md_cache = &mut self.cache;
