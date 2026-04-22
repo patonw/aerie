@@ -97,6 +97,9 @@ pub struct AppState {
     #[builder(default)]
     pub rename_session: Option<String>,
 
+    #[builder(default)]
+    pub rename_profile: Option<String>,
+
     // TODO: decompose
     #[builder(default)]
     pub branch_point: Option<Uuid>,

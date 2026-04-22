@@ -1,6 +1,6 @@
 [package]
 name = "aerie"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 default-run = "aerie"
 
@@ -98,6 +98,8 @@ serde_yaml_ng = "0.10.0"
 lru = "0.16.3"
 reqwest = { version = "0.13.2", optional = true }
 url = { version = "2.5.8", optional = true }
+toml = { version = "1.1.2", features = ["preserve_order"] }
+strum = { version = "0.28.0", features = ["derive"] }
 
 [features]
 default = ["fetch-image", "scripting"]

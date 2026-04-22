@@ -4,7 +4,6 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use eframe::{NativeOptions, egui};
 use egui_commonmark::*;
 use egui_tiles::{LinearDir, TileId, Tree};
-use serde_yaml_ng as serde_yml;
 use std::{
     convert::identity,
     path::{Path, PathBuf},
@@ -99,7 +98,7 @@ impl App {
                 dirs::config_dir()
                     .map(|p| p.join("aerie"))
                     .unwrap_or_default()
-                    .join("workbench.yml"),
+                    .join("settings.toml"),
             )
         };
 
@@ -162,7 +161,7 @@ impl App {
         let _guard = rt.enter();
         let settings = if settings_path.is_file() {
             let text = std::fs::read_to_string(&settings_path)?;
-            serde_yml::from_str(&text)?
+            toml::from_str(&text)?
         } else {
             Settings::default()
         };
@@ -407,7 +406,8 @@ impl App {
 
     async fn save_settings(settings: Arc<ArcSwap<Settings>>, settings_path: impl AsRef<Path>) {
         use tokio::io::AsyncWriteExt as _;
-        let text = settings.view(|s| serde_yml::to_string(s).unwrap());
+
+        let text = settings.view(|s| toml::to_string(s).unwrap());
 
         let mut file = tokio::fs::File::create(settings_path).await.unwrap();
         file.write_all(text.as_bytes()).await.unwrap();

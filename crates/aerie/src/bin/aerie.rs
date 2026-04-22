@@ -9,7 +9,7 @@ fn main() -> anyhow::Result<()> {
         dirs::config_dir()
             .map(|p| p.join("aerie"))
             .unwrap_or_default()
-            .join("workbench.yml"),
+            .join("settings.toml"),
     );
 
     // Shhh...

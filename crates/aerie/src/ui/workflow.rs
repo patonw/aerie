@@ -24,9 +24,9 @@ use crate::{
     workflow::{
         EditContext, GraphId, MetaNode, ShadowGraph, WorkNode, Workflow,
         nodes::{
-            AgentNode, ChatContext, ChatNode, CommentNode, Demote, EnvironmentNode, Fallback,
-            Flavor, GateNode, GraphSubmenu, InvokeTool, Matcher, Number, OutputNode, Panic,
-            Preview, Select, StructuredChat, Subgraph, TemplateNode, Text, Tools,
+            ChatContext, ChatNode, CommentNode, Demote, EnvironmentNode, Fallback, Flavor,
+            GateNode, GraphSubmenu, InvokeTool, Matcher, Number, OutputNode, Panic, Preview,
+            RoleAgent, Select, StructuredChat, Subgraph, TemplateNode, Text, Tools,
         },
         runner::{ExecId, ExecState, NodeStateMap},
     },
@@ -795,7 +795,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
 
         ui.menu_button("LLM", |ui| {
             if ui.button("Agent").clicked() {
-                snarl.insert_node(pos, AgentNode::default().into());
+                snarl.insert_node(pos, RoleAgent::default().into());
                 ui.close();
             }
 

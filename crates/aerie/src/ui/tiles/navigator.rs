@@ -14,28 +14,6 @@ impl super::AppState {
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.vertical_centered_justified(|ui| {
                 ui.add_enabled_ui(!running, |ui| {
-                    egui::ComboBox::from_id_salt("session_list")
-                        .wrap()
-                        .width(ui.available_width())
-                        .selected_text(session.name())
-                        .show_ui(ui, |ui| {
-                            let original = session.name();
-                            let mut current = &original;
-                            let blank = String::new();
-
-                            ui.selectable_value(&mut current, &blank, "");
-
-                            let names = session.list();
-                            for name in &names {
-                                ui.selectable_value(&mut current, name, name);
-                            }
-
-                            if current != &original {
-                                errors.distil(self.session.switch(current));
-                                settings.update(|sets| sets.session = self.session.name_opt());
-                            }
-                        });
-
                     if let Some(renaming) = self.rename_session.as_mut() {
                         let editor = ui.text_edit_singleline(renaming);
                         if editor.lost_focus() {
@@ -46,6 +24,28 @@ impl super::AppState {
                             self.rename_session = None;
                         }
                         editor.request_focus();
+                    } else {
+                        egui::ComboBox::from_id_salt("session_list")
+                            .wrap()
+                            .width(ui.available_width())
+                            .selected_text(session.name())
+                            .show_ui(ui, |ui| {
+                                let original = session.name();
+                                let mut current = &original;
+                                let blank = String::new();
+
+                                ui.selectable_value(&mut current, &blank, "");
+
+                                let names = session.list();
+                                for name in &names {
+                                    ui.selectable_value(&mut current, name, name);
+                                }
+
+                                if current != &original {
+                                    errors.distil(self.session.switch(current));
+                                    settings.update(|sets| sets.session = self.session.name_opt());
+                                }
+                            });
                     }
 
                     StripBuilder::new(ui)

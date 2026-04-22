@@ -1,7 +1,10 @@
-use crate::rig::{
-    self,
-    message::Message,
-    tool::{ToolSetError, server::ToolServerError},
+use crate::{
+    config::ModelRole,
+    rig::{
+        self,
+        message::Message,
+        tool::{ToolSetError, server::ToolServerError},
+    },
 };
 use arc_swap::ArcSwap;
 use decorum::{E32, E64};
@@ -24,6 +27,7 @@ use serde_with::skip_serializing_none;
 use serde_yaml_ng as serde_yml;
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     fmt::Debug,
     hash::Hash,
     sync::{Arc, atomic::AtomicBool},
@@ -338,6 +342,9 @@ pub struct RunContext {
 
     #[builder(default)]
     pub errors: ErrorList<anyhow::Error>,
+
+    #[builder(default)]
+    pub models: Arc<BTreeMap<ModelRole, String>>,
 }
 
 impl RunContext {
