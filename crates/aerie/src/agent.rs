@@ -176,13 +176,6 @@ impl AgentFactory {
         let (provider, model) = provider_model
             .split_once("/")
             .map(|(p, m)| (p.to_string(), m.to_string()))
-            .or_else(|| {
-                self.settings.view(|s| {
-                    s.llm_model
-                        .split_once("/")
-                        .map(|(p, m)| (p.to_string(), m.to_string()))
-                })
-            })
             .ok_or(anyhow!("Could not determine LLM provider and model"))?;
         Ok((provider, model))
     }

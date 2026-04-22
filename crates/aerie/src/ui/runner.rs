@@ -33,6 +33,8 @@ impl super::AppState {
 
         self.session.scratch.clear();
 
+        let model_map = self.settings.view(|s| s.get_model_map());
+
         let exec_id = self.workflows.shadow.graph.uuid.into();
         let mut exec = {
             let run_ctx = RunContext::builder()
@@ -50,6 +52,7 @@ impl super::AppState {
                 .errors(self.errors.clone())
                 .scratch(Some(self.session.scratch.clone()))
                 .streaming(self.settings.view(|s| s.streaming))
+                .models(Arc::new(model_map))
                 .build();
 
             let run_count = self.run_count;
@@ -79,7 +82,7 @@ impl super::AppState {
                 .workflow(self.workflows.shadow.clone())
                 .user_prompt(prompt)
                 .extra_content(extra_content)
-                .model(self.settings.view(|s| s.llm_model.clone()))
+                .model("default".into())
                 .temperature(self.settings.view(|s| s.temperature))
                 .build()
                 .inputs()

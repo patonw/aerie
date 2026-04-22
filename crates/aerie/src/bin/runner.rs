@@ -1,7 +1,9 @@
 use std::{
+    collections::BTreeMap,
     convert::identity,
     fs::OpenOptions,
     path::{Path, PathBuf},
+    str::FromStr as _,
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -10,6 +12,7 @@ use std::{
 
 use aerie::{
     AgentFactory, ChatSession, Settings,
+    config::ModelRole,
     rig::message::UserContent,
     storage::CachedDirStore as _,
     toolbox::ToolStore,
@@ -96,6 +99,10 @@ struct Args {
     #[arg(short, long)]
     config: Option<PathBuf>,
 
+    /// Configuration file containing tool providers and default agent settings
+    #[arg(short, long)]
+    profile: Option<String>,
+
     /// An ephemeral file handle to dotenv formatted secrets
     #[arg(long, short)]
     env: Option<PathBuf>,
@@ -121,9 +128,16 @@ struct Args {
     #[arg(long, action)]
     update_session: bool,
 
-    /// The default model for the workflow. Has no effect on nodes that define a specific model.
-    #[arg(short, long)]
-    model: Option<String>,
+    /// Model(s) to use in the workflow.
+    ///
+    /// Entries can by tagged with roles by appending `=role1,role2,etc.`
+    /// An untagged entry is interpreted as the default model.
+    ///
+    /// Examples:
+    ///   -m openrouter/openrouter/free
+    ///   -m openrouter/openrouter/free=default,creative
+    #[arg(short, long, visible_alias("model"), verbatim_doc_comment)]
+    models: Vec<String>,
 
     /// Default language model temperature
     #[arg(short = 'T', long)]
@@ -172,6 +186,7 @@ impl Default for ExecOverrides {
 }
 
 struct Scaffolding {
+    pub models: Arc<BTreeMap<ModelRole, String>>,
     pub workflow_store: Option<WorkflowStoreDir>,
     pub session: ChatSession,
     pub settings: Settings,
@@ -225,12 +240,40 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
         Settings::default()
     };
     tracing::debug!("Loaded settings {settings:?}");
-    if let Some(model) = &args.model {
-        settings.llm_model = model.clone();
+    if let Some(profile) = &args.profile {
+        settings.profile = profile.to_owned();
     }
     if let Some(temperature) = &args.temperature {
         settings.temperature = *temperature;
     }
+
+    let models: BTreeMap<ModelRole, String> = if args.models.is_empty() {
+        settings.get_model_map()
+    } else {
+        tracing::debug!("Setting models from {:?}", &args.models);
+
+        let mut model_map: BTreeMap<ModelRole, String> = Default::default();
+
+        for entry in &args.models {
+            tracing::debug!("Parsing model {entry}");
+
+            if let Some((name, roles)) = entry.split_once("=") {
+                for role in roles
+                    .split(",")
+                    .map(|r| ModelRole::from_str(r.trim()).unwrap_or_default())
+                {
+                    model_map.insert(role.to_owned(), name.to_string());
+                }
+            } else {
+                model_map.insert(ModelRole::Default, entry.trim().to_string());
+            }
+        }
+
+        model_map
+    };
+
+    let models = Arc::new(models);
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
@@ -273,6 +316,7 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
     // };
 
     Ok(Scaffolding {
+        models,
         workflow_store,
         session,
         settings,
@@ -424,6 +468,7 @@ fn run_loop(
 
     for run_count in 0..=autoruns {
         let Scaffolding {
+            models,
             workflow_store,
             session,
             settings,
@@ -456,6 +501,7 @@ fn run_loop(
             .metadata(workflow.metadata.clone())
             .history(session.history.clone())
             .seed(settings.seed.clone())
+            .models(models.clone())
             .build();
 
         let run_ctx = (overrides.run_ctx_fn)(run_ctx);
@@ -465,7 +511,7 @@ fn run_loop(
             .workflow(workflow.clone())
             .user_prompt(std::mem::take(&mut prompt))
             .extra_content(extra_content)
-            .model(settings.llm_model.clone())
+            .model("default".into())
             .temperature(settings.temperature)
             .build()
             .inputs()?;

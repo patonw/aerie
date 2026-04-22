@@ -3,6 +3,7 @@ use cached::proc_macro::cached;
 use glob::{Pattern, PatternError};
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     path::PathBuf,
     sync::{
         Arc, RwLock,
@@ -81,14 +82,84 @@ impl PartialEq for SeedConfig {
 
 impl Eq for SeedConfig {}
 
+#[non_exhaustive]
+#[derive(
+    Default,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::Display,
+    strum::EnumIter,
+    strum::EnumMessage,
+    strum::EnumString,
+)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
+pub enum ModelRole {
+    #[default]
+    #[strum(message = "Fallback model when using an unassigned role")]
+    Default,
+
+    #[strum(message = "Small model with low latency and high throughput")]
+    Fast,
+
+    #[strum(message = "A large general-purpose model for complex tasks")]
+    Large,
+
+    #[strum(message = "A model that thinks/reasons before replying")]
+    Reasoning,
+
+    #[strum(message = "Model that excels at creative writing")]
+    Creative,
+
+    #[strum(message = "Model for code generation and review")]
+    Programming,
+
+    #[strum(message = "Model specializing in structured outputs and tool calls")]
+    Structured,
+
+    #[strum(message = "A long context model for creating summaries of documents or conversations")]
+    Summarize,
+
+    #[strum(message = "A visual language model that reads both texts and images")]
+    Vision,
+
+    #[strum(message = "Literal model name. Can only be passed via node input.")]
+    #[strum(default, transparent)]
+    #[serde(untagged)]
+    Custom(String),
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
+pub struct RoleEntry {
+    pub name: String,
+    pub roles: im::OrdSet<ModelRole>,
+}
+
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
 pub struct Settings {
+    /// Deprecated model setting
     #[serde(default)]
     pub llm_model: String,
 
+    /// Models previously used in the UI
     #[serde(default, skip_serializing_if = "im::Vector::is_empty")]
     pub prev_models: im::Vector<String>,
+
+    /// Profiles containing models tagged with roles
+    #[serde(default, skip_serializing_if = "im::OrdMap::is_empty")]
+    pub models: im::OrdMap<String, im::Vector<RoleEntry>>,
+
+    /// The active model profile
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub profile: String,
 
     #[serde(default)]
     pub temperature: f64,
@@ -135,6 +206,25 @@ pub struct Settings {
     // Don't clobber unknown settings
     #[serde(flatten)]
     pub _extra: im::OrdMap<String, serde_json::Value>,
+}
+
+impl Settings {
+    pub fn get_model_map(&self) -> BTreeMap<ModelRole, String> {
+        let profile = if self.profile.is_empty() {
+            "default"
+        } else {
+            self.profile.as_str()
+        };
+
+        if let Some(models) = self.models.get(profile) {
+            models
+                .iter()
+                .flat_map(|entry| entry.roles.iter().map(|r| (r.clone(), entry.name.clone())))
+                .collect()
+        } else {
+            Default::default()
+        }
+    }
 }
 
 pub trait ConfigExt {

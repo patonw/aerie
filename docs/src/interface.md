@@ -125,23 +125,25 @@ You can load images from disk or link to them by URL.
 
 ### Settings
 
-- Default model and temperature
-  - Provided to workflows which may or may not use them
-  - Some workflows may use multiple models in different agents
-  - models must be prefixed with a provider
+![settings](./images/settings-tab.png)
+
+[Model profiles](./agents.md#profiles--roles) can be defined on the settings tab.
+
+Multiple flags control how the UI responds to input and events
+
 - `autoruns` controls [chain execution](./workflows.md#chain-execution)
-- Multiple flags control how the UI responds to input and events
-  - Toggle buttons are highlighted when active, or neutral when inactive
-  - "autosave" will automatically save edits to the workflow
-    - If disabled, you will have to manually save from the command palette
-  - "autoscroll" will scroll the chat and log windows when a workflow is running
-    - no effect when idle
-  - "streaming" will toggle between blocking and streaming mode
-    - When streaming is disabled, you will not see messages until they are complete
-    - Streaming mode will show partial messages as the provider sends data
-    - Logs tab becomes pretty messy with streaming enabled
-- Note: implementation differs between streaming and blocking
-  - Headless runners will use blocking mode
+- Toggle buttons are highlighted when active, or neutral when inactive
+- "autosave" will automatically save edits to the workflow
+  - If disabled, you will have to manually save from the command palette
+- "autoscroll" will scroll the chat and log windows when a workflow is running
+  - no effect when idle
+- "streaming" will toggle between blocking and streaming mode
+  - When streaming is disabled, you will not see messages until they are complete
+  - Streaming mode will show partial messages as the provider sends data
+  - Logs tab becomes pretty messy with streaming enabled
+
+You can use the workflow setting to select the workflow that will be run when a
+prompt is submitted on the [Chat tab](#chat). A description of the workflow is displayed.
 
 ### Tools
 
