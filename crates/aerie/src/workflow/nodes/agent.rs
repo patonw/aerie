@@ -1,9 +1,11 @@
-use crate::rig::message::Message;
+use crate::{config::ModelRole, rig::message::Message};
+use anyhow::Context as _;
 use decorum::E64;
 use egui::TextEdit;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use std::{borrow::Cow, sync::Arc, time::Duration};
+use std::{borrow::Cow, str::FromStr as _, sync::Arc, time::Duration};
+use strum::IntoEnumIterator as _;
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 use crate::{
@@ -208,13 +210,276 @@ impl Tools {
     }
 }
 
+#[allow(deprecated)]
+mod legacy {
+    use std::str::FromStr as _;
+
+    use super::*;
+    #[deprecated = "Use TaggedAgent"]
+    #[skip_serializing_none]
+    #[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
+    pub struct AgentNode {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        pub name: String,
+
+        pub model: Option<String>,
+
+        pub preamble: Option<String>,
+
+        pub temperature: Option<E64>,
+
+        pub size: Option<crate::utils::EVec2>,
+    }
+
+    #[typetag::serde]
+    impl FlexNode for AgentNode {}
+
+    impl DynNode for AgentNode {
+        fn inputs(&self) -> usize {
+            5
+        }
+
+        fn outputs(&self) -> usize {
+            1
+        }
+
+        fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+            Cow::Borrowed(match in_pin {
+                0 => &[ValueKind::Agent],
+                1 => &[ValueKind::Text],
+                2 => &[ValueKind::Number],
+                3 => &[ValueKind::Tools],
+                4 => &[ValueKind::Text],
+                _ => ValueKind::all(),
+            })
+        }
+
+        fn out_kind(&self, out_pin: usize) -> ValueKind {
+            match out_pin {
+                0 => ValueKind::Agent,
+                _ => unreachable!(),
+            }
+        }
+
+        fn execute(
+            &mut self,
+            ctx: &RunContext,
+            _node_id: egui_snarl::NodeId,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            self.validate(&inputs)?;
+
+            let agent = match &inputs[0] {
+                Some(Value::Agent(spec)) => Some(spec.clone()),
+                None => None,
+                _ => unreachable!(),
+            };
+
+            let model = match &inputs[1] {
+                Some(Value::Text(name)) => Some((**name).clone()),
+                None => self.model.clone(),
+                _ => unreachable!(),
+            };
+
+            if agent.is_none() && model.is_none() {
+                return Err(WorkflowError::Required(vec![
+                    "Either model name or an existing agent is required.".into(),
+                ]));
+            }
+
+            let temperature = match &inputs[2] {
+                Some(Value::Number(temp)) => Some(*temp),
+                None => self.temperature,
+                _ => unreachable!(),
+            };
+
+            let toolset = match &inputs[3] {
+                Some(Value::Tools(tools)) => Some(tools.clone()),
+                None => None,
+                _ => unreachable!(),
+            };
+
+            let preamble = match &inputs[4] {
+                Some(Value::Text(text)) => Some((**text).clone()),
+                None => self.preamble.clone(),
+                _ => unreachable!(),
+            };
+
+            let mut agent = agent.unwrap_or_default();
+            let builder = Arc::make_mut(&mut agent);
+
+            if let Some(model) = model {
+                let Ok(role) = ModelRole::from_str(&model);
+                let model = match role {
+                    ModelRole::Custom(name) => name,
+                    _ => ctx
+                        .models
+                        .get(&role)
+                        .or_else(|| ctx.models.get(&ModelRole::Default))
+                        .with_context(|| format!("Could not resolve model for role {role}"))?
+                        .to_owned(),
+                };
+
+                tracing::debug!("Building agent with model {model}");
+                builder.model(model);
+            }
+
+            if let Some(temp) = temperature {
+                tracing::debug!("Setting agent temperature {temp}");
+                builder.temperature(temp);
+            }
+
+            if let Some(preamble) = &preamble {
+                tracing::debug!("Setting agent preamble {preamble}");
+                builder.preamble(preamble.clone());
+            }
+
+            if let Some(tools) = toolset {
+                builder.tools(tools);
+            }
+
+            Ok(vec![Value::Agent(agent)])
+        }
+    }
+
+    impl UiNode for AgentNode {
+        fn title(&self) -> &str {
+            if self.name.is_empty() {
+                "Agent (Deprecated)"
+            } else {
+                &self.name
+            }
+        }
+
+        fn title_mut(&mut self) -> Option<&mut String> {
+            Some(&mut self.name)
+        }
+
+        fn tooltip(&self) -> &str {
+            "Create or modify an LLM Agent."
+        }
+
+        fn preview(&self, _out_pin: usize) -> Value {
+            Value::Placeholder(ValueKind::Agent)
+        }
+
+        fn show_output(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    ui.label("agent");
+                }
+                _ => unreachable!(),
+            }
+            self.out_kind(pin_id).default_pin()
+        }
+
+        fn show_input(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+            remote: Option<Value>,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                // TODO: Toggle enabling each field to override existing. If no agent input connected,
+                // do not allow toggling
+                0 => {
+                    ui.label("Agent")
+                        .on_hover_text("An existing agent to modify.");
+                }
+                1 => {
+                    if remote.is_none() {
+                        crate::ui::toggled_field(
+                            ui,
+                            "M",
+                            Some("model"),
+                            &mut self.model,
+                            |ui, value| {
+                                squelch(ui.add(
+                                    TextEdit::singleline(value).hint_text("provider/model:tag"),
+                                ));
+                            },
+                        );
+                    } else {
+                        ui.label("model");
+                    }
+                }
+                2 => {
+                    if remote.is_none() {
+                        crate::ui::toggled_field(
+                            ui,
+                            "T",
+                            Some("temperature"),
+                            &mut self.temperature,
+                            |ui, value| {
+                                let mut temp = value.into_inner();
+
+                                let widget = egui::Slider::new(&mut temp, 0.0..=1.0);
+                                ui.add(widget);
+                                *value = E64::assert(temp);
+                            },
+                        );
+                    } else {
+                        ui.label("temperature");
+                    }
+                }
+                3 => {
+                    ui.label("Tools");
+                }
+                4 => {
+                    if remote.is_none() {
+                        let help = "system message\n\
+                        \n\
+                        Instructions to the agent outside the flow of conversation.\n\
+                        Can include hints about its role, personality or formatting requirements.";
+                        crate::ui::toggled_field(
+                            ui,
+                            "S",
+                            Some(help),
+                            &mut self.preamble,
+                            |ui, value| {
+                                resizable_frame(&mut self.size, ui, |ui| {
+                                    egui::ScrollArea::vertical().auto_shrink(false).show(
+                                        ui,
+                                        |ui| {
+                                            let widget = egui::TextEdit::multiline(value)
+                                                .id_salt("sysmesg")
+                                                .desired_width(f32::INFINITY)
+                                                .hint_text("system message");
+
+                                            squelch(
+                                                ui.add_sized(ui.available_size(), widget)
+                                                    .on_hover_text(help),
+                                            );
+                                        },
+                                    );
+                                });
+                            },
+                        );
+                    } else {
+                        ui.label("preamble");
+                    }
+                }
+                _ => unreachable!(),
+            };
+
+            self.in_kinds(pin_id).first().unwrap().default_pin()
+        }
+    }
+}
+
 #[skip_serializing_none]
 #[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
-pub struct AgentNode {
+pub struct RoleAgent {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
 
-    pub model: Option<String>,
+    pub role: Option<ModelRole>,
 
     pub preamble: Option<String>,
 
@@ -224,9 +489,9 @@ pub struct AgentNode {
 }
 
 #[typetag::serde]
-impl FlexNode for AgentNode {}
+impl FlexNode for RoleAgent {}
 
-impl DynNode for AgentNode {
+impl DynNode for RoleAgent {
     fn inputs(&self) -> usize {
         5
     }
@@ -255,7 +520,7 @@ impl DynNode for AgentNode {
 
     fn execute(
         &mut self,
-        _ctx: &RunContext,
+        ctx: &RunContext,
         _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
@@ -267,17 +532,16 @@ impl DynNode for AgentNode {
             _ => unreachable!(),
         };
 
-        let model = match &inputs[1] {
-            Some(Value::Text(name)) => Some((**name).clone()),
-            None => self.model.clone(),
+        let role = match &inputs[1] {
+            Some(Value::Text(name)) => Some(
+                ModelRole::from_str(name.as_str())
+                    .map_err(|_| WorkflowError::Conversion(format!("Unknown role: {name}")))?,
+            ),
+            None if self.role.is_some() => self.role.clone(),
+            None if agent.is_none() => Some(Default::default()),
+            None => None,
             _ => unreachable!(),
         };
-
-        if agent.is_none() && model.is_none() {
-            return Err(WorkflowError::Required(vec![
-                "Either model name or an existing agent is required.".into(),
-            ]));
-        }
 
         let temperature = match &inputs[2] {
             Some(Value::Number(temp)) => Some(*temp),
@@ -300,8 +564,19 @@ impl DynNode for AgentNode {
         let mut agent = agent.unwrap_or_default();
         let builder = Arc::make_mut(&mut agent);
 
-        if let Some(model) = model {
-            builder.model(model);
+        if let Some(role) = role {
+            let resolved = match &role {
+                ModelRole::Custom(name) => name,
+                _ => ctx
+                    .models
+                    .get(&role)
+                    .or_else(|| ctx.models.get(&ModelRole::Default))
+                    .with_context(|| format!("Could not resolve model for role {role:?}"))?,
+            };
+
+            tracing::debug!("Resolved role {role:?} to model {resolved}");
+
+            builder.model(resolved.to_owned());
         }
 
         if let Some(temp) = temperature {
@@ -322,7 +597,7 @@ impl DynNode for AgentNode {
     }
 }
 
-impl UiNode for AgentNode {
+impl UiNode for RoleAgent {
     fn title(&self) -> &str {
         if self.name.is_empty() {
             "Agent"
@@ -377,12 +652,22 @@ impl UiNode for AgentNode {
                     crate::ui::toggled_field(
                         ui,
                         "M",
-                        Some("model"),
-                        &mut self.model,
+                        Some("role used to resolve model from settings"),
+                        &mut self.role,
                         |ui, value| {
-                            squelch(
-                                ui.add(TextEdit::singleline(value).hint_text("provider/model:tag")),
-                            );
+                            egui::ComboBox::from_id_salt("Profile")
+                                .selected_text(value.to_string())
+                                .show_ui(ui, |ui| {
+                                    for key in ModelRole::iter() {
+                                        if !matches!(key, ModelRole::Custom(_)) {
+                                            ui.selectable_value(
+                                                value,
+                                                key.clone(),
+                                                key.to_string(),
+                                            );
+                                        }
+                                    }
+                                });
                         },
                     );
                 } else {
