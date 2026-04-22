@@ -32,7 +32,7 @@ use crate::{
 use rig_dynclient::builder::DynClientBuilder;
 
 pub use super::chat::{ChatContent, ChatEntry, ChatHistory, ChatSession};
-pub use super::config::{Settings, ToolSelector, ToolSpec};
+pub use super::config::{Preferences, ToolSelector, ToolSpec};
 pub use super::logging::{LogChannelLayer, LogEntry};
 pub use super::pipeline::{Pipeline, Workstep};
 pub use super::toolbox::{ToolProvider, Toolbox};
@@ -85,7 +85,7 @@ impl rig::tool::Tool for StructuredSubmit {
 pub struct AgentFactory {
     pub rt: tokio::runtime::Handle,
 
-    pub settings: Arc<ArcSwap<Settings>>,
+    pub prefs: Arc<ArcSwap<Preferences>>,
 
     // #[builder(default, setter(strip_option))]
     pub tools: Option<ToolStore>,
@@ -118,7 +118,7 @@ pub struct AgentFactory {
 impl AgentFactory {
     #[allow(deprecated)]
     pub fn agent_builder(&self, provider_model: &str) -> anyhow::Result<AgentBuilderT> {
-        let temperature = self.settings.view(|s| s.temperature);
+        let temperature = self.prefs.view(|s| s.temperature);
 
         let (provider, model) = self.parse_model(provider_model)?;
 

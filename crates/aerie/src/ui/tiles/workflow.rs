@@ -205,7 +205,7 @@ impl super::AppState {
     }
 
     pub fn workflow_controls(&mut self, ui: &mut egui::Ui) {
-        let settings = self.settings.clone();
+        let settings = self.prefs.clone();
         let errors = self.errors.clone();
         let running = self
             .workflows
@@ -304,17 +304,10 @@ impl super::AppState {
                                             && let Some(path) = rfd::FileDialog::new()
                                                 .add_filter("workflow", &["yml", "yaml"])
                                                 .add_filter("all", &[""])
-                                                .set_directory(
-                                                    settings.view(|s| s.last_export_dir.clone()),
-                                                )
+                                                .set_directory(&self.state.export_dir)
                                                 .pick_file()
                                         {
-                                            settings.update(|s| {
-                                                s.last_export_dir = path
-                                                    .parent()
-                                                    .map(|p| p.to_path_buf())
-                                                    .unwrap_or_default()
-                                            });
+                                            self.state.set_export_dir(path.parent());
                                             errors.distil(self.workflows.import(&path));
                                         }
                                     });
@@ -324,21 +317,15 @@ impl super::AppState {
                                         && let Some(path) = rfd::FileDialog::new()
                                             .add_filter("workflow", &["yml", "yaml"])
                                             .add_filter("all", &[""])
-                                            .set_directory(
-                                                settings.view(|s| s.last_export_dir.clone()),
-                                            )
+                                            .set_directory(&self.state.export_dir)
                                             .set_file_name(format!(
                                                 "{}.yml",
                                                 self.workflows.editing
                                             ))
                                             .save_file()
                                     {
-                                        settings.update(|s| {
-                                            s.last_export_dir = path
-                                                .parent()
-                                                .map(|p| p.to_path_buf())
-                                                .unwrap_or_default()
-                                        });
+                                        self.state.set_export_dir(path.parent());
+
                                         errors.distil(self.workflows.export(&path));
                                     }
                                 });

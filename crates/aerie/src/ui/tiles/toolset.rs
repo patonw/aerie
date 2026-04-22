@@ -11,7 +11,6 @@ use serde_yaml_ng as serde_yml;
 
 use crate::{
     ToolProvider, ToolSpec,
-    config::ConfigExt as _,
     storage::CachedDirStore as _,
     ui::{state::ToolEditorState, toggled_field},
     utils::ErrorDistiller as _,
@@ -19,7 +18,6 @@ use crate::{
 
 impl super::AppState {
     pub fn toolset_ui(&mut self, ui: &mut egui::Ui) {
-        let settings = self.settings.clone();
         let errors = self.errors.clone();
         let language = "json";
         let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
@@ -100,15 +98,12 @@ impl super::AppState {
 
                 if ui.button(DOWNLOAD_SIMPLE).on_hover_text("Import").clicked()
                     && let Some(path) = rfd::FileDialog::new()
-                        .set_directory(settings.view(|s| s.last_export_dir.clone()))
+                        .set_directory(&self.state.export_dir)
                         .add_filter("mcp", &["mcp"])
                         .add_filter("all", &[""])
                         .pick_file()
                 {
-                    settings.update(|s| {
-                        s.last_export_dir =
-                            path.parent().map(|p| p.to_path_buf()).unwrap_or_default()
-                    });
+                    self.state.set_export_dir(path.parent());
                     errors.distil(self.import_tool_spec(&path));
                 }
             });
@@ -117,7 +112,6 @@ impl super::AppState {
     }
 
     fn tool_tree(&mut self, ui: &mut egui::Ui) {
-        let settings = self.settings.clone();
         let errors = self.errors.clone();
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
 
@@ -150,21 +144,13 @@ impl super::AppState {
                                 && let Some(path) = rfd::FileDialog::new()
                                                     .add_filter("mcp", &["mcp"])
                                                     .add_filter("all", &[""])
-                                                    .set_directory(
-                                                        settings
-                                                            .view(|s| s.last_export_dir.clone()),
-                                                    )
+                                                    .set_directory( &self.state.export_dir)
                                                     .set_file_name(format!(
                                                         "{name}.mcp",
                                                     ))
                                                     .save_file()
                                 {
-                                    settings.update(|s| {
-                                        s.last_export_dir = path
-                                            .parent()
-                                            .map(|p| p.to_path_buf())
-                                            .unwrap_or_default()
-                                    });
+                                        self.state.set_export_dir(path.parent());
 
                                     if let Ok(writer) = OpenOptions::new()
                                         .write(true)

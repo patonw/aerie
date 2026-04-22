@@ -19,9 +19,9 @@ use tracing_subscriber::{
 };
 
 use crate::{
-    AgentFactory, LogChannelLayer, LogEntry, Settings,
+    AgentFactory, LogChannelLayer, LogEntry, Preferences,
     chat::ChatSession,
-    config::{Args, Command, ConfigExt, SessionCommand},
+    config::{Args, Command, ConfigExt, ConfigStateStore, SessionCommand},
     storage::CachedDirStore as _,
     toolbox::ToolStore,
     ui::{AppState, Pane, shortcuts::SHORTCUT_QUIT, state::WorkflowState},
@@ -41,6 +41,9 @@ pub struct App {
     settings_path: Option<std::path::PathBuf>,
 
     #[builder(default, setter(strip_option))]
+    state_path: Option<std::path::PathBuf>,
+
+    #[builder(default, setter(strip_option))]
     min_size: Option<egui::Vec2>,
 
     #[builder(default, setter(strip_option))]
@@ -53,7 +56,7 @@ pub struct App {
 
     /// Transform the application settings
     #[builder(default=Rc::new(identity))]
-    settings_fn: Rc<dyn Fn(Settings) -> Settings>,
+    settings_fn: Rc<dyn Fn(Preferences) -> Preferences>,
 
     /// Transform the data directory where sessions, workflows and backups are stored
     #[builder(default=Rc::new(identity))]
@@ -102,6 +105,17 @@ impl App {
             )
         };
 
+        let state_path = if let Some(path) = &self.state_path {
+            path.clone()
+        } else {
+            self.args.config.clone().unwrap_or(
+                dirs::state_dir()
+                    .map(|p| p.join("aerie"))
+                    .unwrap_or_default()
+                    .join("config.sled"),
+            )
+        };
+
         let data_dir = (self.data_dir_fn)(
             dirs::data_dir()
                 .unwrap_or(".data/share".into())
@@ -121,6 +135,7 @@ impl App {
         let tool_dir = args.tool_dir.clone().unwrap_or(data_dir.join("tools"));
 
         std::fs::create_dir_all(settings_path.parent().unwrap())?;
+        std::fs::create_dir_all(state_path.parent().unwrap())?;
         std::fs::create_dir_all(&session_dir)?;
         std::fs::create_dir_all(&workflow_dir)?;
         std::fs::create_dir_all(&tool_dir)?;
@@ -159,23 +174,30 @@ impl App {
         // Makes runtime available for libraries even when outside of async context... mostly
         // AccessKit seems to ignore this.
         let _guard = rt.enter();
-        let settings = if settings_path.is_file() {
+        let preferences = if settings_path.is_file() {
             let text = std::fs::read_to_string(&settings_path)?;
             toml::from_str(&text)?
         } else {
-            Settings::default()
+            Preferences::default()
         };
-        let settings = (self.settings_fn)(settings);
+        let preferences = (self.settings_fn)(preferences);
 
-        if let Some(image_size) = settings.image_size {
+        let config_state = ConfigStateStore::open(&state_path)?;
+
+        if let Some(image_size) = preferences.image_size {
             MAX_IMAGE_DIM.store(image_size, Ordering::Relaxed);
         }
 
-        let session_name = args.session.as_deref().or(settings.session.as_deref());
+        let session_name = args
+            .session
+            .as_deref()
+            .unwrap_or(config_state.session.as_str());
+        let session_name = Some(session_name).filter(|s| !s.is_empty());
+
         let session =
             (self.session_fn)(ChatSession::from_dir_name(session_dir, session_name).build()?);
-        let mut stored_settings = Arc::new(settings.clone());
-        let settings = Arc::new(ArcSwap::from_pointee(settings));
+        let mut stored_settings = Arc::new(preferences.clone());
+        let preferences = Arc::new(ArcSwap::from_pointee(preferences));
         let task_count = Arc::new(AtomicU16::new(0));
         let log_history: Arc<arc_swap::ArcSwapAny<Arc<im::Vector<LogEntry>>>> =
             Arc::new(ArcSwap::from_pointee(im::Vector::<LogEntry>::new()));
@@ -227,9 +249,9 @@ impl App {
         let root = tiles.insert_container(hsplit);
         let mut tree = (self.ui_tree_fn)(egui_tiles::Tree::new("my_tree", root, tiles));
 
-        let flow_name = settings.view(|s| s.automation.clone());
         let flow_store = (self.workstore_fn)(WorkflowStoreDir::load_all(workflow_dir, true)?);
-        let flow_state = WorkflowState::new(flow_store.clone(), flow_name);
+        let flow_state =
+            WorkflowState::new(flow_store.clone(), Some(config_state.workflow.clone()));
 
         let tool_store = ToolStore::new(tool_dir);
         tool_store.preload_all();
@@ -238,7 +260,7 @@ impl App {
         let mut agent_factory = (self.agent_factory_fn)(
             AgentFactory::builder()
                 .rt(rt.handle().to_owned())
-                .settings(settings.clone())
+                .prefs(preferences.clone())
                 .tools(Some(tool_store.clone()))
                 .errors(errors.clone())
                 .task_count(task_count.clone())
@@ -252,7 +274,8 @@ impl App {
 
         let mut behavior = (self.appstate_fn)(
             AppState::builder()
-                .settings(settings.clone())
+                .prefs(preferences.clone())
+                .state(config_state)
                 .tools(tool_store)
                 .log_history(log_history.clone())
                 .task_count(task_count.clone())
@@ -266,7 +289,7 @@ impl App {
         );
 
         let rt_ = rt.handle().clone();
-        let settings_ = settings.clone();
+        let settings_ = preferences.clone();
         let settings_path_ = settings_path.clone();
         let min_size = self.min_size;
         let max_size = self.max_size;
@@ -399,12 +422,12 @@ impl App {
         })
         .map_err(|e| anyhow::anyhow!("I can't {e:?}"))?;
         rt.handle().block_on(async move {
-            Self::save_settings(settings, settings_path).await;
+            Self::save_settings(preferences, settings_path).await;
         });
         Ok(())
     }
 
-    async fn save_settings(settings: Arc<ArcSwap<Settings>>, settings_path: impl AsRef<Path>) {
+    async fn save_settings(settings: Arc<ArcSwap<Preferences>>, settings_path: impl AsRef<Path>) {
         use tokio::io::AsyncWriteExt as _;
 
         let text = settings.view(|s| toml::to_string(s).unwrap());

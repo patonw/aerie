@@ -1,4 +1,4 @@
-use crate::rmcp::model::Tool;
+use crate::{config::ConfigStateStore, rmcp::model::Tool};
 use arc_swap::ArcSwap;
 use eframe::egui;
 use egui::WidgetText;
@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use super::{Pane, workflow::ViewStack};
 use crate::{
-    AgentFactory, LogEntry, Settings, ToolSpec,
+    AgentFactory, LogEntry, Preferences, ToolSpec,
     chat::ChatSession,
     config::ConfigExt as _,
     toolbox::ToolStore,
@@ -66,7 +66,9 @@ pub struct AppState {
     #[builder(default)]
     pub errors: ErrorList<anyhow::Error>,
 
-    pub settings: Arc<ArcSwap<Settings>>,
+    pub prefs: Arc<ArcSwap<Preferences>>,
+
+    pub state: ConfigStateStore,
 
     pub tools: ToolStore,
 
@@ -187,7 +189,7 @@ impl AppState {
                         self.workflows.reset_nodes(
                             *graph_id,
                             nodes.clone(),
-                            self.settings.view(|s| s.cascade),
+                            self.prefs.view(|s| s.cascade),
                         );
                         true
                     }
@@ -195,7 +197,7 @@ impl AppState {
                         self.workflows.reset_nodes(
                             *graph_id,
                             nodes.into(),
-                            self.settings.view(|s| s.cascade),
+                            self.prefs.view(|s| s.cascade),
                         );
                         self.exec_workflow();
                         executed = true;
