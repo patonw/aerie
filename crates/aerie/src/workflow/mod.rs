@@ -222,6 +222,34 @@ impl AnyPin {
 }
 
 #[derive(Clone, TypedBuilder)]
+pub struct CheckContext {
+    pub toolbox: Toolbox,
+    pub graph_id: GraphId,
+
+    #[builder(default=NodeId(0))]
+    pub node_id: NodeId,
+}
+
+impl CheckContext {
+    pub fn with_node(&self, node_id: NodeId) -> Self {
+        Self {
+            node_id,
+            ..self.clone()
+        }
+    }
+    pub fn with_graph(&self, graph_id: GraphId) -> Self {
+        Self {
+            graph_id,
+            ..self.clone()
+        }
+    }
+
+    pub fn id(&self) -> (GraphId, NodeId) {
+        (self.graph_id, self.node_id)
+    }
+}
+
+#[derive(Clone, TypedBuilder)]
 pub struct EditContext {
     pub toolbox: Toolbox,
 
@@ -230,6 +258,9 @@ pub struct EditContext {
     pub current_graph: GraphId,
 
     pub metadata: Arc<ShadowMeta>,
+
+    #[builder(default=NodeId(0))]
+    pub current_node: NodeId, // whoops
 
     /// Ids of the parent graph and subgraph container node
     #[builder(default)]
@@ -249,9 +280,6 @@ pub struct EditContext {
 
     #[builder(default)]
     pub output_reset: Arc<ArcSwap<im::OrdSet<OutPinId>>>,
-
-    #[builder(default=NodeId(0))]
-    pub current_node: NodeId, // whoops
 
     #[builder(default)]
     pub disabled: bool,
@@ -891,6 +919,17 @@ where
 }
 
 impl ShadowGraph<WorkNode> {
+    pub fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
+        let mut alerts = im::OrdMap::new();
+        for (id, subnode) in &self.nodes {
+            if !self.is_disabled(*id) {
+                alerts.extend(subnode.value.as_dyn().check(&ctx.with_node(*id)));
+            }
+        }
+
+        alerts
+    }
+
     pub fn repair(&self) -> Self {
         let mut target = self.clone();
         if let Some(id) = self
@@ -1104,6 +1143,11 @@ pub trait DynNode {
         } else {
             Ok(())
         }
+    }
+
+    fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
+        let _ = ctx;
+        Default::default()
     }
 
     fn execute(

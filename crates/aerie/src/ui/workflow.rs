@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     iter,
     sync::{Arc, atomic::AtomicUsize},
@@ -7,7 +8,9 @@ use std::{
 use anyhow::Context as _;
 use cached::proc_macro::cached;
 use egui::{Color32, Hyperlink, RichText, Sense, Ui, emath::TSTransform};
-use egui_phosphor::regular::{CHECK_CIRCLE, HAND_PALM, HOURGLASS_MEDIUM, PLAY_CIRCLE, WARNING};
+use egui_phosphor::regular::{
+    CHECK_CIRCLE, HAND_PALM, HOURGLASS_MEDIUM, PLAY_CIRCLE, WARNING, WARNING_OCTAGON,
+};
 use egui_snarl::{
     InPinId, NodeId, OutPinId, Snarl,
     ui::{SnarlStyle, SnarlViewer, SnarlWidget, get_selected_nodes},
@@ -339,6 +342,9 @@ pub struct WorkflowViewer {
 
     #[builder(default)]
     pub rename_node: Option<NodeId>,
+
+    #[builder(default)]
+    pub alerts: im::OrdMap<(GraphId, NodeId), Cow<'static, str>>,
 }
 
 impl WorkflowViewer {
@@ -488,7 +494,9 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         _outputs: &[egui_snarl::OutPin],
         snarl: &Snarl<WorkNode>,
     ) -> egui::Frame {
-        if snarl[node].0.downcast_ref::<CommentNode>().is_some() {
+        if let Some(_msg) = self.alerts.get(&(self.edit_ctx.current_graph, node)) {
+            default.stroke((8.0, Color32::YELLOW.gamma_multiply(0.75)))
+        } else if snarl[node].0.downcast_ref::<CommentNode>().is_some() {
             default.fill(CommentNode::bg_color())
         } else {
             default
@@ -560,38 +568,45 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                         ui.label(title);
                     }
                 },
-                |ui| match node_state.get(&node) {
-                    Some(ExecState::Waiting(_)) => {
-                        ui.label(RichText::new(HOURGLASS_MEDIUM).color(Color32::ORANGE))
-                            .on_hover_text("Waiting");
-                    }
-                    Some(ExecState::Ready) => {
-                        ui.label(RichText::new(PLAY_CIRCLE).color(Color32::BLUE))
-                            .on_hover_text("Ready");
-                    }
-                    Some(ExecState::Running) => {
-                        ui.add(egui::Spinner::new().color(Color32::LIGHT_GREEN))
-                            .on_hover_text("Running");
-                    }
-                    Some(ExecState::Done(_)) => {
-                        ui.label(RichText::new(CHECK_CIRCLE).color(Color32::GREEN))
-                            .on_hover_text("Done");
-                    }
-                    Some(ExecState::Disabled) => {
-                        ui.label(HAND_PALM).on_hover_text("Disabled");
-                    }
-                    Some(ExecState::Failed(err)) => {
-                        if ui
-                            .label(RichText::new(WARNING).color(Color32::RED))
-                            .on_hover_text(format!("{err:?}"))
-                            .interact(egui::Sense::click())
-                            .clicked()
-                        {
-                            let error = err.clone();
-                            self.edit_ctx.errors.push(error.into());
+                |ui| {
+                    match node_state.get(&node) {
+                        Some(ExecState::Waiting(_)) => {
+                            ui.label(RichText::new(HOURGLASS_MEDIUM).color(Color32::ORANGE))
+                                .on_hover_text("Waiting");
                         }
+                        Some(ExecState::Ready) => {
+                            ui.label(RichText::new(PLAY_CIRCLE).color(Color32::BLUE))
+                                .on_hover_text("Ready");
+                        }
+                        Some(ExecState::Running) => {
+                            ui.add(egui::Spinner::new().color(Color32::LIGHT_GREEN))
+                                .on_hover_text("Running");
+                        }
+                        Some(ExecState::Done(_)) => {
+                            ui.label(RichText::new(CHECK_CIRCLE).color(Color32::GREEN))
+                                .on_hover_text("Done");
+                        }
+                        Some(ExecState::Disabled) => {
+                            ui.label(HAND_PALM).on_hover_text("Disabled");
+                        }
+                        Some(ExecState::Failed(err)) => {
+                            if ui
+                                .label(RichText::new(WARNING_OCTAGON).color(Color32::RED))
+                                .on_hover_text(format!("{err:?}"))
+                                .interact(egui::Sense::click())
+                                .clicked()
+                            {
+                                let error = err.clone();
+                                self.edit_ctx.errors.push(error.into());
+                            }
+                        }
+                        None => {}
                     }
-                    None => {}
+
+                    if let Some(msg) = self.alerts.get(&(self.edit_ctx.current_graph, node)) {
+                        ui.label(RichText::new(WARNING).color(Color32::YELLOW))
+                            .on_hover_text(msg.clone());
+                    }
                 },
             );
 

@@ -31,6 +31,9 @@ impl super::AppState {
         if !busy && !running && ui.ctx().input_mut(|i| i.consume_shortcut(&SHORTCUT_RUN)) {
             self.events.insert(AppEvent::UserRunWorkflow);
         }
+
+        self.workflows.check_graph();
+
         egui::CentralPanel::default().show_inside(ui, |ui| {
             // Forces new widget state in children after switching or undos so that
             // Snarl will draw our persisted positions and sizes.
