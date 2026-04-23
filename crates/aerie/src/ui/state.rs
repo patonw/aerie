@@ -1,4 +1,4 @@
-use crate::{config::ConfigStateStore, rmcp::model::Tool};
+use crate::{config::ConfigStateStore, rmcp::model::Tool, workflow::CheckContext};
 use arc_swap::ArcSwap;
 use eframe::egui;
 use egui::WidgetText;
@@ -156,6 +156,7 @@ impl AppState {
         }
 
         let viewer = self.workflows.viewer.as_mut().unwrap();
+        viewer.alerts = self.workflows.alerts.clone();
         viewer.frozen = self.workflows.frozen;
         viewer.running = self
             .workflows
@@ -325,6 +326,9 @@ pub struct WorkflowState<W: WorkflowStore> {
 
     pub previews: PreviewData,
     pub outputs: im::Vector<WorkflowRun>,
+
+    pub graph_checked: bool,
+    pub alerts: im::OrdMap<(GraphId, NodeId), Cow<'static, str>>,
 }
 
 impl<W: WorkflowStore> WorkflowState<W> {
@@ -358,11 +362,28 @@ impl<W: WorkflowStore> WorkflowState<W> {
             redo_stack: Default::default(),
             previews: Default::default(),
             outputs: Default::default(),
+            graph_checked: false,
+            alerts: Default::default(),
         }
     }
 
     pub fn has_changes(&self) -> bool {
         !self.shadow.fast_eq(&self.baseline)
+    }
+
+    /// Runs recursive checks on workflow graphs after changes
+    pub fn check_graph(&mut self) {
+        if !self.graph_checked
+            && let Some(viewer) = &self.viewer
+        {
+            let ctx = CheckContext::builder()
+                .toolbox(viewer.edit_ctx.toolbox.clone())
+                .graph_id(self.shadow.graph.uuid)
+                .build();
+
+            self.alerts = self.shadow.graph.check(&ctx);
+            self.graph_checked = true;
+        }
     }
 
     pub fn switch(&mut self, workflow_name: &str) {
@@ -406,6 +427,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         self.switch_count += 1;
         self.view_stack = ViewStack::from_root(workflow_name, self.shadow.clone());
         self.viewer = None;
+        self.graph_checked = false;
     }
 
     pub fn rename(&mut self) -> anyhow::Result<()> {
@@ -584,6 +606,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
             self.view_stack.switch(&self.editing, shadow.clone());
             self.viewer = None;
             self.frozen = true;
+            self.graph_checked = false;
         }
         tracing::debug!(
             "Undid. undos={} redos={}, path={:?}",
@@ -608,6 +631,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
             self.switch_count += 1;
             self.view_stack.switch(&self.editing, shadow.clone());
             self.frozen = true;
+            self.graph_checked = false;
         }
         tracing::debug!(
             "Redid. undos={} redos={}",
@@ -822,6 +846,10 @@ impl<W: WorkflowStore> WorkflowState<W> {
                 }
 
                 true
+            }
+            NodesChanged(_, _) => {
+                self.graph_checked = false;
+                false
             }
             _ => false,
         }

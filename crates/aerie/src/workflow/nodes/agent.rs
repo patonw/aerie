@@ -1,7 +1,13 @@
-use crate::{config::ModelRole, rig::message::Message};
+use crate::{
+    config::ModelRole,
+    rig::message::Message,
+    workflow::{CheckContext, GraphId},
+};
 use anyhow::Context as _;
 use decorum::E64;
-use egui::TextEdit;
+use egui::{Color32, RichText, TextEdit, collapsing_header::CollapsingState};
+use egui_snarl::NodeId;
+use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{borrow::Cow, str::FromStr as _, sync::Arc, time::Duration};
@@ -43,6 +49,15 @@ impl DynNode for Tools {
     fn value(&self, out_pin: usize) -> Value {
         assert_eq!(out_pin, 0);
         Value::Tools(self.toolset.clone())
+    }
+
+    fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
+        let missing = ctx.toolbox.missing_tools(&self.toolset);
+        if !missing.is_empty() {
+            im::ordmap!(ctx.id() => Cow::Owned(format!("Missing tools: {}", missing.join(", "))))
+        } else {
+            Default::default()
+        }
     }
 
     fn execute(
@@ -108,6 +123,51 @@ impl UiNode for Tools {
                     });
 
                     ui.separator();
+
+                    let missing = ctx.toolbox.missing_tools(&self.toolset);
+                    if !missing.is_empty() {
+                        egui::Frame::default()
+                            .stroke((4.0, Color32::RED))
+                            .corner_radius(8.0)
+                            .show(ui, |ui| {
+                                let chunks = missing
+                                    .iter()
+                                    .map(|s| s.split_once("/").unwrap_or((s, "")))
+                                    .chunk_by(|(p, _)| *p);
+                                ui.vertical_centered(|ui| {
+                                    ui.label(RichText::new("missing").color(Color32::RED).strong());
+                                });
+
+                                for (provider, tools) in &chunks {
+                                    let tools = tools.map(|(_, tool)| tool).collect_vec();
+
+                                    CollapsingState::load_with_default_open(
+                                        ui.ctx(),
+                                        ui.id().with("missing tools").with(provider),
+                                        false,
+                                    )
+                                    .show_header(ui, |ui| {
+                                        let mut checked = true;
+                                        if ui.checkbox(&mut checked, provider).clicked() {
+                                            let toolset = tools.iter().fold(
+                                                self.toolset.as_ref().clone(),
+                                                |ts, tool| {
+                                                    ctx.toolbox
+                                                        .toggle_tool(&ts, provider, tool, false)
+                                                },
+                                            );
+
+                                            self.toolset = Arc::new(toolset);
+                                        }
+                                    })
+                                    .body(|ui| {
+                                        for tool in &tools {
+                                            ui.label(*tool);
+                                        }
+                                    });
+                                }
+                            });
+                    }
 
                     for (name, provider) in ctx.toolbox.providers.load().iter() {
                         if matches!(provider, ToolProvider::Chainer { .. })

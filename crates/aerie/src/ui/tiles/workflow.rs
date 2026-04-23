@@ -37,6 +37,8 @@ impl super::AppState {
             self.events.insert(AppEvent::UserRunWorkflow);
         }
 
+        self.workflows.check_graph();
+
         egui::CentralPanel::default().show_inside(ui, |ui| {
             // Forces new widget state in children after switching or undos so that
             // Snarl will draw our persisted positions and sizes.

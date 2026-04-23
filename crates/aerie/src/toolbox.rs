@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     borrow::Cow,
-    iter,
+    iter::{self, once},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -558,6 +558,33 @@ impl Toolbox {
         result
     }
 
+    pub fn missing_tools(&self, toolset: &ToolSelector) -> Vec<String> {
+        let providers = self.providers.load();
+        let mut missing = vec![];
+        for entry in toolset.iter() {
+            let ts = ToolSelector::only(entry);
+            let has_matches = providers
+                .iter()
+                .flat_map(|(name, provider)| match provider {
+                    ToolProvider::MCP { tools, .. } => {
+                        Either::Left(tools.iter().map(|t| (name.as_str(), t.name.clone())))
+                    }
+                    ToolProvider::Chainer { workflows, .. } => Either::Right(
+                        once(Cow::Borrowed("__break__"))
+                            .chain(workflows.names())
+                            .map(|tool| (name.as_str(), tool)),
+                    ),
+                })
+                .any(|(name, tool)| ts.apply(name, &tool));
+
+            if !has_matches {
+                missing.push(entry.to_string());
+            }
+        }
+
+        missing
+    }
+
     pub fn select_tools<M: CompletionModel>(
         &self,
         agent: AgentBuilder<M>,
@@ -571,7 +598,6 @@ impl Toolbox {
             })
     }
 
-    // TODO: build the agent then manually create a ToolServer
     pub fn apply<M: CompletionModel>(
         &self,
         agent: AgentBuilder<M>,

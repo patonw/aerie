@@ -293,6 +293,10 @@ pub trait ImmutableMapExt<K, V> {
     /// Construct a new hash map by inserting a key/value mapping into a map.
     /// If the map already has a mapping for the given key and value, returns self.
     fn with(&self, k: &K, v: &V) -> Self;
+
+    /// Construct a new map without this key/value pair.
+    /// If the key is missing or value does not match, returns the original map.
+    fn without_entry(&self, k: &K, v: &V) -> Self;
 }
 
 impl<K, V> ImmutableMapExt<K, V> for im::HashMap<K, V>
@@ -309,6 +313,16 @@ where
             self.update(k.clone(), v.clone())
         }
     }
+
+    fn without_entry(&self, k: &K, v: &V) -> Self {
+        if let Some(old_value) = self.get(k)
+            && old_value == v
+        {
+            self.without(k)
+        } else {
+            self.clone()
+        }
+    }
 }
 
 impl<K, V> ImmutableMapExt<K, V> for im::OrdMap<K, V>
@@ -323,6 +337,16 @@ where
             self.clone()
         } else {
             self.update(k.clone(), v.clone())
+        }
+    }
+
+    fn without_entry(&self, k: &K, v: &V) -> Self {
+        if let Some(old_value) = self.get(k)
+            && old_value == v
+        {
+            self.without(k)
+        } else {
+            self.clone()
         }
     }
 }

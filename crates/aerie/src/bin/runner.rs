@@ -18,16 +18,15 @@ use aerie::{
     toolbox::ToolStore,
     utils::{ImageResolver, message_text},
     workflow::{
-        RootContext, RunContext, Value, Workflow,
-        runner::WorkflowRunner,
-        store::{WorkflowStore as _, WorkflowStoreDir},
-        write_value,
+        CheckContext, RootContext, RunContext, Value, Workflow, runner::WorkflowRunner,
+        store::WorkflowStoreDir, write_value,
     },
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use clap::{Parser, Subcommand};
 use egui_snarl::Snarl;
-use serde::{Deserialize, Serialize, Serializer as _};
+use itertools::Itertools as _;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
 use serde_yaml_ng as serde_yml;
@@ -76,6 +75,11 @@ pub struct ExecArgs {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[arg(short = 'n', long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     show_ids: bool,
+
+    /// Pretty print console output
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[arg(short, long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    pretty: bool,
 }
 
 #[inline]
@@ -86,6 +90,13 @@ fn is_zero(value: &usize) -> bool {
 #[non_exhaustive]
 #[derive(Subcommand, Clone, Debug)]
 pub enum Command {
+    /// Loads tool providers and checks workflows in store
+    Check {
+        #[arg(short, long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+        pretty: bool,
+    },
+
+    /// Execute a workflow and dump results to console or a directory
     Exec(ExecArgs),
 }
 
@@ -164,6 +175,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     match &args.command {
+        Command::Check { pretty } => check_workflows(&args, *pretty)?,
         Command::Exec(exec_args) => execute_workflow(&args, exec_args)?,
     }
 
@@ -325,6 +337,59 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
     })
 }
 
+fn check_workflows(args: &Args, pretty: bool) -> anyhow::Result<()> {
+    use struson::writer::*;
+    let Scaffolding {
+        workflow_store,
+        agent_factory,
+        ..
+    } = make_scaffolding(args)?;
+    let toolbox = &agent_factory.toolbox;
+
+    let Some(store) = workflow_store else {
+        anyhow::bail!("Nothing to check");
+    };
+
+    let names = store.names().map(|n| n.to_string()).collect_vec();
+
+    let mut json_writer = JsonStreamWriter::new_custom(
+        std::io::stdout(),
+        WriterSettings {
+            pretty_print: pretty,
+            ..Default::default()
+        },
+    );
+
+    json_writer.begin_object()?;
+
+    for name in names {
+        let workflow = store.load(&name)?;
+
+        let ctx = CheckContext::builder()
+            .toolbox(toolbox.clone())
+            .graph_id(workflow.graph.uuid)
+            .build();
+
+        let alerts = workflow.graph.check(&ctx);
+
+        if !alerts.is_empty() {
+            json_writer.name(&name)?;
+            json_writer.begin_array()?;
+
+            for (_, msg) in alerts {
+                json_writer.string_value(&msg)?;
+            }
+
+            json_writer.end_array()?;
+        }
+    }
+
+    json_writer.end_object()?;
+    json_writer.finish_document()?;
+
+    Ok(())
+}
+
 fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
     let ExecArgs {
         workflow,
@@ -333,6 +398,7 @@ fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
         images: image,
         out_dir,
         autoruns,
+        pretty,
         ..
     } = &exec_args;
 
@@ -380,6 +446,7 @@ fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
             let saver_task = saver_task.clone();
             let out_dir = out_dir.clone();
             let autoruns = *autoruns;
+            let pretty = *pretty;
 
             Arc::new(move |run_ctx| {
                 let receiver = run_ctx.outputs.receiver();
@@ -392,7 +459,7 @@ fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
 
                     rt.spawn(file_output(receiver, out_dir))
                 } else {
-                    rt.spawn(console_output(receiver))
+                    rt.spawn(console_output(receiver, pretty))
                 };
 
                 *saver_task.lock().unwrap() = Some(task);
@@ -583,57 +650,52 @@ fn run_loop(
 }
 
 async fn console_output(
-    out_rx: flume::Receiver<(String, aerie::workflow::Value)>,
+    out_rx: flume::Receiver<(String, Value)>,
+    pretty: bool,
 ) -> anyhow::Result<()> {
-    use serde::ser::SerializeMap as _;
-    let mut serializer = serde_json::Serializer::pretty(std::io::stdout());
-    let mut mapper = serializer.serialize_map(None).unwrap();
+    use aerie::workflow::Value;
+    use struson::writer::*;
 
+    let mut json_writer = JsonStreamWriter::new_custom(
+        std::io::stdout(),
+        WriterSettings {
+            pretty_print: pretty,
+            ..Default::default()
+        },
+    );
+
+    json_writer.begin_object()?;
     while let Ok((label, value)) = out_rx.recv_async().await {
-        // if out_glob.matches(&label) {
-        match value {
-            aerie::workflow::Value::Text(text) => {
-                mapper.serialize_entry(&label, &text).unwrap();
-            }
-            aerie::workflow::Value::Number(value) => {
-                mapper.serialize_entry(&label, &value).unwrap()
-            }
-            aerie::workflow::Value::Integer(value) => {
-                mapper.serialize_entry(&label, &value).unwrap()
-            }
-            aerie::workflow::Value::Json(value) => mapper.serialize_entry(&label, &value).unwrap(),
-            aerie::workflow::Value::Chat(chat) => mapper.serialize_entry(&label, &chat).unwrap(),
-            aerie::workflow::Value::Message(message) => {
-                let text = message_text(&message);
+        json_writer.name(&label)?;
 
-                mapper.serialize_entry(&label, &text).unwrap();
+        match value {
+            Value::Text(text) => {
+                json_writer.string_value(&text)?;
             }
-            aerie::workflow::Value::TextList(value) => {
-                mapper.serialize_entry(&label, &value).unwrap()
-            }
-            aerie::workflow::Value::FloatList(value) => {
-                mapper.serialize_entry(&label, &value).unwrap()
-            }
-            aerie::workflow::Value::IntList(value) => {
-                mapper.serialize_entry(&label, &value).unwrap()
-            }
-            aerie::workflow::Value::MsgList(value) => {
-                mapper.serialize_entry(&label, &value).unwrap()
-            }
+            Value::Number(value) => json_writer.fp_number_value(value.into_inner())?,
+            Value::Integer(value) => json_writer.number_value(value)?,
+            Value::Json(value) => json_writer.serialize_value(&value)?,
+            Value::Chat(value) => json_writer.serialize_value(&value)?,
+            Value::Message(message) => json_writer.string_value(&message_text(&message))?,
+            Value::TextList(value) => json_writer.serialize_value(&value)?,
+            Value::FloatList(value) => json_writer.serialize_value(&value)?,
+            Value::IntList(value) => json_writer.serialize_value(&value)?,
+            Value::MsgList(value) => json_writer.serialize_value(&value)?,
             _ => {
-                mapper.serialize_entry(&label, &value).unwrap();
+                json_writer.serialize_value(&value)?;
             }
         }
-        // }
     }
-    mapper.end().unwrap();
+
+    json_writer.end_object()?;
+    json_writer.finish_document()?;
     println!();
 
     Ok(())
 }
 
 async fn file_output(
-    out_rx: flume::Receiver<(String, aerie::workflow::Value)>,
+    out_rx: flume::Receiver<(String, Value)>,
     path: PathBuf,
 ) -> anyhow::Result<()> {
     while let Ok((label, value)) = out_rx.recv_async().await {

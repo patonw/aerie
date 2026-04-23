@@ -5,6 +5,7 @@ use std::{
 
 use egui::{Sense, UiBuilder};
 use egui_phosphor::regular::{GRAPH, LINE_SEGMENTS};
+use egui_snarl::NodeId;
 use im::vector;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -13,9 +14,10 @@ use serde_yaml_ng as serde_yml;
 
 use crate::{
     ui::AppEvent,
+    utils::ImmutableMapExt,
     workflow::{
-        DynNode, FlexNode, ShadowGraph, UiNode, Value, ValueKind, WorkNode, WorkflowError,
-        runner::WorkflowRunner,
+        CheckContext, DynNode, FlexNode, GraphId, ShadowGraph, UiNode, Value, ValueKind, WorkNode,
+        WorkflowError, runner::WorkflowRunner,
     },
 };
 
@@ -384,6 +386,18 @@ impl DynNode for Subgraph {
                 Message => MsgList,
                 kind => kind,
             }
+        }
+    }
+
+    fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
+        let sub_ctx = ctx.with_graph(self.graph.uuid);
+
+        let alerts = self.graph.check(&sub_ctx);
+
+        if let Some((_, msg)) = alerts.iter().next() {
+            alerts.with(&ctx.id(), &msg.clone())
+        } else {
+            alerts
         }
     }
 
