@@ -562,6 +562,10 @@ impl ToolSelector {
         Self(im::OrdSet::new())
     }
 
+    pub fn only(value: &str) -> Self {
+        Self(im::ordset![value.to_string()])
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -616,6 +620,10 @@ impl ToolSelector {
             .iter()
             .filter_map(|it| tool_glob(it.clone()).ok())
             .any(|it| it.matches(&format!("{provider}/{}", tool_name)))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|s| s.as_str())
     }
 }
 
