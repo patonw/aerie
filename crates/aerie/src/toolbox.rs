@@ -430,6 +430,9 @@ impl ToolProvider {
                 let client = ()
                     .serve(TokioChildProcess::new(Command::new(command).configure(
                         |cmd| {
+                            // Don't propagate SIGTERM to subprocess
+                            cmd.process_group(0);
+
                             let cmd = args.iter().fold(cmd, |cmd, arg| cmd.arg(arg));
                             // cmd.stderr(Stdio::null());
                             if let Some(cwd) = dir {
