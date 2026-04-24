@@ -30,7 +30,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
 use serde_yaml_ng as serde_yml;
-use tokio::{runtime::Runtime, task::JoinHandle};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use typed_builder::TypedBuilder;
 
@@ -87,6 +88,15 @@ fn is_zero(value: &usize) -> bool {
     *value == 0
 }
 
+#[derive(clap::Args, Clone, Debug)]
+pub struct HttpServerArgs {
+    #[arg(short, long, default_value_t = String::from("localhost"))]
+    host: String,
+
+    #[arg(short, long, default_value_t = 8058)]
+    port: u32,
+}
+
 #[non_exhaustive]
 #[derive(Subcommand, Clone, Debug)]
 pub enum Command {
@@ -98,6 +108,9 @@ pub enum Command {
 
     /// Execute a workflow and dump results to console or a directory
     Exec(ExecArgs),
+
+    #[cfg(feature = "runner-http")]
+    Serve(HttpServerArgs),
 }
 
 /// A minimalist workflow runner that dumps outputs to the console as a JSON object.
@@ -177,6 +190,9 @@ fn main() -> anyhow::Result<()> {
     match &args.command {
         Command::Check { pretty } => check_workflows(&args, *pretty)?,
         Command::Exec(exec_args) => execute_workflow(&args, exec_args)?,
+
+        #[cfg(feature = "runner-http")]
+        Command::Serve(server_args) => service::start_server(&args, server_args)?,
     }
 
     Ok(())
@@ -205,12 +221,13 @@ struct Scaffolding {
     pub workflow_store: Option<WorkflowStoreDir>,
     pub session: ChatSession,
     pub settings: Preferences,
-    pub rt: Runtime,
+    pub rt: tokio::runtime::Handle,
     pub agent_factory: AgentFactory,
+    pub shutdown: CancellationToken,
 }
 
 /// Instantiate and initialize common objects from global arguments
-fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
+fn make_scaffolding(args: &Args, rt: &tokio::runtime::Handle) -> anyhow::Result<Scaffolding> {
     let workflow_store = args
         .workflows
         .as_ref()
@@ -295,11 +312,6 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
 
     let models = Arc::new(models);
 
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
-        .enable_all()
-        .build()?;
-
     // The chain tool requires these. It's an impediment to concurrent execution.
     // Need to scope this by run somehow
     let next_workflow: Arc<ArcSwapOption<String>> = Default::default();
@@ -307,7 +319,7 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
     let next_images: Arc<ArcSwap<Vec<String>>> = Default::default();
 
     let agent_factory = AgentFactory::builder()
-        .rt(rt.handle().clone())
+        .rt(rt.clone())
         .prefs(Arc::new(ArcSwap::from_pointee(settings.clone())))
         .tools(tool_store)
         .store(workflow_store.clone())
@@ -328,19 +340,24 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
         workflow_store,
         session,
         settings,
-        rt,
+        rt: rt.clone(),
         agent_factory,
+        shutdown: CancellationToken::new(),
     })
 }
 
 /// Runs recursive checks on workflows (i.e. missing tools, etc)
 fn check_workflows(args: &Args, pretty: bool) -> anyhow::Result<()> {
     use struson::writer::*;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+
     let Scaffolding {
         workflow_store,
         agent_factory,
         ..
-    } = make_scaffolding(args)?;
+    } = make_scaffolding(args, rt.handle())?;
     let toolbox = &agent_factory.toolbox;
 
     let Some(store) = workflow_store else {
@@ -408,7 +425,11 @@ fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
         std::fs::create_dir_all(out_dir)?;
     }
 
-    let mut scaffolding = make_scaffolding(args)?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+
+    let mut scaffolding = make_scaffolding(args, rt.handle())?;
 
     let mut prompt = input.as_ref().cloned().unwrap_or_default();
     if &prompt == "-" {
@@ -437,9 +458,10 @@ fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
 
     let saver_task: Arc<Mutex<Option<JoinHandle<anyhow::Result<()>>>>> = Default::default();
 
+    let handle = rt.handle().clone();
     let overrides = ExecOverrides::builder()
         .run_ctx_fn({
-            let rt = scaffolding.rt.handle().clone();
+            let rt = handle.clone();
             let run_count = run_count.clone();
             let saver_task = saver_task.clone();
             let out_dir = out_dir.clone();
@@ -467,7 +489,7 @@ fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
             })
         })
         .post_exec_fn({
-            let rt = scaffolding.rt.handle().clone();
+            let rt = handle.clone();
             let saver_task = saver_task.clone();
 
             Arc::new(move || {
@@ -540,6 +562,7 @@ fn run_loop(
             settings,
             rt,
             agent_factory,
+            shutdown,
             ..
         } = scaffolding;
 
@@ -561,7 +584,7 @@ fn run_loop(
         }
 
         let run_ctx = RunContext::builder()
-            .runtime(rt.handle().clone())
+            .runtime(rt.clone())
             .exec_id(workflow.graph.uuid.into())
             .agent_factory(agent_factory.clone())
             .metadata(workflow.metadata.clone())
@@ -569,6 +592,15 @@ fn run_loop(
             .seed(settings.seed.clone())
             .models(models.clone())
             .build();
+
+        rt.spawn({
+            let interrupt = run_ctx.interrupt.clone();
+            let shutdown = shutdown.clone();
+            async move {
+                let _ = shutdown.cancelled().await;
+                interrupt.store(true, Ordering::Relaxed);
+            }
+        });
 
         let run_ctx = (overrides.run_ctx_fn)(run_ctx);
         let out_rx = run_ctx.outputs.sender();
@@ -646,6 +678,158 @@ fn run_loop(
     }
 
     Ok(())
+}
+
+#[cfg(feature = "runner-http")]
+mod service {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use aerie::storage::CachedDirStore;
+    use aerie::workflow::OutputChannel;
+    use aerie::workflow::store::WorkflowStore;
+    use axum::extract::{Json, State};
+    use axum::{
+        Router,
+        http::StatusCode,
+        response::{self, IntoResponse},
+        routing::{get, post},
+    };
+
+    async fn execute_handler(
+        State(scaffolding): State<Arc<Scaffolding>>,
+        Json(payload): Json<ExecArgs>,
+    ) -> impl IntoResponse {
+        // let scaffolding_ = scaffolding.lock().await;
+        let Some(workflow_store) = &scaffolding.workflow_store else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+
+        tracing::info!("Payload is {payload:?}");
+
+        let Ok(workflow) = CachedDirStore::load(workflow_store, &payload.workflow) else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+
+        let prompt = payload.input.clone().unwrap_or_default();
+        let images = payload.images.clone();
+        // drop(scaffolding_);
+
+        let (chan_tx, chan_rx) = flume::unbounded();
+        let overrides = ExecOverrides::builder()
+            .run_ctx_fn({
+                Arc::new(move |mut run_ctx| {
+                    let outputs = OutputChannel::default();
+                    chan_tx
+                        .send(outputs.clone())
+                        .expect("Could not send output channel");
+                    run_ctx.outputs = outputs.clone();
+                    run_ctx
+                })
+            })
+            .build();
+
+        let scaffolding = scaffolding.clone();
+        let shutdown = scaffolding.shutdown.clone();
+        let mut task = tokio::task::spawn_blocking(move || {
+            run_loop(&scaffolding, &payload, overrides, prompt, images, workflow)
+        });
+
+        let result = tokio::select! {
+            res = &mut task => {
+                res
+            }
+            _ = shutdown.cancelled() => {
+                tracing::info!("Received shutdown signal. Cancelling run...");
+                return (StatusCode::SERVICE_UNAVAILABLE, "Server shutting down").into_response();
+            }
+        };
+
+        if let Err(err) = result {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err:?}")).into_response();
+        }
+
+        if let Ok(Err(err)) = result {
+            // TODO: more nuance
+            return (StatusCode::BAD_REQUEST, format!("{err:?}")).into_response();
+        }
+
+        let outputs = chan_rx
+            .drain()
+            .map(|outputs| {
+                outputs
+                    .receiver()
+                    .drain()
+                    .map(|(k, v)| (k, serde_json::Value::try_from(v).unwrap()))
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .collect_vec();
+
+        response::Json(outputs).into_response()
+    }
+
+    pub fn start_server(args: &Args, server_args: &HttpServerArgs) -> anyhow::Result<()> {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+
+        let scaffolding = make_scaffolding(args, rt.handle())?;
+        let rt = scaffolding.rt.clone();
+
+        // TODO: require workflow store
+
+        let scaffolding = Arc::new(scaffolding);
+        let shutdown = scaffolding.shutdown.clone();
+        rt.spawn(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            tracing::info!("Received interrupt. Beginning shutdown sequence...");
+            shutdown.cancel();
+        });
+
+        let shutdown = scaffolding.shutdown.clone();
+
+        rt.block_on(async move {
+            let app = Router::new()
+                .route("/", get(|| async { "Hello, World!" }))
+                .route(
+                    "/list",
+                    get({
+                        let scaffolding_ = scaffolding.clone();
+                        || async move {
+                            // let scaffolding_ = scaffolding.lock().await;
+                            let Some(workflow_store) = &scaffolding_.workflow_store else {
+                                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                            };
+
+                            response::Json(
+                                WorkflowStore::names(workflow_store)
+                                    .map(|s| s.to_string())
+                                    .collect_vec(),
+                            )
+                            .into_response()
+                        }
+                    }),
+                )
+                .route("/execute", post(execute_handler))
+                .with_state(scaffolding.clone());
+
+            let HttpServerArgs { host, port } = server_args;
+            let addr = format!("{host}:{port}");
+            let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+            println!("Listening on {addr}");
+
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown.cancelled().await;
+                })
+                .await
+                .unwrap();
+
+            tracing::info!("Server stopped.");
+
+            Ok(())
+        })
+    }
 }
 
 /// Worker task to dump outputs to console as a streamed JSON object

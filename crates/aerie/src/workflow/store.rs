@@ -15,7 +15,7 @@ use serde_yaml_ng as serde_yml;
 use crate::{storage::CachedDirStore, workflow::Workflow};
 
 pub trait WorkflowStore {
-    fn load(&mut self, name: &str) -> anyhow::Result<Workflow>;
+    fn load(&self, name: &str) -> anyhow::Result<Workflow>;
     fn save(&mut self, name: &str, value: Workflow) -> anyhow::Result<()>;
     fn names(&self) -> impl Iterator<Item = Cow<'_, str>>;
     fn exists(&self, key: &str) -> bool;
@@ -90,7 +90,7 @@ impl WorkflowStoreFile {
 impl WorkflowStore for WorkflowStoreFile {
     // type Graph = WorkGraph;
 
-    fn load(&mut self, name: &str) -> anyhow::Result<Workflow> {
+    fn load(&self, name: &str) -> anyhow::Result<Workflow> {
         // no-op since loaded in bulk
         self.get(name).ok_or(anyhow::anyhow!("Not found"))
     }
@@ -245,7 +245,7 @@ impl CachedDirStore<Workflow> for WorkflowStoreDir {
 impl WorkflowStore for WorkflowStoreDir {
     // type Graph = WorkGraph;
 
-    fn load(&mut self, name: &str) -> anyhow::Result<Workflow> {
+    fn load(&self, name: &str) -> anyhow::Result<Workflow> {
         CachedDirStore::load(self, name)
     }
 
