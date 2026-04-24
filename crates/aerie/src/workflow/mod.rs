@@ -122,6 +122,29 @@ impl Value {
     }
 }
 
+impl TryFrom<Value> for serde_json::Value {
+    type Error = serde_json::Error;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Text(value) => serde_json::to_value(value),
+            Value::Number(value) => serde_json::to_value(value),
+            Value::Integer(value) => serde_json::to_value(value),
+            Value::Json(value) => Ok(value.as_ref().clone()),
+            Value::Chat(value) => serde_json::to_value(value),
+            Value::Message(value) => {
+                let text = message_text(value.as_ref());
+
+                serde_json::to_value(text)
+            }
+            Value::FloatList(value) => serde_json::to_value(value),
+            Value::IntList(value) => serde_json::to_value(value),
+            Value::TextList(value) => serde_json::to_value(value),
+            Value::MsgList(value) => serde_json::to_value(value),
+            _ => serde_json::to_value(value),
+        }
+    }
+}
+
 #[allow(clippy::derivable_impls)]
 impl Default for ValueKind {
     fn default() -> Self {
