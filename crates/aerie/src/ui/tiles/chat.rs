@@ -1,6 +1,6 @@
 use crate::{
     rig::message::{Message, UserContent},
-    utils::{IMAGE_CACHE, MERMAID_MD},
+    utils::{IMAGE_CACHE, MERMAID_MD, show_image},
 };
 use eframe::egui;
 use egui_commonmark::*;
@@ -522,15 +522,7 @@ pub fn render_message_width(
                                     ui.horizontal(|ui| {
                                         loop {
                                             if let Some(image) = cache.get(&image) {
-                                                let widget = egui::Image::new(image.clone())
-                                                    .fit_to_exact_size(egui::vec2(100.0, 100.0));
-                                                ui.add(widget).on_hover_ui(|ui| {
-                                                    ui.add(
-                                                        egui::Image::new(image.clone()).max_size(
-                                                            ui.ctx().content_rect().size() * 0.75,
-                                                        ),
-                                                    );
-                                                });
+                                                show_image(ui, image, 100.0);
                                             }
 
                                             if matches!(
@@ -597,12 +589,7 @@ pub fn render_message_width(
                                 ui.horizontal(|ui| {
                                     loop {
                                         if let Some(image) = cache.get(&image) {
-                                            ui.set_min_height(100.0);
-                                            ui.image(image.clone()).on_hover_ui(|ui| {
-                                                ui.add(egui::Image::new(image.clone()).max_size(
-                                                    ui.ctx().content_rect().size() * 0.75,
-                                                ));
-                                            });
+                                            show_image(ui, image, 100.0);
                                         }
 
                                         if matches!(dq.front(), Some((_, (_, FormatOpts::Image)))) {

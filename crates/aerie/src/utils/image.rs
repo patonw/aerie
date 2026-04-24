@@ -1,12 +1,13 @@
 use ::image::ImageFormat;
 use anyhow::Context as _;
 use cached::proc_macro::cached;
-use egui::mutex::Mutex;
+use egui::{Sense, mutex::Mutex};
 use lru::LruCache;
 use regex::Regex;
 use std::{
     borrow::Cow,
     hash::{DefaultHasher, Hash, Hasher},
+    io::Cursor,
     path::Path,
     sync::{LazyLock, atomic::AtomicU32},
 };
@@ -363,4 +364,35 @@ fn downsample_image_bytes(
     // Encode bytes to string
     let image_bytes = buffer.into_inner()?;
     Ok((image_bytes, Some(ImageFormat::Jpeg)))
+}
+
+pub fn show_image(ui: &mut egui::Ui, image: &egui::ImageSource<'static>, max_dim: f32) {
+    let widget = egui::Image::new(image.clone()).fit_to_exact_size(egui::vec2(max_dim, max_dim));
+    let response = ui.add(widget).on_hover_ui(|ui| {
+        ui.add(egui::Image::new(image.clone()).max_size(ui.ctx().content_rect().size() * 0.75));
+    });
+
+    if let egui::ImageSource::Bytes { bytes, .. } = image {
+        response.interact(Sense::CLICK).context_menu(|ui| {
+            if ui.button("Save").clicked()
+                && let Some(path) = rfd::FileDialog::new()
+                    .set_file_name("image.jpg")
+                    .add_filter("images", &["png", "jpg", "jpeg", "webp"])
+                    .add_filter("all", &[""])
+                    .save_file()
+                && let Err(e) = save_image_bytes(bytes, &path)
+            {
+                tracing::warn!("Could not save image: {e:?}");
+            }
+        });
+    }
+}
+
+pub fn save_image_bytes(bytes: &[u8], path: impl AsRef<Path>) -> anyhow::Result<()> {
+    let image = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()?
+        .decode()?;
+    image.save(path)?;
+
+    Ok(())
 }
