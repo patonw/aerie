@@ -9,7 +9,7 @@ use serde_with::skip_serializing_none;
 use crate::{
     ChatContent,
     ui::{AppEvent, resizable_frame, shortcuts::squelch, tiles::chat::render_message_width},
-    utils::{IMAGE_CACHE, message_text, rig_image_to_egui},
+    utils::{IMAGE_CACHE, message_text, rig_image_to_egui, show_image},
     workflow::{FlexNode, GraphId, WorkflowError},
 };
 
@@ -515,12 +515,7 @@ impl UiNode for Preview {
                                         let key = rig_image_to_egui(image);
                                         let mut cache = IMAGE_CACHE.lock();
                                         if let Some(image) = cache.get(&key) {
-                                            let widget = egui::Image::new(image.clone())
-                                                .max_size(egui::vec2(200.0, 200.0));
-                                            ui.add(widget).on_hover_ui(|ui| {
-                                                ui.set_max_size(egui::vec2(800.0, 800.0));
-                                                ui.image(image.clone());
-                                            });
+                                            show_image(ui, image, 200.0);
                                         }
                                     }
                                 });
