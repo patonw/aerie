@@ -8,7 +8,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap},
     hash::{DefaultHasher, Hash as _, Hasher as _},
     ops::Deref,
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
     time::Duration,
 };
 use typed_builder::TypedBuilder;
@@ -472,6 +472,10 @@ impl WorkflowRunner {
 
     // TODO: fully convert this to shadow graph
     pub fn step(&mut self, snarl: &mut Snarl<WorkNode>) -> Result<bool, Arc<WorkflowError>> {
+        if self.run_ctx.interrupt.load(Ordering::Relaxed) {
+            return Err(Arc::new(WorkflowError::Interrupted));
+        }
+
         tracing::trace!("Priority queue: {:?}", &self.ready_nodes);
 
         let Some(ready_node) = self.ready_nodes.pop() else {
