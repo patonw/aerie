@@ -12,7 +12,7 @@ use serde_yaml_ng as serde_yml;
 use crate::{
     ToolProvider, ToolSpec,
     storage::CachedDirStore as _,
-    ui::{state::ToolEditorState, toggled_field},
+    ui::{AppEvent, state::ToolEditorState, toggled_field},
     utils::ErrorDistiller as _,
 };
 
@@ -134,6 +134,22 @@ impl super::AppState {
                         let name_text = if enabled {name_text} else {name_text.weak()};
                         let resp = ui.selectable_label(selected, name_text);
                         resp.context_menu(|ui| {
+                            if ui.button(if enabled { "Disable" } else { "Enable"}).clicked() {
+                                let mut tool_spec = self.tools.load(&name).unwrap();
+                                tool_spec.set_enabled(!enabled);
+                                errors.distil(self.tools.save(&name, tool_spec));
+                                self.agent_factory.stop_provider(&name);
+
+                                let name = name.clone();
+                                let agent_factory = self.agent_factory.clone();
+                                let errors = self.errors.clone();
+                                let events = self.events.clone();
+                                self.rt.spawn(async move {
+                                    errors.distil(agent_factory.reload_provider(&name).await);
+                                    events.insert(AppEvent::ToolsChanged);
+                                });
+                            }
+
                             ui.menu_button("Delete", |ui| {
                                 if ui.button("OK").clicked() {
                                     self.errors.distil(self.tools.remove(&name));
@@ -352,7 +368,13 @@ impl super::AppState {
 
                 self.errors.distil(self.tools.save(&name, value));
 
-                self.agent_factory.reload_provider(&name);
+                let errors = self.errors.clone();
+                let agent_factory = self.agent_factory.clone();
+                let events = self.events.clone();
+                self.rt.spawn(async move {
+                    errors.distil(agent_factory.reload_provider(&name).await);
+                    events.insert(AppEvent::ToolsChanged);
+                });
             }
             if ui.button("Cancel").clicked() {
                 self.tool_editor = None;

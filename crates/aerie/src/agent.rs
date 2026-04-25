@@ -5,7 +5,7 @@ use crate::rig::{
     client::completion::CompletionModelHandle,
     completion::ToolDefinition,
 };
-use anyhow::{Context as _, anyhow};
+use anyhow::anyhow;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use decorum::E64;
 use derive_builder::Builder;
@@ -19,13 +19,11 @@ use std::{
         atomic::{AtomicU16, Ordering},
     },
 };
+use tokio::task::JoinSet;
 use typed_builder::TypedBuilder;
 
 use crate::{
-    config::ConfigExt as _,
-    storage::CachedDirStore as _,
-    toolbox::ToolStore,
-    utils::{ErrorDistiller as _, ErrorList},
+    config::ConfigExt as _, storage::CachedDirStore as _, toolbox::ToolStore, utils::ErrorList,
     workflow::store::WorkflowStoreDir,
 };
 
@@ -184,49 +182,27 @@ impl AgentFactory {
         self.toolbox.clone().without_provider(name);
     }
 
-    pub fn reload_provider(&mut self, name: &str) {
+    /// Load or reload a provider from the tool store
+    pub async fn reload_provider(&self, name: &str) -> anyhow::Result<()> {
         let task_count = self.task_count.clone();
-        let name = name.to_owned();
-        let rt = self.rt.clone();
         let toolbox = self.toolbox.clone();
-        let tool_store = self.tools.clone();
-        let errors = self.errors.clone();
 
-        rt.spawn(async move {
+        if let Some(tool_store) = self.tools.clone() {
             task_count.fetch_add(1, Ordering::Relaxed);
 
             defer! {
                 task_count.fetch_sub(1, Ordering::Relaxed);
             };
 
-            let Some(spec) = tool_store.as_ref().and_then(|store| store.load(&name).ok()) else {
-                errors.push(anyhow::anyhow!("Could not load tool spec for {name}"));
-                return;
-            };
-
-            if !spec.enabled() {
-                return;
-            }
-
-            match ToolProvider::from_spec(&spec).await {
-                Ok(toolkit) => {
-                    toolbox.with_provider(&name, toolkit);
-                }
-                err => {
-                    errors.distil(
-                        err.context(format!("Could not load provider {name} with spec {spec:?}")),
-                    );
-                }
-            }
-        });
+            tool_store.load_provider(toolbox, name).await?;
+        }
+        Ok(())
     }
 
-    // TODO: Let's save errors to display in tool tab instead of aborting
-    pub fn reload_tools(&mut self) -> anyhow::Result<()> {
-        let toolbox = Toolbox::default();
-        self.toolbox = toolbox.clone();
+    /// Initialize toolbox by loading each active provider
+    pub async fn load_tools(&self) -> Vec<anyhow::Result<()>> {
         if let Some(store) = &self.store {
-            toolbox.with_provider(
+            self.toolbox.with_provider(
                 "chainer",
                 ToolProvider::Chainer {
                     workflows: store.clone(),
@@ -243,11 +219,14 @@ impl AgentFactory {
             .flat_map(|store| store.cached_names())
             .collect_vec();
 
+        let mut joiner = JoinSet::new();
+
         for provider in providers {
-            self.reload_provider(&provider);
+            let that = self.clone();
+            joiner.spawn(async move { that.reload_provider(&provider).await });
         }
 
-        Ok(())
+        joiner.join_all().await
     }
 }
 

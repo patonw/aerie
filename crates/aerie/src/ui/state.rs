@@ -849,6 +849,10 @@ impl<W: WorkflowStore> WorkflowState<W> {
                 self.graph_checked = false;
                 false
             }
+            ToolsChanged => {
+                self.graph_checked = false;
+                true
+            }
             _ => false,
         }
     }

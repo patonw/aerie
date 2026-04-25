@@ -24,7 +24,7 @@ use crate::{
     config::{Args, Command, ConfigExt, ConfigStateStore, SessionCommand},
     storage::CachedDirStore as _,
     toolbox::ToolStore,
-    ui::{AppState, Pane, shortcuts::SHORTCUT_QUIT, state::WorkflowState},
+    ui::{AppEvent, AppEvents, AppState, Pane, shortcuts::SHORTCUT_QUIT, state::WorkflowState},
     utils::{ErrorDistiller as _, ErrorList, MAX_IMAGE_DIM, prune_image_cache},
     workflow::store::WorkflowStoreDir,
 };
@@ -256,8 +256,9 @@ impl App {
         let tool_store = ToolStore::new(tool_dir);
         tool_store.preload_all();
 
+        let events: Arc<AppEvents> = Default::default();
         let errors: ErrorList<anyhow::Error> = Default::default();
-        let mut agent_factory = (self.agent_factory_fn)(
+        let agent_factory = (self.agent_factory_fn)(
             AgentFactory::builder()
                 .rt(rt.handle().to_owned())
                 .prefs(preferences.clone())
@@ -270,7 +271,21 @@ impl App {
                 .next_images(next_images.clone())
                 .build(),
         );
-        agent_factory.reload_tools()?;
+
+        rt.spawn({
+            let that = agent_factory.clone();
+            let errors = errors.clone();
+            let events = events.clone();
+
+            async move {
+                let results = that.load_tools().await;
+                for result in results {
+                    errors.distil(result);
+                }
+
+                events.insert(AppEvent::ToolsChanged);
+            }
+        });
 
         let mut behavior = (self.appstate_fn)(
             AppState::builder()
@@ -279,6 +294,7 @@ impl App {
                 .tools(tool_store)
                 .log_history(log_history.clone())
                 .task_count(task_count.clone())
+                .events(events.clone())
                 .errors(errors.clone())
                 .session(session)
                 .cache(cache)
