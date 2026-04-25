@@ -4,6 +4,7 @@ use crate::rig::{
     completion::CompletionModel,
     tool::{Tool as _, ToolSet as RigToolSet},
 };
+use anyhow::Context as _;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use cached::proc_macro::cached;
 use either::Either;
@@ -711,6 +712,23 @@ impl ToolStore {
             path: path.as_ref().to_path_buf(),
             cache: Default::default(),
         }
+    }
+
+    pub async fn load_provider(&self, toolbox: Toolbox, name: &str) -> anyhow::Result<Toolbox> {
+        use crate::storage::CachedDirStore as _;
+        let Ok(spec) = self.load(name) else {
+            anyhow::bail!("Could not load tool spec for {name}");
+        };
+
+        if spec.enabled() {
+            let provider = ToolProvider::from_spec(&spec)
+                .await
+                .context(format!("Could not load provider {name} with spec {spec:?}"))?;
+
+            toolbox.with_provider(name, provider);
+        }
+
+        Ok(toolbox)
     }
 }
 

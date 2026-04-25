@@ -52,6 +52,8 @@ pub enum AppEvent {
     // User requested to run the current workflow
     UserRunWorkflow,
 
+    ToolsChanged,
+
     NodesChanged(GraphId, im::OrdSet<NodeId>),
     RerunNodes(GraphId, Vec<NodeId>),
 
