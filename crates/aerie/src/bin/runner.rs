@@ -182,6 +182,8 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Customization callbacks for the run_loop used by
+/// different subcommands to change output handling etc.
 #[derive(TypedBuilder)]
 struct ExecOverrides {
     #[builder(default=Arc::new(identity))]
@@ -197,6 +199,7 @@ impl Default for ExecOverrides {
     }
 }
 
+/// App state common to all subcommands
 struct Scaffolding {
     pub models: Arc<BTreeMap<ModelRole, String>>,
     pub workflow_store: Option<WorkflowStoreDir>,
@@ -206,6 +209,7 @@ struct Scaffolding {
     pub agent_factory: AgentFactory,
 }
 
+/// Instantiate and initialize common objects from global arguments
 fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
     let workflow_store = args
         .workflows
@@ -297,7 +301,7 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
     let next_prompt: Arc<ArcSwapOption<String>> = Default::default();
     let next_images: Arc<ArcSwap<Vec<String>>> = Default::default();
 
-    let mut agent_factory = AgentFactory::builder()
+    let agent_factory = AgentFactory::builder()
         .rt(rt.handle().clone())
         .prefs(Arc::new(ArcSwap::from_pointee(settings.clone())))
         .tools(tool_store)
@@ -306,26 +310,13 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
         .next_prompt(next_prompt.clone())
         .next_images(next_images.clone())
         .build();
-    agent_factory.reload_tools()?;
 
-    // TODO: better synchronization mechanism for waiting on tools to load
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(500));
-
-        let num_tasks = agent_factory.task_count.load(Ordering::Relaxed);
-        if num_tasks < 1 {
-            break;
+    let load_results = rt.block_on(async { agent_factory.load_tools().await });
+    for result in load_results {
+        if let Err(err) = result {
+            tracing::error!(error = %err);
         }
-
-        tracing::info!("Waiting for {num_tasks} tools to load...");
     }
-
-    // let overrides = ExecOverrides {
-    //     settings_fn: Arc::new(move |mut settings| {
-    //         settings.llm_model = format!("{:?}", next_workflow);
-    //         settings
-    //     }),
-    // };
 
     Ok(Scaffolding {
         models,
@@ -337,6 +328,7 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
     })
 }
 
+/// Runs recursive checks on workflows (i.e. missing tools, etc)
 fn check_workflows(args: &Args, pretty: bool) -> anyhow::Result<()> {
     use struson::writer::*;
     let Scaffolding {
@@ -390,6 +382,7 @@ fn check_workflows(args: &Args, pretty: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Entry point for the `exec` subcommand
 fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
     let ExecArgs {
         workflow,
@@ -523,6 +516,7 @@ fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Template method to run workflows, possibly auto-running chained workflows
 fn run_loop(
     scaffolding: &Scaffolding,
     exec_args: &ExecArgs,
@@ -649,6 +643,7 @@ fn run_loop(
     Ok(())
 }
 
+/// Worker task to dump outputs to console as a streamed JSON object
 async fn console_output(
     out_rx: flume::Receiver<(String, Value)>,
     pretty: bool,
@@ -694,6 +689,7 @@ async fn console_output(
     Ok(())
 }
 
+/// Worker task to dump workflow outputs to distinct files in a directory
 async fn file_output(
     out_rx: flume::Receiver<(String, Value)>,
     path: PathBuf,
