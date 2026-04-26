@@ -77,6 +77,11 @@ impl DynNode for ChatNode {
     ) -> Result<Vec<Value>, WorkflowError> {
         let _ = (node_id,);
         let rt = ctx.runtime.clone();
+
+        // async_compat does not work here because rig calls tokio's spawn to
+        // run its ToolServer in the background for the agent.
+        // Direct tool calls to rig ToolSet or through RMCP work with compat.
+        // TODO: Move LLM calls to dedicated bridge object
         rt.block_on(self.forward(ctx, inputs))
     }
 }
@@ -212,9 +217,7 @@ impl ChatNode {
             _ => Err(WorkflowError::Required(vec!["A prompt is required".into()]))?,
         };
 
-        let prompt = tokio::task::spawn_blocking(move || canonicalize_msg(prompt))
-            .await
-            .map_err(|e| WorkflowError::Unknown(e.to_string()))?;
+        let prompt = smol::unblock(move || canonicalize_msg(prompt)).await;
 
         let prompt = prompt.map_err(|errs| {
             for err in errs {
@@ -489,9 +492,7 @@ impl StructuredChat {
         };
 
         let prompt = if let Some(prompt) = prompt {
-            let message = tokio::task::spawn_blocking(move || canonicalize_msg(prompt))
-                .await
-                .map_err(|e| WorkflowError::Unknown(e.to_string()))?;
+            let message = smol::unblock(move || canonicalize_msg(prompt)).await;
             Some(message.map_err(|errs| {
                 for err in errs {
                     run_ctx.errors.push(err);

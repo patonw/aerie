@@ -371,10 +371,11 @@ impl super::AppState {
                 let errors = self.errors.clone();
                 let agent_factory = self.agent_factory.clone();
                 let events = self.events.clone();
-                self.rt.spawn(async move {
+                smol::spawn(async move {
                     errors.distil(agent_factory.reload_provider(&name).await);
                     events.insert(AppEvent::ToolsChanged);
-                });
+                })
+                .detach();
             }
             if ui.button("Cancel").clicked() {
                 self.tool_editor = None;

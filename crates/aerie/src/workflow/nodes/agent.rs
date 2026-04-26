@@ -4,6 +4,7 @@ use crate::{
     workflow::{CheckContext, GraphId},
 };
 use anyhow::Context as _;
+use async_compat::Compat;
 use decorum::E64;
 use egui::{Color32, RichText, TextEdit, collapsing_header::CollapsingState};
 use egui_snarl::NodeId;
@@ -1001,8 +1002,10 @@ impl DynNode for InvokeTool {
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
         let _ = (node_id,);
-        let rt = ctx.runtime.clone();
-        rt.block_on(self.forward(ctx, inputs))
+        // let rt = ctx.runtime.clone();
+        // rt.block_on(self.forward(ctx, inputs))
+
+        smol::block_on(Compat::new(self.forward(ctx, inputs)))
     }
 }
 

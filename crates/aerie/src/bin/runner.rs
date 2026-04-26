@@ -8,6 +8,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
+    thread::JoinHandle,
 };
 
 use aerie::{
@@ -30,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
 use serde_yaml_ng as serde_yml;
-use tokio::{runtime::Runtime, task::JoinHandle};
+use tokio::runtime::Runtime;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use typed_builder::TypedBuilder;
 
@@ -200,17 +201,18 @@ impl Default for ExecOverrides {
 }
 
 /// App state common to all subcommands
-struct Scaffolding {
+struct Scaffolding<'a> {
     pub models: Arc<BTreeMap<ModelRole, String>>,
     pub workflow_store: Option<WorkflowStoreDir>,
     pub session: ChatSession,
     pub settings: Preferences,
     pub rt: Runtime,
+    pub ex: smol::LocalExecutor<'a>,
     pub agent_factory: AgentFactory,
 }
 
 /// Instantiate and initialize common objects from global arguments
-fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
+fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding<'_>> {
     let workflow_store = args
         .workflows
         .as_ref()
@@ -290,6 +292,8 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
 
     let models = Arc::new(models);
 
+    // let ex = smol::LocalExecutor::new();
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
@@ -311,11 +315,22 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
         .next_images(next_images.clone())
         .build();
 
-    let load_results = rt.block_on(async { agent_factory.load_tools().await });
+    let load_results = smol::block_on(async { agent_factory.load_tools().await });
     for result in load_results {
         if let Err(err) = result {
             tracing::error!(error = %err);
         }
+    }
+
+    loop {
+        // Probably not necessary now
+        let num_tasks = agent_factory.task_count.load(Ordering::Relaxed);
+        if num_tasks < 1 {
+            break;
+        }
+
+        tracing::info!("Waiting for {num_tasks} tools to load...");
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
 
     Ok(Scaffolding {
@@ -324,6 +339,7 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
         session,
         settings,
         rt,
+        ex: Default::default(),
         agent_factory,
     })
 }
@@ -434,7 +450,6 @@ fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
 
     let overrides = ExecOverrides::builder()
         .run_ctx_fn({
-            let rt = scaffolding.rt.handle().clone();
             let run_count = run_count.clone();
             let saver_task = saver_task.clone();
             let out_dir = out_dir.clone();
@@ -450,9 +465,9 @@ fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
                         out_dir.clone()
                     };
 
-                    rt.spawn(file_output(receiver, out_dir))
+                    std::thread::spawn(move || file_output(receiver, out_dir))
                 } else {
-                    rt.spawn(console_output(receiver, pretty))
+                    std::thread::spawn(move || console_output(receiver, pretty))
                 };
 
                 *saver_task.lock().unwrap() = Some(task);
@@ -462,24 +477,21 @@ fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
             })
         })
         .post_exec_fn({
-            let rt = scaffolding.rt.handle().clone();
             let saver_task = saver_task.clone();
 
             Arc::new(move || {
                 let mut saver_task = saver_task.lock().unwrap();
 
                 if let Some(saver_task) = saver_task.take() {
-                    rt.block_on(async move {
-                        match saver_task.await {
-                            Ok(Ok(_)) => {}
-                            Err(err) => {
-                                tracing::warn!("{err:?}");
-                            }
-                            Ok(Err(err)) => {
-                                tracing::warn!("{err:?}");
-                            }
+                    match saver_task.join() {
+                        Ok(Ok(_)) => {}
+                        Err(err) => {
+                            tracing::warn!("{err:?}");
                         }
-                    });
+                        Ok(Err(err)) => {
+                            tracing::warn!("{err:?}");
+                        }
+                    }
                 }
             })
         })
@@ -644,10 +656,7 @@ fn run_loop(
 }
 
 /// Worker task to dump outputs to console as a streamed JSON object
-async fn console_output(
-    out_rx: flume::Receiver<(String, Value)>,
-    pretty: bool,
-) -> anyhow::Result<()> {
+fn console_output(out_rx: flume::Receiver<(String, Value)>, pretty: bool) -> anyhow::Result<()> {
     use aerie::workflow::Value;
     use struson::writer::*;
 
@@ -660,7 +669,7 @@ async fn console_output(
     );
 
     json_writer.begin_object()?;
-    while let Ok((label, value)) = out_rx.recv_async().await {
+    while let Ok((label, value)) = out_rx.recv() {
         json_writer.name(&label)?;
 
         match value {
@@ -690,11 +699,8 @@ async fn console_output(
 }
 
 /// Worker task to dump workflow outputs to distinct files in a directory
-async fn file_output(
-    out_rx: flume::Receiver<(String, Value)>,
-    path: PathBuf,
-) -> anyhow::Result<()> {
-    while let Ok((label, value)) = out_rx.recv_async().await {
+fn file_output(out_rx: flume::Receiver<(String, Value)>, path: PathBuf) -> anyhow::Result<()> {
+    while let Ok((label, value)) = out_rx.recv() {
         let path = path.join(label);
 
         let fh = OpenOptions::new()

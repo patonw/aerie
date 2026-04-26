@@ -152,6 +152,7 @@ impl AgentFactory {
             agent = agent.context(context_doc);
         }
 
+        // Unfortunately, rig spawns a tokio task here forcing us to provide a tokio runtime
         let agent = if let Some(schema) = &spec.schema {
             let tool = StructuredSubmit::from(schema.as_ref());
             agent.tool(tool).build()
