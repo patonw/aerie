@@ -128,6 +128,10 @@ pub struct Settings {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub autosave: bool,
 
+    /// Max linear dimension to downscale images sent to LLM
+    #[serde(default)]
+    pub image_size: Option<u32>,
+
     // Don't clobber unknown settings
     #[serde(flatten)]
     pub _extra: im::OrdMap<String, serde_json::Value>,

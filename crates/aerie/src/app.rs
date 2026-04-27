@@ -26,7 +26,7 @@ use crate::{
     storage::CachedDirStore as _,
     toolbox::ToolStore,
     ui::{AppState, Pane, shortcuts::SHORTCUT_QUIT, state::WorkflowState},
-    utils::{ErrorDistiller as _, ErrorList},
+    utils::{ErrorDistiller as _, ErrorList, MAX_IMAGE_DIM, prune_image_cache},
     workflow::store::WorkflowStoreDir,
 };
 
@@ -168,6 +168,10 @@ impl App {
         };
         let settings = (self.settings_fn)(settings);
 
+        if let Some(image_size) = settings.image_size {
+            MAX_IMAGE_DIM.store(image_size, Ordering::Relaxed);
+        }
+
         let session_name = args.session.as_deref().or(settings.session.as_deref());
         let session =
             (self.session_fn)(ChatSession::from_dir_name(session_dir, session_name).build()?);
@@ -180,6 +184,7 @@ impl App {
         let mut debounce = Instant::now() + Duration::from_secs(1);
         let next_workflow: Arc<ArcSwapOption<String>> = Default::default();
         let next_prompt: Arc<ArcSwapOption<String>> = Default::default();
+        let next_images: Arc<ArcSwap<Vec<String>>> = Default::default();
         let log_history_ = log_history.clone();
 
         rt.handle().spawn(async move {
@@ -241,6 +246,7 @@ impl App {
                 .store(Some(flow_store.clone()))
                 .next_workflow(next_workflow.clone())
                 .next_prompt(next_prompt.clone())
+                .next_images(next_images.clone())
                 .build(),
         );
         agent_factory.reload_tools()?;
@@ -367,6 +373,7 @@ impl App {
                     .to_owned();
 
                 behavior.prompt = prompt;
+                behavior.images = next_images.swap(Default::default()).as_ref().clone();
             }
 
             let next_workflow = if !running && next_workflow.load().is_some() {
@@ -388,6 +395,8 @@ impl App {
                     behavior.exec_workflow();
                 }
             }
+
+            prune_image_cache(ctx);
         })
         .map_err(|e| anyhow::anyhow!("I can't {e:?}"))?;
         rt.handle().block_on(async move {

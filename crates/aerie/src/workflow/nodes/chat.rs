@@ -4,11 +4,14 @@ use std::{
     time::Duration,
 };
 
-use crate::rig::{
-    self, OneOrMany,
-    agent::PromptRequest,
-    completion::{Completion, CompletionError, CompletionResponse},
-    message::{AssistantContent, Message, Reasoning, ToolCall, ToolFunction, UserContent},
+use crate::{
+    rig::{
+        self, OneOrMany,
+        agent::PromptRequest,
+        completion::{Completion, CompletionError, CompletionResponse},
+        message::{AssistantContent, Message, Reasoning, ToolCall, ToolFunction, UserContent},
+    },
+    utils::{ErrorDistiller, canonicalize_msg},
 };
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -52,7 +55,7 @@ impl DynNode for ChatNode {
         Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Agent],
             1 => &[ValueKind::Chat],
-            2 => &[ValueKind::Text, ValueKind::Message, ValueKind::Json],
+            2 => &[ValueKind::Message, ValueKind::Text, ValueKind::Json],
             _ => ValueKind::all(),
         })
     }
@@ -151,10 +154,10 @@ impl UiNode for ChatNode {
                                         );
                                     });
                             });
-                            self.ghost_pin(ValueKind::Text.color())
+                            self.ghost_pin(ValueKind::Message.color())
                         } else {
                             ui.label("prompt");
-                            ValueKind::Text.default_pin()
+                            ValueKind::Message.default_pin()
                         }
                     })
                     .inner;
@@ -208,6 +211,17 @@ impl ChatNode {
             }
             _ => Err(WorkflowError::Required(vec!["A prompt is required".into()]))?,
         };
+
+        let prompt = tokio::task::spawn_blocking(move || canonicalize_msg(prompt))
+            .await
+            .map_err(|e| WorkflowError::Unknown(e.to_string()))?;
+
+        let prompt = prompt.map_err(|errs| {
+            for err in errs {
+                run_ctx.errors.push(err);
+            }
+            WorkflowError::Unknown("Could not resolve images".into())
+        })?;
 
         let last_idx = messages.len();
 
@@ -282,7 +296,7 @@ impl DynNode for StructuredChat {
             0 => &[ValueKind::Agent],
             1 => &[ValueKind::Chat],
             2 => &[ValueKind::Json],
-            3 => &[ValueKind::Text, ValueKind::Message, ValueKind::Json],
+            3 => &[ValueKind::Message, ValueKind::Text, ValueKind::Json],
             _ => ValueKind::all(),
         })
     }
@@ -397,10 +411,10 @@ impl UiNode for StructuredChat {
                                         );
                                     });
                             });
-                            self.ghost_pin(ValueKind::Text.color())
+                            self.ghost_pin(ValueKind::Message.color())
                         } else {
                             ui.label("prompt");
-                            ValueKind::Text.default_pin()
+                            ValueKind::Message.default_pin()
                         }
                     })
                     .inner;
@@ -472,6 +486,21 @@ impl StructuredChat {
             },
             None if !self.prompt.is_empty() => Some(Message::user(self.prompt.clone())),
             _ => None,
+        };
+
+        let prompt = if let Some(prompt) = prompt {
+            let message = tokio::task::spawn_blocking(move || canonicalize_msg(prompt))
+                .await
+                .map_err(|e| WorkflowError::Unknown(e.to_string()))?;
+            Some(message.map_err(|errs| {
+                for err in errs {
+                    run_ctx.errors.push(err);
+                }
+
+                WorkflowError::Unknown("Could not resolve images".into())
+            })?)
+        } else {
+            None
         };
 
         let validator = if let Some(schema) = schema.as_ref() {

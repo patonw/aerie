@@ -11,7 +11,7 @@ use crate::{
         resizable_frame,
         shortcuts::{Shortcut, squelch},
     },
-    utils::{extract_json, message_party, message_text},
+    utils::{extract_json, message_text, message_to_json},
     workflow::{
         DynNode, EditContext, FlexNode, RunContext, UiNode, Value, WorkNode, WorkflowError,
         nodes::GraphSubmenu,
@@ -421,24 +421,14 @@ impl DynNode for TransformJson {
             Some(Value::Text(value)) => json!(value),
             Some(Value::TextList(value)) => json!(value),
             Some(Value::Chat(value)) => {
-                json!(
-                    value
-                        .iter_msgs()
-                        .map(|m| json!({"author": message_party(&m), "content": message_text(&m)}))
-                        .collect_vec()
-                )
+                json!(value.iter_msgs().map(|m| message_to_json(&m)).collect_vec())
             }
-            Some(Value::Message(value)) => {
-                json!({"author": message_party(value), "content": message_text(value)})
-            }
+            Some(Value::Message(value)) => message_to_json(value),
+
             Some(Value::MsgList(value)) => {
-                json!(
-                    value
-                        .iter()
-                        .map(|m| json!({"author": message_party(m), "content": message_text(m)}))
-                        .collect_vec()
-                )
+                json!(value.iter().map(|m| message_to_json(m)).collect_vec())
             }
+
             None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
             _ => unreachable!(),
         };
@@ -535,7 +525,6 @@ impl DynNode for GatherJson {
         _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        use crate::utils::message_text;
         use serde_json::Number;
 
         self.validate(&inputs)?;
@@ -556,25 +545,11 @@ impl DynNode for GatherJson {
                 Some(Value::IntList(value)) => json!(value),
                 Some(Value::TextList(value)) => json!(value),
                 Some(Value::Chat(value)) => {
-                    json!(
-                    value
-                        .iter_msgs()
-                        .map(|m| json!({"author": message_party(&m), "content": message_text(&m)}))
-                        .collect_vec()
-                )
+                    json!(value.iter_msgs().map(|m| message_to_json(&m)).collect_vec())
                 }
-                Some(Value::Message(value)) => {
-                    json!({"author": message_party(&value), "content": message_text(&value)})
-                }
+                Some(Value::Message(value)) => message_to_json(&value),
                 Some(Value::MsgList(value)) => {
-                    json!(
-                        value
-                            .iter()
-                            .map(
-                                |m| json!({"author": message_party(m), "content": message_text(m)})
-                            )
-                            .collect_vec()
-                    )
+                    json!(value.iter().map(|m| message_to_json(m)).collect_vec())
                 }
                 None => serde_json::Value::Null,
                 _ => unreachable!(),

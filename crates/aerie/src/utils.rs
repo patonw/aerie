@@ -2,8 +2,8 @@ use std::{
     borrow::Cow,
     cmp::{Eq, PartialEq},
     collections::BinaryHeap,
-    hash::Hash,
-    sync::Arc,
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::{Arc, LazyLock},
 };
 
 use crate::rig::message::{AssistantContent, Message, ToolResultContent, UserContent};
@@ -11,9 +11,14 @@ use arc_swap::ArcSwap;
 use decorum::E32;
 use egui::mutex::Mutex;
 use itertools::{Itertools, iproduct};
+use lru::LruCache;
+use rig_dynclient::rig::{self, message::DocumentSourceKind};
 use rpds::{List, ListSync};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
+
+pub mod image;
+pub use image::*;
 
 #[derive(Debug, Clone, Copy, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EVec2 {
@@ -332,8 +337,8 @@ pub enum FormatOpts {
     Plain,
     Pre,
     Markdown,
+    Image,
     Unknown,
-    Separator,
 }
 
 pub trait MessageExt {
@@ -350,6 +355,55 @@ impl MessageExt for Message {
                 .iter()
                 .flat_map(extract_assistant_content)
                 .collect_vec(),
+        }
+    }
+}
+pub fn canonicalize_msg(msg: Message) -> Result<Message, Vec<anyhow::Error>> {
+    match &msg {
+        Message::User { content } => {
+            let items = content.iter().map(|content| -> anyhow::Result<_> {
+                match &content {
+                    UserContent::Image(image) => {
+                        let image = preprocess_image(image)?;
+                        Ok(Cow::Owned(UserContent::Image(image.into_owned())))
+                    }
+                    _ => Ok(Cow::Borrowed(content)),
+                }
+            });
+
+            let (content, errors): (Vec<_>, Vec<_>) = items.partition(Result::is_ok);
+            for err in &errors {
+                tracing::warn!("Unable to canonicalize content: {err:?}");
+            }
+
+            if !errors.is_empty() {
+                return Err(errors.into_iter().map(|e| e.unwrap_err()).collect_vec());
+            }
+
+            let content = content
+                .into_iter()
+                .map(Result::unwrap)
+                .map(|c| c.into_owned());
+
+            Ok(Message::User {
+                content: rig::OneOrMany::many(content).unwrap(),
+            })
+        }
+        _ => Ok(msg),
+    }
+}
+
+// TODO: prune cache and remove from egui ctx
+pub static IMAGE_CACHE: LazyLock<Mutex<LruCache<String, egui::ImageSource<'static>>>> =
+    LazyLock::new(|| Mutex::new(LruCache::unbounded()));
+
+pub fn prune_image_cache(ctx: &egui::Context) {
+    let mut cache = IMAGE_CACHE.lock();
+    while cache.len() > 100
+        && let Some((_, item)) = cache.pop_lru()
+    {
+        if let Some(uri) = item.uri() {
+            ctx.forget_image(uri);
         }
     }
 }
@@ -370,6 +424,54 @@ pub fn extract_user_content(content: &UserContent) -> Vec<(String, FormatOpts)> 
                 _ => None,
             })
             .collect_vec(),
+        UserContent::Image(img) => {
+            let mut s = DefaultHasher::new();
+            match &img.data {
+                DocumentSourceKind::Url(url) => url.hash(&mut s),
+                DocumentSourceKind::Base64(data) => data.hash(&mut s),
+                DocumentSourceKind::Raw(items) => items.hash(&mut s),
+                _ => todo!(),
+            }
+
+            let h = s.finish();
+            let key = format!("{h:x}");
+            let mut cache = IMAGE_CACHE.lock();
+            if cache.contains(&key) {
+                cache.promote(&key);
+            } else if let DocumentSourceKind::Url(url) = &img.data {
+                let url = if let Ok(exists) = std::fs::exists(url)
+                    && exists
+                {
+                    format!("file://{url}")
+                } else {
+                    url.clone()
+                };
+
+                tracing::trace!("[{key}] Inserting url to image cache: {url}");
+                cache.put(key.clone(), url.into());
+            } else if let Some(media) = &img.media_type {
+                let data = match &img.data {
+                    DocumentSourceKind::Base64(data) => {
+                        use base64::{Engine, prelude::BASE64_STANDARD};
+                        let bytes = BASE64_STANDARD.decode(data).unwrap();
+                        egui::ImageSource::from((
+                            format!("bytes://{key}.{media:?}").to_lowercase(),
+                            bytes.clone(),
+                        ))
+                    }
+                    DocumentSourceKind::Raw(bytes) => egui::ImageSource::from((
+                        format!("bytes://{key}.{media:?}").to_lowercase(),
+                        bytes.clone(),
+                    )),
+                    _ => todo!(),
+                };
+
+                tracing::trace!("[{key}] Inserting bytes to image cache: {:?}", data.uri());
+                cache.put(key.clone(), data);
+            }
+
+            vec![(key, FormatOpts::Image)]
+        }
         other => vec![(format!("{other:?}"), FormatOpts::Unknown)],
     }
 }
@@ -385,7 +487,7 @@ pub fn extract_assistant_content(content: &AssistantContent) -> Vec<(String, For
         AssistantContent::Reasoning(reasoning) => {
             vec![(reasoning.display_text(), FormatOpts::Markdown)]
         }
-        AssistantContent::Image(_image) => {
+        AssistantContent::Image(_img) => {
             vec![]
         }
     }
@@ -397,6 +499,46 @@ pub fn message_text(message: &Message) -> String {
     };
 
     text
+}
+
+pub fn message_images(message: &Message) -> Vec<&rig::message::Image> {
+    match message {
+        Message::User { content } => content
+            .iter()
+            .filter_map(|content| match content {
+                UserContent::Image(image) => Some(image),
+                _ => None,
+            })
+            .collect_vec(),
+        Message::Assistant { content, .. } => content
+            .iter()
+            .filter_map(|content| match content {
+                AssistantContent::Image(image) => Some(image),
+                _ => None,
+            })
+            .collect_vec(),
+    }
+}
+
+pub fn message_to_json(value: &Message) -> serde_json::Value {
+    let mut result = json!({"author": message_party(value), "text": message_text(value)});
+    let images = message_images(value);
+
+    if !images.is_empty()
+        && let Some(kv) = result.as_object_mut()
+    {
+        kv.insert(
+            "images".into(),
+            json!(
+                images
+                    .into_iter()
+                    .filter_map(|image| image.clone().try_into_url().ok())
+                    .collect_vec()
+            ),
+        );
+    }
+
+    result
 }
 
 /// Attempts to find a JSON document surrounded by unstructured text.
@@ -422,6 +564,7 @@ where
         .filter(|(a, b)| a < b)
         .find_map(|(a, b)| serde_json::from_str(&input[a..=b]).ok())
 }
+
 pub fn extract_json_obj<'a, T>(input: &'a str) -> Option<T>
 where
     T: Deserialize<'a>,
