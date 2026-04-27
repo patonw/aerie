@@ -84,6 +84,12 @@ pub struct AppState {
     pub prompt: String,
 
     #[builder(default)]
+    pub images: Vec<String>,
+
+    #[builder(default)]
+    pub image_input: Option<String>,
+
+    #[builder(default)]
     pub run_count: usize,
 
     pub agent_factory: AgentFactory,
@@ -194,6 +200,9 @@ impl AppState {
                     }
                     SetPrompt(prompt) => {
                         self.prompt = prompt.clone();
+                        if prompt.is_empty() {
+                            self.images.clear();
+                        }
                         true
                     }
                     _ => false,

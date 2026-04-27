@@ -110,6 +110,9 @@ pub struct AgentFactory {
 
     #[builder(default)]
     pub next_prompt: Arc<ArcSwapOption<String>>,
+
+    #[builder(default)]
+    pub next_images: Arc<ArcSwap<Vec<String>>>,
 }
 
 impl AgentFactory {
@@ -236,6 +239,7 @@ impl AgentFactory {
                     workflows: store.clone(),
                     next_workflow: self.next_workflow.clone(),
                     next_prompt: self.next_prompt.clone(),
+                    next_images: self.next_images.clone(),
                 },
             );
         }

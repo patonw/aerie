@@ -88,7 +88,14 @@ fn prompt_schema() -> serde_json::Value {
     json!({
         "type": "object",
         "properties": {
-            "prompt": { "type": "string", "description": "A prompt to pass to the next agent" },
+            "prompt": { "type": "string", "description": "A prompt to pass to the next workflow" },
+            "images": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "image paths or URLs to pass to the next workflow",
+            },
         }
     })
 }
@@ -105,7 +112,7 @@ fn parse_or_prompt_schema(schema: &str) -> serde_json::Value {
 pub struct ChainTool {
     next_workflow: Arc<ArcSwapOption<String>>,
     next_prompt: Arc<ArcSwapOption<String>>,
-
+    next_images: Arc<ArcSwap<Vec<String>>>,
     name: String,
     description: String,
     schema: String,
@@ -152,12 +159,22 @@ impl rig::tool::Tool for ChainTool {
             Value::String(text) => {
                 self.next_prompt.store(Some(Arc::new(text)));
             }
-            Value::Object(data) if data.keys().all(|k| k == "prompt") => {
+            Value::Object(data) if data.keys().all(|k| k == "prompt" || k == "images") => {
                 let input = data
                     .get("prompt")
                     .and_then(|s| s.as_str())
                     .map(|s| Arc::new(s.to_string()));
                 self.next_prompt.store(input);
+
+                let images = data
+                    .get("images")
+                    .iter()
+                    .flat_map(|v| v.as_array())
+                    .flatten()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .collect_vec();
+                self.next_images.store(Arc::new(images));
             }
             value => {
                 self.next_prompt.store(Some(Arc::new(
@@ -177,6 +194,7 @@ pub enum ToolProvider {
 
         next_workflow: Arc<ArcSwapOption<String>>,
         next_prompt: Arc<ArcSwapOption<String>>,
+        next_images: Arc<ArcSwap<Vec<String>>>,
     },
     MCP {
         client: McpClient,
@@ -310,6 +328,7 @@ impl ToolProvider {
                 workflows,
                 next_workflow,
                 next_prompt,
+                next_images,
             } => {
                 if selector(ChainBreaker::NAME) {
                     result.add_tool(ChainBreaker);
@@ -322,6 +341,7 @@ impl ToolProvider {
                     let tool = ChainTool {
                         next_workflow: next_workflow.clone(),
                         next_prompt: next_prompt.clone(),
+                        next_images: next_images.clone(),
                         name: name.into_owned(),
                         description: description.into_owned(),
                         schema: schema.into_owned(),
@@ -364,6 +384,7 @@ impl ToolProvider {
                 workflows,
                 next_workflow,
                 next_prompt,
+                next_images,
             } => {
                 if selector(ChainBreaker::NAME) {
                     agent = match agent {
@@ -379,6 +400,7 @@ impl ToolProvider {
                     let tool = ChainTool {
                         next_workflow: next_workflow.clone(),
                         next_prompt: next_prompt.clone(),
+                        next_images: next_images.clone(),
                         name: name.into_owned(),
                         description: description.into_owned(),
                         schema: schema.into_owned(),
