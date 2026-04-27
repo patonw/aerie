@@ -8,30 +8,6 @@
 
 ## Primary tabs
 
-### Chat
-
-- Functionality as a chat client limited -- not primary focus
-- Helpful in interacting with workflows
-- Can see generation in real-time during streaming mode
-- Renders markdown and mermaid diagrams
-- Branching conversations
-
-![Chat Tab](./images/chat-tab.png)
-
-### Logs
-
-- Shows recent logs for to and from the LLM provider only
-  - Some provider implementations do not log or do not tag their logs
-  - Will not show up here
-- For general application logs, must use console
-
-### Lineage
-
-- Shows the branch history at a message level
-- View-only --  cannot modify the session or workflow
-
-![Lineage tab](./images/lineage-tab.png)
-
 ### Workflow
 
 - The heart of the app
@@ -111,6 +87,39 @@
   - If node under pointer is not in the selection, only that node is reset
   - If node under pointer is in selection, then all selected nodes are reset
   - If cascade is enabled, all nodes downstream from reset nodes are also reset
+
+### Chat
+
+While this application is not primarily a chat client, many workflows involve
+chat interactions. As such, there is a tab with limited chat functionality.
+
+Not only does it display old messages, but if streaming mode is enabled in
+[Settings](#settings), then partial outputs from the language model will appear
+here. In addition to text, the conversation history will show image thumbnails
+and render markdown and mermaid diagrams.
+
+![Chat Tab](./images/chat-tab.png)
+
+Inside the central panel, you can branch the conversation by clicking
+on the branch button.
+
+In the input panel at the bottom, you can enter the prompt change the active
+workflow. Left of the prompt is a gallery for images to include in the message.
+You can load images from disk or link to them by URL.
+
+### Logs
+
+- Shows recent logs for to and from the LLM provider only
+  - Some provider implementations do not log or do not tag their logs
+  - Will not show up here
+- For general application logs, must use console
+
+### Lineage
+
+- Shows the branch history at a message level
+- View-only --  cannot modify the session or workflow
+
+![Lineage tab](./images/lineage-tab.png)
 
 ## Secondary tabs
 

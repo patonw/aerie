@@ -27,6 +27,7 @@
 - [History](nodes/history.md)
 - [JSON](nodes/json.md)
 - [Scripting](./nodes/scripting.md)
+- [Media](./nodes/media.md)
 
 ---
 
