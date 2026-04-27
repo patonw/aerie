@@ -1,4 +1,5 @@
 use crate::rig::{
+    self,
     message::Message,
     tool::{ToolSetError, server::ToolServerError},
 };
@@ -350,6 +351,9 @@ pub struct RootContext {
     /// The user's prompt that initiated the workflow run
     #[builder(default)]
     pub user_prompt: String,
+
+    #[builder(default)]
+    pub extra_content: Vec<rig::message::UserContent>,
 }
 
 impl RootContext {
@@ -361,7 +365,13 @@ impl RootContext {
             serde_json::json!({})
         };
 
-        let msg = Message::user(&self.user_prompt);
+        let mut content = rig::OneOrMany::one(rig::message::UserContent::text(&self.user_prompt));
+        for it in &self.extra_content {
+            content.push(it.clone());
+        }
+
+        let msg = Message::User { content };
+
         // TODO: Probably don't need most of these in the object
         let values = vec![
             Some(Value::Text(Arc::new(self.model.clone()))),

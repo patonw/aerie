@@ -7,10 +7,12 @@ use std::{
 use arc_swap::ArcSwap;
 use egui::RichText;
 use egui_phosphor::regular::{PLAY, STOP};
+use itertools::Itertools as _;
 use scopeguard::defer;
 
 use crate::{
     config::ConfigExt as _,
+    rig,
     utils::ErrorDistiller as _,
     workflow::{
         RootContext, RunContext,
@@ -50,10 +52,17 @@ impl super::AppState {
                 .streaming(self.settings.view(|s| s.streaming))
                 .build();
 
+            let extra_content = self
+                .images
+                .iter()
+                .map(|image| rig::message::UserContent::image_url(image, None, None))
+                .collect_vec();
+
             let inputs = RootContext::builder()
                 .history(self.session.history.clone())
                 .workflow(self.workflows.shadow.clone())
                 .user_prompt(prompt)
+                .extra_content(extra_content)
                 .model(self.settings.view(|s| s.llm_model.clone()))
                 .temperature(self.settings.view(|s| s.temperature))
                 .build()
@@ -126,7 +135,6 @@ impl super::AppState {
                     let Ok((label, value)) = rx.recv() else {
                         break;
                     };
-                    tracing::debug!("Received output {label}: {value:?}");
 
                     outputs.rcu(|it| it.update(label.clone(), value.clone()));
                 }

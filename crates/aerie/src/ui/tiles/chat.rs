@@ -1,9 +1,13 @@
-use crate::rig::message::{Message, UserContent};
+use crate::{
+    rig::message::{Message, UserContent},
+    utils::{IMAGE_CACHE, MERMAID_MD},
+};
 use eframe::egui;
 use egui_commonmark::*;
-use egui_phosphor::regular::GIT_BRANCH;
+use egui_extras::{Size, StripBuilder};
+use egui_phosphor::regular::{GIT_BRANCH, GLOBE, IMAGES, TRASH};
 use itertools::Itertools;
-use std::{borrow::Cow, sync::atomic::Ordering};
+use std::{borrow::Cow, collections::VecDeque, sync::atomic::Ordering};
 
 use crate::{
     ChatContent,
@@ -24,6 +28,108 @@ impl super::AppState {
             .resizable(true)
             .min_height(ui.available_height() / 4.0)
             .show_inside(ui, |ui| {
+                let height = ui.available_height();
+
+                egui::SidePanel::left("media")
+                    .default_width(32.0)
+                    .show_inside(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(height - 32.0)
+                            .auto_shrink(false)
+                            .show(ui, |ui| {
+                                ui.set_max_height(
+                                    3.0 * ui.available_width() * self.images.len() as f32,
+                                );
+
+                                let mut remove_idx = None;
+
+                                for (i, path) in self.images.iter().enumerate() {
+                                    let path = if let Ok(exists) = std::fs::exists(path)
+                                        && exists
+                                    {
+                                        Cow::Owned(format!("file://{path}"))
+                                    } else {
+                                        Cow::Borrowed(path)
+                                    };
+
+                                    let resp = ui.image(&*path).on_hover_ui(|ui| {
+                                        // TODO: set size to 2/3 viewport
+                                        ui.set_max_size(egui::vec2(800.0, 800.0));
+                                        ui.image(&*path);
+                                    });
+
+                                    if resp.interact(egui::Sense::click()).clicked() {
+                                        remove_idx = Some(i);
+                                    }
+                                }
+
+                                if let Some(idx) = remove_idx {
+                                    self.images.remove(idx);
+                                }
+                            });
+                        ui.vertical_centered_justified(|ui| {
+                            StripBuilder::new(ui)
+                                .size(Size::exact(16.0))
+                                .vertical(|mut strip| {
+                                    strip.cell(|ui| {
+                                        StripBuilder::new(ui)
+                                            .sizes(
+                                                Size::remainder(),
+                                                if self.images.is_empty() { 2 } else { 3 },
+                                            )
+                                            .horizontal(|mut strip| {
+                                                if !self.images.is_empty() {
+                                                    strip.cell(|ui| {
+                                                        if ui
+                                                            .button(TRASH)
+                                                            .on_hover_text("Clear")
+                                                            .clicked()
+                                                        {
+                                                            self.images.clear();
+                                                        }
+                                                    });
+                                                }
+                                                strip.cell(|ui| {
+                                                    if ui
+                                                        .button(GLOBE)
+                                                        .on_hover_text("Link Images (URL)")
+                                                        .clicked()
+                                                    {
+                                                        self.image_input = Some(Default::default());
+                                                    }
+                                                });
+                                                strip.cell(|ui| {
+                                                    if ui
+                                                        .button(IMAGES)
+                                                        .on_hover_text("Load Images (filesystem)")
+                                                        .clicked()
+                                                        && let Some(paths) = rfd::FileDialog::new()
+                                                            .set_directory(settings.view(|s| {
+                                                                s.last_export_dir.clone()
+                                                            }))
+                                                            .add_filter(
+                                                                "images",
+                                                                &["png", "jpg", "jpeg", "webp"],
+                                                            )
+                                                            .add_filter("all", &[""])
+                                                            .pick_files()
+                                                    {
+                                                        let paths =
+                                                            paths.into_iter().filter_map(|p| {
+                                                                p.to_str().map(|s| s.to_string())
+                                                            });
+
+                                                        self.images.extend(paths);
+                                                    }
+                                                });
+                                            });
+                                    });
+                                });
+
+                            self.image_input_dialog(ui);
+                        });
+                    });
+
                 let mut submitted = false;
                 egui::TopBottomPanel::bottom("actions")
                     .resizable(false)
@@ -62,16 +168,18 @@ impl super::AppState {
                     });
 
                 egui::CentralPanel::default().show_inside(ui, |ui| {
-                    let mut prompt_w = Cow::Borrowed(self.prompt.as_str());
-                    let widget = egui::TextEdit::multiline(&mut prompt_w)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("Type your message here \u{1F64B}");
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        let mut prompt_w = Cow::Borrowed(self.prompt.as_str());
+                        let widget = egui::TextEdit::multiline(&mut prompt_w)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("Type your message here \u{1F64B}");
 
-                    squelch(ui.add_sized(ui.available_size(), widget));
+                        squelch(ui.add_sized(ui.available_size(), widget));
 
-                    if let Cow::Owned(prompt) = prompt_w {
-                        self.prompt = prompt;
-                    }
+                        if let Cow::Owned(prompt) = prompt_w {
+                            self.prompt = prompt;
+                        }
+                    });
                 });
 
                 if submitted {
@@ -89,6 +197,24 @@ impl super::AppState {
                         errors.push(anyhow::anyhow!("Workflow {automation} does not exist."));
                     }
                 }
+
+                ui.input(|input| {
+                    if !input.raw.dropped_files.is_empty() {
+                        tracing::info!("Dropped files: {:?}", input.raw.dropped_files);
+                        for drop in &input.raw.dropped_files {
+                            if let Some(path) = &drop.path
+                                && let Some(name) = path.to_str()
+                            {
+                                self.images.push(name.to_string());
+                            }
+                        }
+                    }
+
+                    if !input.raw.hovered_files.is_empty() {
+                        tracing::info!("Hovered files: {:?}", input.raw.hovered_files);
+                        // Using a painter here deadlocks the app.
+                    }
+                });
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
@@ -269,6 +395,56 @@ impl super::AppState {
             }
         }
     }
+
+    // A whole lotta boilerplate for something so simple
+    fn image_input_dialog(&mut self, ui: &mut egui::Ui) {
+        if self.image_input.is_none() {
+            return;
+        }
+
+        let mut submit = false;
+        let modal = egui::Modal::new(egui::Id::new("Add image")).show(ui.ctx(), |ui| {
+            let Some(input) = &mut self.image_input else {
+                unreachable!()
+            };
+
+            ui.label("URL(s):");
+            ui.text_edit_multiline(input).request_focus();
+            ui.separator();
+
+            egui::Sides::new().show(
+                ui,
+                |_ui| {},
+                |ui| {
+                    if ui.button("Ok").clicked() {
+                        submit = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        ui.close();
+                    }
+                },
+            );
+
+            // submit |= ui.input(|i| {
+            //     (i.modifiers.ctrl || i.modifiers.alt) && i.key_pressed(egui::Key::Enter)
+            // });
+
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                ui.close();
+            }
+
+            if submit {
+                if let Some(new_items) = self.image_input.take() {
+                    self.images.extend(new_items.lines().map(|s| s.to_string()));
+                }
+                ui.close();
+            }
+        });
+
+        if modal.should_close() {
+            self.image_input = None;
+        }
+    }
 }
 
 pub fn render_message(ui: &mut egui::Ui, cache: &mut CommonMarkCache, message: &Message) {
@@ -283,6 +459,7 @@ pub fn render_message_width(
 ) {
     use crate::utils::MessageExt as _;
     use base64::prelude::*;
+    let mut dq = VecDeque::from_iter(message.text_fmt_opts().into_iter().enumerate());
 
     match message {
         Message::User { .. } => {
@@ -290,12 +467,7 @@ pub fn render_message_width(
                 ui.set_width(width.unwrap_or(ui.available_width() * 0.75));
 
                 ui.vertical(|ui| {
-                    for (idx, (text, fmt)) in Itertools::intersperse(
-                        message.text_fmt_opts().into_iter(),
-                        (String::default(), FormatOpts::Separator),
-                    )
-                    .enumerate()
-                    {
+                    while let Some((idx, (text, fmt))) = dq.pop_front() {
                         match fmt {
                             FormatOpts::Plain => {
                                 ui.label(&text);
@@ -332,34 +504,48 @@ pub fn render_message_width(
                             FormatOpts::Markdown => {
                                 CommonMarkViewer::new().show(ui, cache, &text);
                             }
+                            FormatOpts::Image => {
+                                let mut cache = IMAGE_CACHE.lock();
+                                let mut image = text;
+
+                                ui.horizontal(|ui| {
+                                    loop {
+                                        if let Some(image) = cache.get(&image) {
+                                            ui.set_min_height(100.0);
+                                            ui.image(image.clone()).on_hover_ui(|ui| {
+                                                ui.set_max_size(egui::vec2(800.0, 800.0));
+                                                ui.image(image.clone());
+                                            });
+                                        }
+
+                                        if matches!(dq.front(), Some((_, (_, FormatOpts::Image)))) {
+                                            image = dq.pop_front().unwrap().1.0;
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                });
+                            }
                             FormatOpts::Unknown => {
                                 ui.label(&text);
                             }
-                            FormatOpts::Separator => {
-                                ui.separator();
-                            }
+                        }
+
+                        if !dq.is_empty() {
+                            ui.separator();
                         }
                     }
                 });
             });
         }
         Message::Assistant { .. } => {
-            use regex::Regex;
-
-            let re = Regex::new(r"(?ms)```mermaid(.*)```").unwrap();
-
             let mut all_text = String::new();
 
             agent_bubble(ui, |ui| {
                 ui.set_width(width.unwrap_or(ui.available_width() * 0.75));
 
                 ui.vertical(|ui| {
-                    for (idx, (text, fmt)) in Itertools::intersperse(
-                        message.text_fmt_opts().into_iter(),
-                        (String::default(), FormatOpts::Separator),
-                    )
-                    .enumerate()
-                    {
+                    while let Some((idx, (text, fmt))) = dq.pop_front() {
                         match fmt {
                             FormatOpts::Plain => {
                                 ui.label(&text);
@@ -385,19 +571,43 @@ pub fn render_message_width(
                                 all_text.push_str(&text);
                                 CommonMarkViewer::new().show(ui, cache, &text);
                             }
+                            FormatOpts::Image => {
+                                let mut cache = IMAGE_CACHE.lock();
+                                let mut image = text;
+
+                                ui.horizontal(|ui| {
+                                    loop {
+                                        if let Some(image) = cache.get(&image) {
+                                            ui.set_min_height(100.0);
+                                            ui.image(image.clone()).on_hover_ui(|ui| {
+                                                // TODO: set size to 2/3 viewport
+                                                ui.set_max_size(egui::vec2(800.0, 800.0));
+                                                ui.image(image.clone());
+                                            });
+                                        }
+
+                                        if matches!(dq.front(), Some((_, (_, FormatOpts::Image)))) {
+                                            image = dq.pop_front().unwrap().1.0;
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                });
+                            }
                             FormatOpts::Unknown => {
                                 all_text.push_str(&text);
                                 ui.label(&text);
                             }
-                            FormatOpts::Separator => {
-                                ui.separator();
-                            }
+                        }
+
+                        if !dq.is_empty() {
+                            ui.separator();
                         }
                     }
                 });
             });
 
-            for (_, [diagram]) in re.captures_iter(&all_text).map(|m| m.extract()) {
+            for (_, [diagram]) in MERMAID_MD.captures_iter(&all_text).map(|m| m.extract()) {
                 ui.scope_builder(egui::UiBuilder::new().id_salt(diagram), |ui| {
                     let enc = BASE64_URL_SAFE_NO_PAD.encode(diagram);
 

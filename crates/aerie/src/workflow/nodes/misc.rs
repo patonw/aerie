@@ -9,7 +9,7 @@ use serde_with::skip_serializing_none;
 
 use crate::{
     ui::{resizable_frame, shortcuts::squelch},
-    utils::{message_party, message_text},
+    utils::message_to_json,
     workflow::{DynNode, EditContext, FlexNode, RunContext, UiNode, Value, WorkflowError},
 };
 
@@ -148,18 +148,15 @@ impl DynNode for TemplateNode {
                     "value":
                     value
                         .iter_msgs()
-                        .map(|m| json!({"author": message_party(&m), "content": message_text(&m)}))
-                        .collect_vec()
+                        .map(|m| message_to_json(&m)) .collect_vec()
                 })
             }
-            Some(Value::Message(value)) => {
-                json!({"value": {"author": message_party(value), "content": message_text(value)}})
-            }
+            Some(Value::Message(value)) => json!({"value": message_to_json(value)}),
             Some(Value::MsgList(value)) => {
                 json!({"value":
                    value
                        .iter()
-                       .map(|m| json!({"author": message_party(m), "content": message_text(m)}))
+                       .map(|m| message_to_json(m))
                        .collect_vec()
                 })
             }
