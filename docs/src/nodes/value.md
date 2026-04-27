@@ -8,9 +8,11 @@
 
 ## Plain Text
 
-- Simple text input
-- Non-functional input allows it to be part of control flow
-- No structure of formatting
+A node to create text values without structure or formatting. Can convert some
+values (e.g. messages) to plain text.
+
+Optionally, larger text values can be
+split into text lists using various delimiters.
 
 ## Template
 
