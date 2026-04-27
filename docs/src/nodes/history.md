@@ -10,8 +10,11 @@ Nodes for updating the chat history
 
 ## Create Message
 
-- Tags text with a kind to produce a message
-- Result can be used to extend history
+This node can create message objects from text and optionally include images.
+Images can be supplied as URL references or image objects created by [media nodes](./media.md).
+
+Message objects can be used as inputs to [Chat](./agent.md#chat) and
+[Structured](./agent.md#structured-output) nodes or be used to [Extend History](#extend-history).
 
 ## Extend History
 
