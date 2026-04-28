@@ -107,6 +107,11 @@ impl WorkNode {
     }
 
     #[inline]
+    pub fn is_repeat(&self) -> bool {
+        self.0.as_ref().downcast_ref::<LoopControl>().is_some()
+    }
+
+    #[inline]
     pub fn is_output(&self) -> bool {
         self.0.as_ref().downcast_ref::<OutputNode>().is_some()
     }
@@ -122,7 +127,7 @@ impl WorkNode {
     }
     #[inline]
     pub fn is_protected(&self) -> bool {
-        self.is_start() || self.is_finish()
+        self.is_start() || self.is_finish() || self.is_repeat()
     }
 
     #[inline]

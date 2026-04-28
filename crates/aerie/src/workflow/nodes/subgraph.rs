@@ -4,7 +4,7 @@ use std::{
 };
 
 use egui::{Sense, UiBuilder};
-use egui_phosphor::regular::{GRAPH, LINE_SEGMENTS};
+use egui_phosphor::regular::{GRAPH, LINE_SEGMENTS, REPEAT};
 use egui_snarl::NodeId;
 use im::vector;
 use itertools::Itertools;
@@ -16,8 +16,10 @@ use crate::{
     ui::AppEvent,
     utils::ImmutableMapExt,
     workflow::{
-        CheckContext, DynNode, FlexNode, GraphId, ShadowGraph, UiNode, Value, ValueKind, WorkNode,
-        WorkflowError, runner::WorkflowRunner,
+        CheckContext, DynNode, FlexNode, GraphId, MetaNode, ShadowGraph, UiNode, Value, ValueKind,
+        WorkNode, WorkflowError,
+        nodes::LoopControl,
+        runner::{ExecState, WorkflowRunner},
     },
 };
 
@@ -29,12 +31,14 @@ pub enum Flavor {
     #[default]
     Simple,
 
+    Looping,
+
     Iterative,
 }
 
 impl Flavor {
-    pub fn is_simple(&self) -> bool {
-        *self == Self::Simple
+    pub fn multiplexing(&self) -> bool {
+        *self == Self::Iterative
     }
 }
 
@@ -44,11 +48,13 @@ pub struct Subgraph {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub title: String,
 
-    #[serde(default, skip_serializing_if = "Flavor::is_simple")]
+    #[serde(default, skip_serializing_if = "Flavor::multiplexing")]
     pub flavor: Flavor,
 
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub parallel: bool,
+
+    pub limit: Option<usize>,
 
     pub graph: ShadowGraph<WorkNode>,
 }
@@ -65,6 +71,7 @@ impl Default for Subgraph {
             title: "Subgraph".to_string(),
             flavor: Flavor::Simple,
             parallel: false,
+            limit: None,
             graph,
         }
     }
@@ -122,6 +129,112 @@ impl Subgraph {
             .iter()
             .map(|it| it.clone().unwrap_or_default())
             .collect_vec();
+
+        results.push(Value::Placeholder(ValueKind::Failure));
+
+        tracing::info!("Executed subgraph. results {results:?}");
+
+        Ok(results)
+    }
+
+    fn exec_looping(
+        &mut self,
+        ctx: &super::RunContext,
+        mut inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        let mut ctx = ctx.clone();
+        ctx.is_subgraph = true;
+
+        let mut loop_index = 0;
+
+        // Runs the subgraph until it stops requesting to repeat.
+        // Final results gathered from Finish node on last pass.
+        let mut results = loop {
+            tracing::debug!("Looping subgraph run #{loop_index}");
+            let exec_id = ctx.exec_id.scope(self.graph.uuid, loop_index);
+            let state_view = ctx.node_state.view(exec_id);
+            state_view.clear();
+
+            let mut exec = WorkflowRunner::builder()
+                .inputs(inputs.clone())
+                .run_ctx(ctx.with_exec_id(exec_id))
+                .state_view(state_view)
+                .build();
+
+            exec.init(&self.graph);
+
+            let interrupt = ctx.interrupt.clone();
+
+            let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
+            tracing::debug!("About to execute subgraph {:?}", self.graph.uuid);
+
+            // Inner loop steps through the graph
+            let result = loop {
+                if interrupt.load(Ordering::Relaxed) {
+                    break Ok(false);
+                }
+
+                let result = exec.step(&mut target);
+                tracing::trace!("Stepped subgraph");
+                if result != Ok(true) {
+                    break result;
+                }
+            };
+
+            // Get the status of the loop controller to determine whether to repeat
+            tracing::debug!("Loop control node id is {:?}", self.graph.looper);
+            let loop_state = self
+                .graph
+                .looper
+                .as_ref()
+                .and_then(|f| exec.state_view.get(f))
+                .unwrap_or(ExecState::Waiting(Default::default()));
+
+            tracing::debug!("Loop state is {loop_state:?}");
+            let repeat = if let Some(limit) = self.limit
+                && loop_index > limit
+            {
+                false
+            } else {
+                matches!(loop_state, ExecState::Done(_))
+            };
+
+            if repeat {
+                // Ignore unfinished errors when repeating
+                if let Err(err) = result
+                    && !matches!(*err, WorkflowError::Unfinished(_))
+                {
+                    Err(WorkflowError::Subgraph(err))?
+                }
+
+                loop_index += 1;
+
+                let values = exec.gather_inputs(self.graph.looper.unwrap());
+                tracing::info!("We continue with values {values:?}");
+
+                // Update graph inputs with values from loop controller
+                for (input, updated) in inputs.iter_mut().zip(values) {
+                    if let Some(value) = updated {
+                        *input = Some(value);
+                    }
+                }
+            } else {
+                if let Err(err) = result {
+                    Err(WorkflowError::Subgraph(err))?
+                }
+
+                // Gather the final results from the Finish node
+                let results = exec
+                    .outputs
+                    .iter()
+                    .map(|it| it.clone().unwrap_or_default())
+                    .collect_vec();
+
+                tracing::info!("Looping done with results {results:?}");
+
+                break results;
+            }
+        };
 
         results.push(Value::Placeholder(ValueKind::Failure));
 
@@ -346,7 +459,7 @@ impl DynNode for Subgraph {
             return Cow::Borrowed(&[]);
         };
 
-        if self.flavor.is_simple() {
+        if !self.flavor.multiplexing() {
             return Cow::Owned(vec![start.out_kind(in_pin)]);
         }
 
@@ -376,7 +489,7 @@ impl DynNode for Subgraph {
 
         if out_pin == finish.inputs() {
             ValueKind::Failure
-        } else if self.flavor.is_simple() {
+        } else if !self.flavor.multiplexing() {
             finish.in_kinds(out_pin)[0]
         } else {
             match finish.in_kinds(out_pin)[0] {
@@ -411,6 +524,7 @@ impl DynNode for Subgraph {
 
         match &self.flavor {
             Flavor::Simple => self.exec_simple(ctx, inputs),
+            Flavor::Looping => self.exec_looping(ctx, inputs),
             Flavor::Iterative if self.parallel => self.par_foreach(ctx, inputs),
             Flavor::Iterative => self.ser_foreach(ctx, inputs),
         }
@@ -520,6 +634,10 @@ impl UiNode for Subgraph {
                                 .label(egui::RichText::new(GRAPH).size(128.0))
                                 .interact(egui::Sense::click())
                                 .double_clicked(),
+                            Flavor::Looping => ui
+                                .label(egui::RichText::new(REPEAT).size(128.0))
+                                .interact(egui::Sense::click())
+                                .double_clicked(),
                             Flavor::Iterative => ui
                                 .label(egui::RichText::new(LINE_SEGMENTS).size(128.0))
                                 .interact(egui::Sense::click())
@@ -533,6 +651,18 @@ impl UiNode for Subgraph {
             if resp.response.double_clicked() || resp.inner {
                 ctx.events
                     .insert(crate::ui::AppEvent::EnterSubgraph(ctx.current_node));
+            }
+
+            if self.flavor == Flavor::Looping {
+                if let Some(limit) = &mut self.limit {
+                    ui.add(egui::DragValue::new(limit).prefix("limit: "));
+
+                    if *limit < 1 {
+                        self.limit = None;
+                    }
+                } else if ui.button("no limit").clicked() {
+                    self.limit = Some(1);
+                }
             }
 
             if self.flavor == Flavor::Iterative {
@@ -635,6 +765,33 @@ fn subgraph_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos
     ui.menu_button("Subgraph", |ui| {
         if ui.button("Simple").clicked() {
             snarl.insert_node(pos, Subgraph::default().into());
+        }
+
+        if ui.button("Looping").clicked() {
+            let mut container = Subgraph::default().with_flavor(Flavor::Looping);
+            let max_id = container.graph.nodes.keys().max().unwrap();
+            let ctrl_id = NodeId(max_id.0 + 1);
+
+            let starter = container.graph.start_node().unwrap();
+
+            // Splice in the loop controller programatically
+            let controller = LoopControl {
+                fields: starter.fields.clone(),
+            };
+
+            let mut subgraph = container.graph.with_metanode(
+                &ctrl_id,
+                &MetaNode {
+                    value: controller.into(),
+                    pos: egui::pos2(500.0, -300.0),
+                    open: true,
+                },
+            );
+            subgraph.looper = Some(ctrl_id);
+
+            container.graph = subgraph;
+
+            snarl.insert_node(pos, container.into());
         }
 
         if ui.button("Iterative").clicked() {
