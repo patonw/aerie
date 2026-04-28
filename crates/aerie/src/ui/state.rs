@@ -1,9 +1,13 @@
-use crate::{config::ConfigStateStore, rmcp::model::Tool, workflow::CheckContext};
+use crate::{
+    config::ConfigStateStore,
+    rmcp::model::Tool,
+    workflow::{CheckContext, nodes::LoopControl},
+};
 use arc_swap::ArcSwap;
 use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
-use egui_snarl::NodeId;
+use egui_snarl::{InPinId, NodeId};
 use egui_tiles::SimplificationOptions;
 use itertools::Itertools;
 use serde_yaml_ng as serde_yml;
@@ -776,28 +780,89 @@ impl<W: WorkflowStore> WorkflowState<W> {
                 });
                 true
             }
+            // There must be a better way to synchronize the loop controller and start nodes
+            OutPinCreated(graph_id, node_id, _kind) => {
+                let _ = self
+                    .view_stack
+                    .propagate(self.view_stack.leaf(), |mut graph| {
+                        if graph.uuid == *graph_id {
+                            if graph.start == Some(*node_id)
+                                && let Some(loop_id) = graph.looper
+                            {
+                                let fields = graph.start_node().map(|n| n.fields.clone()).unwrap();
+                                let meta_loop = graph.nodes.get_mut(&loop_id).unwrap();
+                                let looper = meta_loop.value.as_node_mut::<LoopControl>().unwrap();
+                                looper.fields = fields;
+                            }
+                            graph
+                        } else {
+                            graph
+                        }
+                    });
+
+                true
+            }
+            PinRenamed(graph_id, pin, name) => {
+                use crate::workflow::AnyPin;
+                tracing::debug!("Handling pin event {graph_id:?} {pin:?}");
+
+                let _ = self
+                    .view_stack
+                    .propagate(self.view_stack.leaf(), |mut graph| {
+                        if graph.uuid == *graph_id {
+                            if let AnyPin::Out(pin) = pin
+                                && graph.start == Some(pin.node)
+                                && let Some(loop_id) = graph.looper
+                            {
+                                let meta_loop = graph.nodes.get_mut(&loop_id).unwrap();
+                                let looper = meta_loop.value.as_node_mut::<LoopControl>().unwrap();
+                                looper.fields[pin.output].0 = name.clone();
+                            }
+                            graph
+                        } else {
+                            graph
+                        }
+                    });
+
+                true
+            }
             PinRemoved(graph_id, pin) => {
                 // At this point, the node already considers the pin gone,
                 // but we need to update the wires to reflect that.
                 use crate::workflow::AnyPin::*;
                 tracing::debug!("Handling pin event {graph_id:?} {pin:?}");
 
-                let _ = self.view_stack.propagate(self.view_stack.leaf(), |graph| {
-                    if graph.uuid == *graph_id {
-                        match pin {
-                            Out(pin) => graph.shift_outputs(*pin),
-                            In(pin) => graph.shift_inputs(*pin),
-                        }
-                    } else {
-                        graph
-                    }
-                });
+                let _ = self
+                    .view_stack
+                    .propagate(self.view_stack.leaf(), |mut graph| {
+                        if graph.uuid == *graph_id {
+                            match pin {
+                                Out(pin) => {
+                                    if graph.start == Some(pin.node)
+                                        && let Some(loop_id) = graph.looper
+                                    {
+                                        let meta_loop = graph.nodes.get_mut(&loop_id).unwrap();
+                                        let looper =
+                                            meta_loop.value.as_node_mut::<LoopControl>().unwrap();
 
-                // tracing::trace!(
-                //     "Done propagating: {:?}\n\n {}",
-                //     self.view_stack.root(),
-                //     std::backtrace::Backtrace::force_capture()
-                // );
+                                        looper.fields.remove(pin.output);
+
+                                        graph
+                                            .shift_inputs(InPinId {
+                                                node: loop_id,
+                                                input: pin.output,
+                                            })
+                                            .shift_outputs(*pin)
+                                    } else {
+                                        graph.shift_outputs(*pin)
+                                    }
+                                }
+                                In(pin) => graph.shift_inputs(*pin),
+                            }
+                        } else {
+                            graph
+                        }
+                    });
 
                 true
             }
@@ -812,13 +877,37 @@ impl<W: WorkflowStore> WorkflowState<W> {
                 true
             }
             SwapOutputs(graph_id, a, b) => {
-                let _ = self.view_stack.propagate(self.view_stack.leaf(), |graph| {
-                    if graph.uuid == *graph_id {
-                        graph.swap_outputs(*a, *b)
-                    } else {
-                        graph
-                    }
-                });
+                let _ = self
+                    .view_stack
+                    .propagate(self.view_stack.leaf(), |mut graph| {
+                        if graph.uuid == *graph_id {
+                            if graph.start == Some(a.node)
+                                && let Some(loop_id) = graph.looper
+                            {
+                                let meta_loop = graph.nodes.get_mut(&loop_id).unwrap();
+                                let looper = meta_loop.value.as_node_mut::<LoopControl>().unwrap();
+
+                                looper.fields.swap(a.output, b.output);
+
+                                graph
+                                    .swap_inputs(
+                                        InPinId {
+                                            node: loop_id,
+                                            input: a.output,
+                                        },
+                                        InPinId {
+                                            node: loop_id,
+                                            input: b.output,
+                                        },
+                                    )
+                                    .swap_outputs(*a, *b)
+                            } else {
+                                graph.swap_outputs(*a, *b)
+                            }
+                        } else {
+                            graph
+                        }
+                    });
                 true
             }
             ProgressBegin(id, max) => {

@@ -103,9 +103,20 @@ impl UiNode for Start {
     ) -> egui_snarl::ui::PinInfo {
         if ctx.edit_pin.load().as_ref() == &Some(AnyPin::output(ctx.current_node, pin_id)) {
             ui.spacing_mut().item_spacing.x = 4.0;
-            let name = self.fields.get_mut(pin_id).unwrap();
-            let widget = egui::TextEdit::singleline(&mut name.0).desired_width(100.0);
+            let mut name = Cow::Borrowed(self.fields[pin_id].0.as_str());
+            // let (name, _kind) = self.fields.get_mut(pin_id).unwrap();
+            let widget = egui::TextEdit::singleline(&mut name).desired_width(100.0);
             let resp = squelch(ui.add(widget));
+
+            if let Cow::Owned(new_name) = name {
+                self.fields[pin_id].0 = new_name.clone();
+
+                ctx.events.insert(AppEvent::PinRenamed(
+                    ctx.current_graph,
+                    AnyPin::output(ctx.current_node, pin_id),
+                    new_name,
+                ));
+            }
 
             ui.add_enabled_ui(pin_id > 0, |ui| {
                 if ui.button(ARROW_CIRCLE_UP).clicked() {
@@ -230,8 +241,19 @@ impl UiNode for Start {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                 ui.menu_button("+new", |ui| {
                     let kinds = if let Some(flavor) = ctx.flavor
-                        && flavor.is_simple()
+                        && flavor.multiplexing()
                     {
+                        &[
+                            ValueKind::Text,
+                            ValueKind::Number,
+                            ValueKind::Integer,
+                            ValueKind::Json,
+                            ValueKind::Agent,
+                            ValueKind::Tools,
+                            ValueKind::Chat,
+                            ValueKind::Message,
+                        ][..]
+                    } else {
                         &[
                             ValueKind::Text,
                             ValueKind::TextList,
@@ -246,17 +268,6 @@ impl UiNode for Start {
                             ValueKind::Message,
                             ValueKind::MsgList,
                         ][..]
-                    } else {
-                        &[
-                            ValueKind::Text,
-                            ValueKind::Number,
-                            ValueKind::Integer,
-                            ValueKind::Json,
-                            ValueKind::Agent,
-                            ValueKind::Tools,
-                            ValueKind::Chat,
-                            ValueKind::Message,
-                        ][..]
                     };
                     for kind in kinds {
                         let mut label = kind.to_string().to_lowercase();
@@ -266,6 +277,11 @@ impl UiNode for Start {
                         if ui.button(&label).clicked() {
                             self.fields = self.fields.clone();
                             self.fields.push_back((label, *kind));
+                            ctx.events.insert(AppEvent::OutPinCreated(
+                                ctx.current_graph,
+                                ctx.current_node,
+                                *kind,
+                            ));
                         }
                     }
                 });
@@ -505,6 +521,82 @@ impl UiNode for Finish {
                 }
             });
         }
+    }
+}
+
+#[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoopControl {
+    #[serde(default)]
+    pub fields: im::Vector<(String, ValueKind)>,
+}
+
+#[typetag::serde]
+impl FlexNode for LoopControl {}
+impl DynNode for LoopControl {
+    fn priority(&self) -> usize {
+        2000
+    }
+
+    fn outputs(&self) -> usize {
+        0
+    }
+
+    fn inputs(&self) -> usize {
+        self.fields.len()
+    }
+
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        if in_pin < self.fields.len() {
+            Cow::Borrowed(std::slice::from_ref(&self.fields[in_pin].1))
+        } else {
+            Cow::Borrowed(&[ValueKind::Placeholder])
+        }
+    }
+
+    fn execute(
+        &mut self,
+        _ctx: &RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, WorkflowError> {
+        self.validate(&inputs)?;
+
+        if inputs.iter().all(|it| it.is_none()) {
+            Err(WorkflowError::Required(vec![
+                "Repeat node must be connected to one or more nodes".into(),
+            ]))?
+        }
+
+        Ok(vec![])
+    }
+}
+
+impl UiNode for LoopControl {
+    fn title(&self) -> &str {
+        "Repeat"
+    }
+
+    fn tooltip(&self) -> &str {
+        "Controls looping.\n\
+            If this node runs during an iteration,\n\
+            the subgraph will execute another time.\n\
+            If the Finish node runs instead, the subgraph will stop looping.\n\
+            Use conditional nodes to route between the two."
+    }
+
+    fn show_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &EditContext,
+        pin_id: usize,
+        remote: Option<Value>,
+    ) -> egui_snarl::ui::PinInfo {
+        let _ = (ctx, remote);
+
+        let (name, kind) = self.fields.get(pin_id).unwrap();
+        ui.label(name);
+
+        kind.default_pin()
     }
 }
 

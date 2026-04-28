@@ -20,6 +20,7 @@ use crate::ui::shortcuts::ShortcutHandler;
 use crate::ui::shortcuts::show_shortcuts;
 use crate::ui::workflow::get_subgraph_style;
 
+// TODO: mirror inputs from Start to Control node on Loop subgraphs
 impl super::AppState {
     pub fn subgraph_ui(&mut self, ui: &mut egui::Ui) {
         let running = self

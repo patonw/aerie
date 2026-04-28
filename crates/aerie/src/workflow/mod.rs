@@ -5,6 +5,7 @@ use crate::{
         message::Message,
         tool::{ToolSetError, server::ToolServerError},
     },
+    workflow::nodes::LoopControl,
 };
 use arc_swap::ArcSwap;
 use decorum::{E32, E64};
@@ -613,6 +614,8 @@ where
     pub start: Option<NodeId>,
 
     pub finish: Option<NodeId>,
+
+    pub looper: Option<NodeId>,
 }
 
 impl<T: Clone + Hash + PartialEq + Debug> ShadowGraph<T> {
@@ -671,6 +674,7 @@ where
             disabled: Default::default(),
             start: Default::default(),
             finish: Default::default(),
+            looper: Default::default(),
         }
     }
 
@@ -689,7 +693,12 @@ where
             return self.without_node(id);
         }
         let t = t.unwrap();
-        let nodes = self.nodes.with(id, &MetaNode::from(t.clone()));
+        let meta_node = MetaNode::from(t.clone());
+        self.with_metanode(id, &meta_node)
+    }
+
+    pub fn with_metanode(&self, id: &NodeId, node: &MetaNode<T>) -> ShadowGraph<T> {
+        let nodes = self.nodes.with(id, node);
         if nodes.ptr_eq(&self.nodes) {
             self.clone()
         } else {
@@ -943,6 +952,14 @@ impl ShadowGraph<WorkNode> {
         if let Some(id) = self
             .nodes
             .iter()
+            .find_map(|(id, n)| if n.value.is_repeat() { Some(id) } else { None })
+        {
+            target.looper = Some(*id);
+        }
+
+        if let Some(id) = self
+            .nodes
+            .iter()
             .find_map(|(id, n)| if n.value.is_finish() { Some(id) } else { None })
         {
             target.finish = Some(*id);
@@ -985,6 +1002,25 @@ impl ShadowGraph<WorkNode> {
             .nodes
             .values()
             .find_map(|n| n.value.as_node::<Finish>())
+        {
+            Some(node)
+        } else {
+            None
+        }
+    }
+
+    pub fn loop_control(&self) -> Option<&LoopControl> {
+        if let Some(node_id) = &self.finish
+            && let Some(node) = self
+                .nodes
+                .get(node_id)
+                .and_then(|n| n.value.as_node::<LoopControl>())
+        {
+            Some(node)
+        } else if let Some(node) = self
+            .nodes
+            .values()
+            .find_map(|n| n.value.as_node::<LoopControl>())
         {
             Some(node)
         } else {

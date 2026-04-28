@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::{
     utils::PriorityQueue,
-    workflow::{AnyPin, GraphId},
+    workflow::{AnyPin, GraphId, ValueKind},
 };
 
 pub enum Pane {
@@ -40,6 +40,11 @@ pub enum AppEvent {
     LeaveSubgraph(usize),
 
     DisableNode(GraphId, NodeId),
+
+    InPinCreated(GraphId, NodeId, ValueKind),
+    OutPinCreated(GraphId, NodeId, ValueKind),
+
+    PinRenamed(GraphId, AnyPin, String),
 
     /// Removes a pin from a node of a graph. Graph must be in the current ViewStack.
     PinRemoved(GraphId, AnyPin),

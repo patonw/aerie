@@ -651,7 +651,7 @@ impl WorkflowRunner {
         Ok(true)
     }
 
-    fn gather_inputs(&self, node_id: NodeId) -> Vec<Option<Value>> {
+    pub fn gather_inputs(&self, node_id: NodeId) -> Vec<Option<Value>> {
         if Some(node_id) == self.graph.start {
             return self.inputs.clone();
         }
