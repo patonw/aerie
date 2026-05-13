@@ -206,14 +206,16 @@ impl UiNode for Number {
 
         if remote.is_none() {
             if *integer {
-                ui.add(egui::DragValue::new(i_value).update_while_editing(false));
+                squelch(ui.add(egui::DragValue::new(i_value).update_while_editing(false)));
                 *f_value = E64::assert(*i_value as f64);
             } else {
                 let mut inner = f_value.into_inner();
-                ui.add(
-                    egui::DragValue::new(&mut inner)
-                        .speed(0.1)
-                        .update_while_editing(false),
+                squelch(
+                    ui.add(
+                        egui::DragValue::new(&mut inner)
+                            .speed(0.1)
+                            .update_while_editing(false),
+                    ),
                 );
                 *f_value = E64::assert(inner);
                 *i_value = inner as i64;
@@ -395,7 +397,6 @@ impl UiNode for Text {
 pub struct Preview {
     size: Option<crate::utils::EVec2>,
 
-    // TODO: regenerate after paste
     #[serde(default)]
     pub uuid: GraphId,
 }
@@ -437,7 +438,7 @@ impl DynNode for Preview {
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
         if let Some(value) = inputs.first().and_then(|it| it.as_ref()) {
-            ctx.previews.update(self.uuid.0, value.clone());
+            ctx.previews.update(ctx.exec_id, self.uuid.0, value.clone());
         }
         Ok(vec![])
     }
@@ -464,7 +465,11 @@ impl UiNode for Preview {
                 egui::ScrollArea::vertical()
                     .auto_shrink(false)
                     .show(ui, |ui| {
-                        match &ctx.previews.value(self.uuid.0).unwrap_or_default() {
+                        match &ctx
+                            .previews
+                            .value(ctx.exec_id.unwrap_or_default(), self.uuid.0)
+                            .unwrap_or_default()
+                        {
                             Value::Text(text) => {
                                 ui.add(egui::Label::new(text.as_str()).wrap());
                             }
@@ -596,7 +601,7 @@ impl UiNode for OutputNode {
 
         ui.vertical(|ui| {
             ui.label("label:");
-            ui.text_edit_singleline(&mut self.label);
+            squelch(ui.text_edit_singleline(&mut self.label));
         });
     }
 }

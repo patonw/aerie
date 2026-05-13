@@ -12,11 +12,6 @@
 
 ## Simple Subgraphs
 
-- Use cases:
-  - Organize a complex workflow into logical units (i.e. refactoring)
-  - Ensure a group of related nodes runs together without interruption
-  - Group useful reusable blocks into library workflows to publish/share
-    - Copy/paste for to import into actual workflows
 - Run at most once per workflow execution
 - If one or more inputs never ready, then subgraph will not run
 - Wires must exactly match the input pin type
@@ -33,12 +28,34 @@
   - All outputs inside the subgraph must be ready for a subgraph to finish
   - Use Select nodes to pick outputs or defaults (when combined with Demote)
 
+Use cases:
+
+- Organize a complex workflow into logical units (i.e. refactoring)
+- Ensure a group of related nodes runs together without interruption
+- Group useful reusable blocks into library workflows to publish/share
+  - Copy/paste for to import into actual workflows
+
+## Looping Subgraphs
+
+- No special handling of list values
+- Runs one or more times during workflow execution
+- Repeats sequentially as long as *Repeat* node is executed
+- Any values sent to *Repeat* node update inputs for next pass
+- Outputs values of *Finish* node on final pass
+
+Use cases:
+
+- Custom failure handling and retry logic
+- Rephrase search queries until sufficient number of relevant results
+- Generate a summary, check that it is fully grounded and refine if not
+- Checklist driven workflows
+  - Checklist generated or extracted from skills
+  - Agent selects task and routes to a nested subgraph
+  - Updates checklist, possibly adding new tasks
+  - Repeat if there are unfinished tasks
+
 ## Iterative Subgraphs
 
-- Use cases:
-  - Chunk one text into a text list then insert each into a vector database
-  - Generate multiple candidate queries/prompt and run a workflow on each
-  - Summarize each section/paragraph of a document then reducing to a meta-summary
 - May run multiple times per workflow execution
 - Once per element of list valued inputs
   - A single Subgraph node runs its iterations in parallel
@@ -59,3 +76,9 @@
   - Example use cases:
     - concatenating results of multiple variations of a search query
   - Can also filter inputs by emitting empty list for some runs
+
+Use cases:
+
+- Chunk one text into a text list then insert each into a vector database
+- Generate multiple candidate queries/prompt and run a workflow on each
+- Summarize each section/paragraph of a document then reducing to a meta-summary

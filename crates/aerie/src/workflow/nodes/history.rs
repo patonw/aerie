@@ -204,11 +204,11 @@ impl UiNode for MaskHistory {
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
 pub enum MessageKind {
     #[default]
-    Error,
     User,
     Assistant,
     ToolCall,
     ToolResult,
+    Error,
 }
 
 impl MessageKind {

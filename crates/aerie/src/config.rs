@@ -161,6 +161,7 @@ impl ProfileMap {
         to self.0 {
             pub fn is_empty(&self) -> bool;
             pub fn keys(&self) -> impl Iterator<Item=&String>;
+            pub fn contains_key(&self, key: &str) -> bool;
             pub fn get(&self, key: &str) -> Option<&im::Vector<RoleEntry>>;
             pub fn insert(&mut self, key: String, value: im::Vector<RoleEntry>) -> Option<im::Vector<RoleEntry>>;
             pub fn remove(&mut self, key: &str) -> Option<im::Vector<RoleEntry>>;
@@ -372,6 +373,10 @@ pub struct Preferences {
 }
 
 impl Preferences {
+    pub fn has_profile(&self, name: &str) -> bool {
+        self.models.contains_key(name)
+    }
+
     pub fn get_model_map(&self) -> BTreeMap<ModelRole, String> {
         let profile = if self.profile.is_empty() {
             "default"
