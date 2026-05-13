@@ -244,19 +244,24 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
         path.clone()
     } else {
         Default::default()
-        // dirs::config_dir()
-        //     .map(|p| p.join("aerie"))
-        //     .unwrap_or_default()
-        //     .join("workbench.yml")
     };
+
     let mut settings = if settings_path.is_file() {
         let text = std::fs::read_to_string(&settings_path)?;
-        serde_yml::from_str(&text)?
+        toml::from_str(&text)?
     } else {
         Preferences::default()
     };
+
     tracing::debug!("Loaded settings {settings:?}");
     if let Some(profile) = &args.profile {
+        if !settings.has_profile(profile) {
+            anyhow::bail!(
+                "Profile '{profile}' not found. Valid profiles: {:?}",
+                settings.models.keys().collect_vec()
+            );
+        }
+
         settings.profile = profile.to_owned();
     }
     if let Some(temperature) = &args.temperature {

@@ -428,7 +428,7 @@ impl App {
                     behavior.run_count += 1;
 
                     let exec_id = behavior.workflows.shadow.graph.uuid.into();
-                    behavior.workflows.node_state.view(exec_id).clear();
+                    behavior.workflows.node_state.reset(exec_id);
 
                     behavior.exec_workflow();
                 }

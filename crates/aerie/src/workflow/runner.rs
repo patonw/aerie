@@ -8,23 +8,28 @@ use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap},
     hash::{DefaultHasher, Hash as _, Hasher as _},
     ops::Deref,
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::Duration,
 };
 use typed_builder::TypedBuilder;
-use uuid::Uuid;
 
-use crate::workflow::{
-    ShadowGraph, ValueKind, Wire, WorkflowError,
-    nodes::{Fallback, Select},
+use crate::{
+    utils::ImmutableMapExt as _,
+    workflow::{
+        ShadowGraph, ValueKind, Wire, WorkflowError,
+        nodes::{Fallback, Flavor, Select},
+    },
 };
 
 use super::{GraphId, RunContext, Value, WorkNode};
 
 pub type RunOutput = Arc<ArcSwap<im::OrdMap<String, crate::workflow::Value>>>;
 
+// A deeply nested subgraph can be run multiple times if a parent iterates.
+// Each run must be independently tracked.
+// Furthermore, the execution subtrees for iterations must be entirely independent.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ExecId(pub u64, pub u64);
+pub struct ExecId(pub u64, pub u64, pub usize);
 
 impl Default for ExecId {
     fn default() -> Self {
@@ -35,25 +40,24 @@ impl Default for ExecId {
 impl From<GraphId> for ExecId {
     fn from(value: GraphId) -> Self {
         let u64_pair = value.0.as_u64_pair();
-        Self(u64_pair.0, u64_pair.1)
-    }
-}
-
-impl From<ExecId> for Uuid {
-    fn from(val: ExecId) -> Self {
-        Uuid::from_u64_pair(val.0, val.1)
+        Self(u64_pair.0, u64_pair.1, 0)
     }
 }
 
 impl ExecId {
+    pub fn masked_eq(&self, other: &Self) -> bool {
+        self.0 == other.0 && self.1 == other.1
+    }
+
     pub fn scope(&self, graph_id: GraphId, pass: usize) -> Self {
         let mut s = DefaultHasher::new();
         self.hash(&mut s);
         graph_id.hash(&mut s);
-        pass.hash(&mut s);
+        // pass.hash(&mut s);
         let mut that = *self;
 
         that.1 = s.finish();
+        that.2 = pass;
         that
     }
 }
@@ -104,19 +108,46 @@ type GraphNodePass = (ExecId, NodeId);
 
 /// A global cache of node execution states across all graphs and subgraphs
 #[derive(Default, Clone, Debug)]
-pub struct NodeStateMap(
-    pub Arc<ArcSwap<im::OrdMap<GraphNodePass, ExecState>>>,
-    pub Arc<RwLock<()>>,
-);
+pub struct NodeStateMap {
+    pub states: Arc<ArcSwap<im::OrdMap<GraphNodePass, ExecState>>>,
+    pub limits: Arc<ArcSwap<im::OrdMap<ExecId, usize>>>,
+}
 
 impl NodeStateMap {
     pub fn clear(&self) {
-        self.0.store(Default::default());
+        self.states.store(Default::default());
+        self.limits.store(Default::default());
     }
 
     pub fn view(&self, exec_id: ExecId) -> NodeStateView {
         let data = self.clone();
         NodeStateView { data, exec_id }
+    }
+
+    pub fn max_pass(&self, mut id: ExecId) -> usize {
+        id.2 = 0;
+        let limits = self.limits.load();
+        limits.get(&id).cloned().unwrap_or_default()
+    }
+
+    pub fn reset(&self, exec_id: ExecId) {
+        self.states.rcu(|states| {
+            im::OrdMap::from_iter(
+                states
+                    .as_ref()
+                    .clone()
+                    .into_iter()
+                    .filter(|((id, _), _)| !id.masked_eq(&exec_id)),
+            )
+        });
+        self.limits.rcu(|limits| {
+            im::OrdMap::from_iter(
+                limits
+                    .iter()
+                    .filter(|(id, _)| !id.masked_eq(&exec_id))
+                    .map(|(id, limit)| (*id, *limit)),
+            )
+        });
     }
 }
 
@@ -131,7 +162,7 @@ impl std::fmt::Debug for NodeStateView {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let data: im::OrdMap<NodeId, ExecState> = self
             .data
-            .0
+            .states
             .load()
             .iter()
             .filter(|(k, _)| k.0 == self.exec_id)
@@ -145,18 +176,15 @@ impl std::fmt::Debug for NodeStateView {
 }
 
 impl NodeStateView {
-    pub fn clear(&self) {
-        let _guard = self.data.1.write().unwrap();
-
+    pub fn clear_pass(&self) {
         tracing::trace!("Clearing view {self:?}");
-        self.data.0.rcu(|states| {
-            // TODO: a more effecient way to do this
+        self.data.states.rcu(|states| {
             im::OrdMap::from_iter(
                 states
                     .as_ref()
                     .clone()
                     .into_iter()
-                    .filter(|it| it.0.0 != self.exec_id),
+                    .filter(|((id, _), _)| *id != self.exec_id),
             )
         });
 
@@ -164,8 +192,7 @@ impl NodeStateView {
     }
 
     pub fn remove(&self, node: NodeId) {
-        let _guard = self.data.1.write().unwrap();
-        self.data.0.rcu(|states| {
+        self.data.states.rcu(|states| {
             // nodes.iter().fold(states.as_ref().clone(), |s, n| {
             //     s.without(&(self.graph_id, *n, self.pass))
             // })
@@ -174,8 +201,7 @@ impl NodeStateView {
     }
 
     pub fn insert(&self, node: NodeId, value: ExecState) {
-        let _guard = self.data.1.write().unwrap();
-
+        // TODO: Less logging
         if matches!(value, ExecState::Done(_)) {
             tracing::trace!(
                 "Exec {:?} node {node:?} will be DONE:\n\n{:?}",
@@ -185,8 +211,16 @@ impl NodeStateView {
             );
         }
         self.data
-            .0
+            .states
             .rcu(|states| states.update((self.exec_id, node), value.clone()));
+
+        let limit_id = ExecId(self.exec_id.0, self.exec_id.1, 0);
+        let current_pass = self.exec_id.2;
+
+        self.data.limits.rcu(|limits| {
+            let prev = limits.get(&limit_id).cloned().unwrap_or_default();
+            limits.with(&limit_id, &prev.max(current_pass))
+        });
 
         if matches!(value, ExecState::Done(_)) {
             tracing::trace!(
@@ -199,8 +233,7 @@ impl NodeStateView {
     }
 
     pub fn get(&self, node: &NodeId) -> Option<ExecState> {
-        let _guard = self.data.1.read().unwrap();
-        self.data.0.load().get(&(self.exec_id, *node)).cloned()
+        self.data.states.load().get(&(self.exec_id, *node)).cloned()
     }
 }
 
@@ -251,6 +284,9 @@ impl<T: Ord> Ord for Prioritized<T> {
 pub struct WorkflowRunner {
     #[builder(default)]
     pub graph: ShadowGraph<WorkNode>,
+
+    #[builder(default, setter(strip_option))]
+    pub flavor: Option<Flavor>,
 
     pub run_ctx: RunContext,
 

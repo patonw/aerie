@@ -16,7 +16,7 @@ use egui_snarl::{
     ui::{SnarlStyle, SnarlViewer, SnarlWidget, get_selected_nodes},
 };
 use im::vector;
-use itertools::Itertools;
+use itertools::{Itertools, izip};
 use serde_yaml_ng as serde_yml;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
@@ -81,22 +81,27 @@ pub struct ViewStack {
 
     pub root_name: String,
 
+    #[builder(default)]
     pub path: im::Vector<NodeId>,
 
+    #[builder(default)]
     pub flavor: im::Vector<Flavor>,
 
     pub levels: im::Vector<ShadowGraph<WorkNode>>,
+
+    #[builder(default)]
+    pub passes: im::Vector<usize>,
 }
 
 impl ViewStack {
     pub fn new(name: &str, workflow: Workflow, path: impl Iterator<Item = NodeId>) -> Self {
-        let mut me = Self {
-            root_id: egui::Id::new(workflow.graph.uuid),
-            root_name: name.into(),
-            path: Default::default(),
-            flavor: Default::default(),
-            levels: vector![workflow.graph.as_ref().clone()],
-        };
+        let mut me = Self::builder()
+            .root_id(egui::Id::new(workflow.graph.uuid))
+            .root_name(name.into())
+            .flavor(vector![Flavor::Simple])
+            .levels(vector![workflow.graph.as_ref().clone()])
+            .passes(vector![0])
+            .build();
 
         for id in path {
             if me.enter(id).is_err() {
@@ -176,24 +181,31 @@ impl ViewStack {
         self.root_id.with(&self.path)
     }
 
-    pub fn exec_id(&self) -> Option<ExecId> {
-        let mut result = None;
+    pub fn exec_ids(&self) -> Vec<ExecId> {
+        let mut result = vec![];
 
-        for level in self.levels.iter().rev() {
-            if result.is_none() {
-                result = Some(ExecId::from(level.uuid));
+        for (level, pass) in self.levels.iter().rev().zip_eq(self.passes.iter().rev()) {
+            if result.is_empty() {
+                result.push(ExecId::from(level.uuid));
             } else {
-                result = Some(result.unwrap().scope(level.uuid, 0));
+                let child = result[result.len() - 1].scope(level.uuid, *pass);
+                result.push(child);
             }
         }
 
+        result.reverse();
         result
+    }
+
+    pub fn exec_id(&self) -> Option<ExecId> {
+        self.exec_ids().first().cloned()
     }
 
     pub fn exit(&mut self, levels: usize) -> anyhow::Result<()> {
         for _ in 0..levels {
             if self.path.pop_front().is_none()
                 || self.flavor.pop_front().is_none()
+                || self.passes.pop_front().is_none()
                 || self.levels.pop_front().is_none()
             {
                 anyhow::bail!("stack is empty")
@@ -222,6 +234,7 @@ impl ViewStack {
 
         self.path.push_front(node);
         self.flavor.push_front(subgraph.flavor);
+        self.passes.push_front(0);
         self.levels.push_front(subgraph.graph.clone());
 
         Ok(())
@@ -305,6 +318,64 @@ impl ViewStack {
         }
 
         Ok(())
+    }
+
+    // TODO: encapsulate state in an iterator struct instead of leveraging a Vec
+    /// Iterate from the root to the leaf
+    pub fn iter_levels(&mut self) -> impl Iterator<Item = ViewLevelInfo<'_>> {
+        let names = self.names().collect_vec();
+        let flavors = self.flavor.clone();
+        let exec_ids = self.exec_ids();
+
+        assert_eq!(names.len(), flavors.len());
+        assert_eq!(names.len(), self.passes.len());
+
+        let name_pass = izip!(names, flavors, exec_ids, self.passes.iter_mut()).collect_vec();
+        let things = name_pass.into_iter().enumerate().rev().collect_vec();
+
+        things.into_iter().map(|(i, it)| {
+            ViewLevelInfo::builder()
+                .depth(i)
+                .name(Cow::Owned(it.0))
+                .flavor(it.1)
+                .exec_id(it.2)
+                .pass(it.3)
+                .build()
+        })
+    }
+}
+
+#[derive(TypedBuilder)]
+pub struct ViewLevelInfo<'a> {
+    /// Distance from the stack leaf (current view)
+    pub depth: usize,
+
+    /// Name of the subgraph
+    pub name: Cow<'a, str>,
+
+    /// Lookup key for node states
+    pub exec_id: ExecId,
+
+    /// Graph/Subgraph variant
+    #[builder(default)]
+    pub flavor: Flavor,
+
+    /// Parent graph and node containing current subgraph
+    #[builder(default)]
+    pub container: Option<(GraphId, NodeId)>,
+
+    /// Loop or iteration pass for current subgraph
+    pub pass: &'a mut usize,
+    // Total number of passes for subgraph in latest run
+    // #[builder(default)]
+    // pub max_pass: Option<usize>,
+}
+
+impl<'a> Iterator for &'a ViewStack {
+    type Item = ViewLevelInfo<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        todo!()
     }
 }
 

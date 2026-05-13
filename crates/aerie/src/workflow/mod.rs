@@ -193,15 +193,16 @@ impl ValueKind {
 }
 
 #[derive(Clone, Default)]
-pub struct PreviewData(pub Arc<ArcSwap<im::OrdMap<Uuid, crate::workflow::Value>>>);
+pub struct PreviewData(pub Arc<ArcSwap<im::OrdMap<(ExecId, Uuid), crate::workflow::Value>>>);
 
 impl PreviewData {
-    pub fn update(&self, uuid: Uuid, value: Value) {
-        self.0.rcu(|data| data.update(uuid, value.clone()));
+    pub fn update(&self, exec_id: ExecId, uuid: Uuid, value: Value) {
+        self.0
+            .rcu(|data| data.update((exec_id, uuid), value.clone()));
     }
 
-    pub fn value(&self, uuid: Uuid) -> Option<Value> {
-        self.0.load().get(&uuid).cloned()
+    pub fn value(&self, exec_id: ExecId, uuid: Uuid) -> Option<Value> {
+        self.0.load().get(&(exec_id, uuid)).cloned()
     }
 }
 

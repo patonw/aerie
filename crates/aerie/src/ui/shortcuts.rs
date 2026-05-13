@@ -39,6 +39,12 @@ pub enum Shortcut {
     #[assoc(key=shortcut(NONE, Key::Backspace))]
     LeaveSubgraph,
 
+    #[assoc(key=shortcut(NONE, Key::OpenBracket))]
+    PrevPass,
+
+    #[assoc(key=shortcut(NONE, Key::CloseBracket))]
+    NextPass,
+
     #[assoc(key=shortcut(CTRL_SHIFT, Key::R))]
     RunWorkflow,
 
@@ -331,6 +337,14 @@ pub fn show_shortcuts(ui: &mut egui::Ui, scope: ShowHelp) {
                     if scope == ShowHelp::Subgraph {
                         render_shortcut(ui, SHORTCUT_EXIT_SUBGRAPH);
                         ui.label("Leave the subgraph");
+                        ui.end_row();
+
+                        dumpling(ui, "[");
+                        ui.label("Previous iteration");
+                        ui.end_row();
+
+                        dumpling(ui, "]");
+                        ui.label("Next iteration");
                         ui.end_row();
                     }
 

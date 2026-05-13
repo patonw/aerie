@@ -48,7 +48,7 @@ pub struct Subgraph {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub title: String,
 
-    #[serde(default, skip_serializing_if = "Flavor::multiplexing")]
+    #[serde(default)]
     pub flavor: Flavor,
 
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -93,8 +93,8 @@ impl Subgraph {
         ctx.is_subgraph = true;
 
         let exec_id = ctx.exec_id.scope(self.graph.uuid, 0);
+        ctx.node_state.reset(exec_id);
         let state_view = ctx.node_state.view(exec_id);
-        state_view.clear();
 
         let mut exec = WorkflowRunner::builder()
             .inputs(inputs)
@@ -146,6 +146,7 @@ impl Subgraph {
         ctx.is_subgraph = true;
 
         let mut loop_index = 0;
+        ctx.node_state.reset(ctx.exec_id.scope(self.graph.uuid, 0));
 
         // Runs the subgraph until it stops requesting to repeat.
         // Final results gathered from Finish node on last pass.
@@ -153,7 +154,6 @@ impl Subgraph {
             tracing::debug!("Looping subgraph run #{loop_index}");
             let exec_id = ctx.exec_id.scope(self.graph.uuid, loop_index);
             let state_view = ctx.node_state.view(exec_id);
-            state_view.clear();
 
             let mut exec = WorkflowRunner::builder()
                 .inputs(inputs.clone())
@@ -192,7 +192,7 @@ impl Subgraph {
 
             tracing::debug!("Loop state is {loop_state:?}");
             let repeat = if let Some(limit) = self.limit
-                && loop_index > limit
+                && loop_index >= limit - 1
             {
                 false
             } else {
@@ -261,6 +261,8 @@ impl Subgraph {
             )))?;
         }
 
+        ctx.node_state.reset(ctx.exec_id.scope(self.graph.uuid, 0));
+
         let mut results = self.init_outputs();
 
         let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
@@ -269,7 +271,6 @@ impl Subgraph {
             let sliced = par_slice(&inputs, i);
             let exec_id = ctx.exec_id.scope(self.graph.uuid, i);
             let state_view = ctx.node_state.view(exec_id);
-            state_view.clear();
             let mut exec = WorkflowRunner::builder()
                 .inputs(sliced)
                 .run_ctx(ctx.with_exec_id(exec_id))
@@ -332,6 +333,8 @@ impl Subgraph {
             )))?;
         }
 
+        ctx.node_state.reset(ctx.exec_id.scope(self.graph.uuid, 0));
+
         let results = self.init_outputs();
 
         let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
@@ -344,7 +347,6 @@ impl Subgraph {
                 let sliced = par_slice(&inputs, i);
                 let exec_id = ctx.exec_id.scope(self.graph.uuid, i);
                 let state_view = ctx.node_state.view(exec_id);
-                state_view.clear();
                 let mut exec = WorkflowRunner::builder()
                     .inputs(sliced)
                     .run_ctx(ctx.with_exec_id(exec_id))
@@ -655,7 +657,12 @@ impl UiNode for Subgraph {
 
             if self.flavor == Flavor::Looping {
                 if let Some(limit) = &mut self.limit {
-                    ui.add(egui::DragValue::new(limit).prefix("limit: "));
+                    ui.add(egui::DragValue::new(limit).prefix("limit: "))
+                        .on_hover_text(
+                            "Limit the maximum number of passes.\n\
+                                The subgraph will fail if it tries to run more times than this value.\n\
+                                Set to 0 to remove the limit.",
+                        );
 
                     if *limit < 1 {
                         self.limit = None;

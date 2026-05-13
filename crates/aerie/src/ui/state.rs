@@ -140,7 +140,6 @@ impl AppState {
                 .current_graph(shadow.uuid)
                 .metadata(self.workflows.shadow.metadata.clone())
                 .parent_id(stack.parent_id())
-                .exec_id(self.workflows.view_stack.exec_id())
                 .flavor(stack.flavor())
                 .errors(self.errors.clone())
                 .previews(self.workflows.previews.clone())
@@ -162,6 +161,7 @@ impl AppState {
         let viewer = self.workflows.viewer.as_mut().unwrap();
         viewer.alerts = self.workflows.alerts.clone();
         viewer.frozen = self.workflows.frozen;
+        viewer.edit_ctx.exec_id = self.workflows.view_stack.exec_id();
         viewer.running = self
             .workflows
             .running
@@ -838,6 +838,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
                         if graph.uuid == *graph_id {
                             match pin {
                                 Out(pin) => {
+                                    // This is pretty terrible encapsulation
                                     if graph.start == Some(pin.node)
                                         && let Some(loop_id) = graph.looper
                                     {

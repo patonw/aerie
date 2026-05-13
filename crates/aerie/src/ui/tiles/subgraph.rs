@@ -2,7 +2,6 @@ use egui::RichText;
 use egui_phosphor::regular::ARROW_CLOCKWISE;
 use egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE;
 use egui_snarl::ui::SnarlWidget;
-use itertools::Itertools as _;
 use std::convert::identity;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -16,9 +15,11 @@ use crate::ui::runner::play_button;
 use crate::ui::runner::stop_button;
 use crate::ui::shortcuts::SHORTCUT_HELP;
 use crate::ui::shortcuts::SHORTCUT_RUN;
+use crate::ui::shortcuts::Shortcut;
 use crate::ui::shortcuts::ShortcutHandler;
 use crate::ui::shortcuts::show_shortcuts;
 use crate::ui::workflow::get_subgraph_style;
+use crate::workflow::nodes::Flavor;
 
 // TODO: mirror inputs from Start to Control node on Loop subgraphs
 impl super::AppState {
@@ -87,6 +88,23 @@ impl super::AppState {
                             self.subgraph_controls(ui);
                         });
                 });
+
+            if ui.ui_contains_pointer()
+                && let Some(exec_id) = self.workflows.view_stack.exec_id()
+            {
+                ui.ctx().input_mut(|i| {
+                    let pass = &mut self.workflows.view_stack.passes[0];
+                    let limit = self.workflows.node_state.max_pass(exec_id);
+
+                    if i.consume_shortcut(&Shortcut::PrevPass.key()) {
+                        *pass = pass.checked_sub(1).unwrap_or(0);
+                    }
+
+                    if i.consume_shortcut(&Shortcut::NextPass.key()) {
+                        *pass = (*pass + 1).clamp(0, limit);
+                    }
+                });
+            }
         });
 
         if ui.ctx().input_mut(|i| i.consume_shortcut(&SHORTCUT_HELP)) {
@@ -117,18 +135,90 @@ impl super::AppState {
         ui.vertical_centered_justified(|ui| {
             ui.heading("Subgraph");
 
-            let names = self.workflows.view_stack.names().collect_vec();
-            for (i, name) in names.iter().enumerate().rev() {
-                let name = if i < names.len() - 1 {
-                    RichText::new(name)
+            for info in self.workflows.view_stack.iter_levels() {
+                let limit = self.workflows.node_state.max_pass(info.exec_id);
+
+                let resp = if info.flavor == Flavor::Simple {
+                    ui.add(egui::Button::new(RichText::new(info.name)))
                 } else {
-                    RichText::new(name).monospace()
+                    let mut resp = None;
+                    StripBuilder::new(ui)
+                        .size(Size::exact(18.0))
+                        .vertical(|mut strip| {
+                            strip.cell(|ui| {
+                                ui.style_mut().spacing.item_spacing.x = 1.0;
+                                StripBuilder::new(ui)
+                                    .size(Size::exact(20.0))
+                                    .size(Size::remainder())
+                                    .size(Size::exact(20.0))
+                                    .horizontal(|mut strip| {
+                                        strip.cell(|ui| {
+                                            if ui.button("-").clicked() {
+                                                *info.pass = info.pass.checked_sub(1).unwrap_or(0);
+                                            }
+                                        });
+                                        strip.cell(|ui| {
+                                            // No corner radius setter for this yet
+                                            let widget = ui.add(
+                                                egui::DragValue::new(info.pass)
+                                                    .range(0..=limit)
+                                                    .clamp_existing_to_range(false)
+                                                    .prefix(format!("{}[", info.name))
+                                                    .suffix("]"),
+                                            );
+
+                                            let painter = ui.painter();
+                                            let rect = widget.rect;
+                                            let (ratio, color) = if limit > 0 {
+                                                (
+                                                    *info.pass as f32 / limit as f32,
+                                                    egui::Color32::from_rgb(0x0, 0xff, 0xbb),
+                                                )
+                                            } else {
+                                                (1.0, egui::Color32::GOLD)
+                                            };
+
+                                            let (left, _right) =
+                                                rect.split_left_right_at_fraction(ratio);
+
+                                            painter.rect_filled(
+                                                left,
+                                                ui.style().visuals.widgets.active.corner_radius,
+                                                color.gamma_multiply(0.2),
+                                            );
+
+                                            if widget.contains_pointer() {
+                                                widget.ctx.input_mut(|i| {
+                                                    if i.consume_shortcut(&Shortcut::PrevPass.key())
+                                                    {
+                                                        *info.pass =
+                                                            info.pass.checked_sub(1).unwrap_or(0);
+                                                    }
+
+                                                    if i.consume_shortcut(&Shortcut::NextPass.key())
+                                                    {
+                                                        *info.pass =
+                                                            (*info.pass + 1).clamp(0, limit);
+                                                    }
+                                                });
+                                            }
+                                            resp = Some(widget);
+                                        });
+                                        strip.cell(|ui| {
+                                            if ui.button("+").clicked() {
+                                                *info.pass = (*info.pass + 1).clamp(0, limit);
+                                            }
+                                        });
+                                    });
+                            });
+                        });
+                    resp.unwrap()
                 };
 
-                if i == 0 {
-                    ui.add_enabled(false, egui::Button::new(name));
-                } else if ui.button(name).clicked() {
-                    self.events.insert(crate::ui::AppEvent::LeaveSubgraph(i));
+                if info.depth > 0 && resp.double_clicked() {
+                    self.events
+                        .insert(crate::ui::AppEvent::LeaveSubgraph(info.depth));
+                    resp.surrender_focus();
                 }
             }
 
