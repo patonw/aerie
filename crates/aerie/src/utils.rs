@@ -355,6 +355,7 @@ pub fn message_party(message: &Message) -> &str {
     match message {
         Message::User { .. } => "User",
         Message::Assistant { .. } => "Assistant",
+        Message::System { .. } => "System",
     }
 }
 
@@ -368,19 +369,19 @@ pub enum FormatOpts {
 }
 
 pub trait MessageExt {
-    fn text_fmt_opts(&self) -> Vec<(String, FormatOpts)>;
+    fn text_fmt_opts(&self) -> Vec<(Cow<'_, str>, FormatOpts)>;
 }
 
 impl MessageExt for Message {
-    fn text_fmt_opts(&self) -> Vec<(String, FormatOpts)> {
+    fn text_fmt_opts(&self) -> Vec<(Cow<'_, str>, FormatOpts)> {
         match self {
             Message::User { content } => {
                 content.iter().flat_map(extract_user_content).collect_vec()
             }
-            Message::Assistant { content, .. } => content
-                .iter()
-                .flat_map(extract_assistant_content)
-                .collect_vec(),
+            Message::Assistant { content, .. } => {
+                content.iter().flat_map(extract_agent_content).collect_vec()
+            }
+            Message::System { content } => vec![(Cow::Borrowed(content), FormatOpts::Plain)],
         }
     }
 }
@@ -419,9 +420,9 @@ pub fn canonicalize_msg(msg: Message) -> Result<Message, Vec<anyhow::Error>> {
     }
 }
 
-pub fn extract_user_content(content: &UserContent) -> Vec<(String, FormatOpts)> {
+pub fn extract_user_content(content: &UserContent) -> Vec<(Cow<'_, str>, FormatOpts)> {
     match content {
-        UserContent::Text(text) => vec![(text.text.clone(), FormatOpts::Markdown)],
+        UserContent::Text(text) => vec![(Cow::Borrowed(&text.text), FormatOpts::Markdown)],
         UserContent::ToolResult(tool_result) => tool_result
             .content
             .iter()
@@ -430,7 +431,7 @@ pub fn extract_user_content(content: &UserContent) -> Vec<(String, FormatOpts)> 
                     let pretty = serde_json::from_str(text.text())
                         .and_then(|v: Value| serde_json::to_string_pretty(&v))
                         .unwrap_or_else(|_| text.text().to_string());
-                    Some((pretty, FormatOpts::Pre))
+                    Some((Cow::Owned(pretty), FormatOpts::Pre))
                 }
                 _ => None,
             })
@@ -438,27 +439,27 @@ pub fn extract_user_content(content: &UserContent) -> Vec<(String, FormatOpts)> 
         UserContent::Image(img) => {
             let key = rig_image_to_egui(img);
 
-            vec![(key, FormatOpts::Image)]
+            vec![(Cow::Owned(key), FormatOpts::Image)]
         }
-        other => vec![(format!("{other:?}"), FormatOpts::Unknown)],
+        other => vec![(Cow::Owned(format!("{other:?}")), FormatOpts::Unknown)],
     }
 }
 
-pub fn extract_assistant_content(content: &AssistantContent) -> Vec<(String, FormatOpts)> {
+pub fn extract_agent_content(content: &AssistantContent) -> Vec<(Cow<'_, str>, FormatOpts)> {
     match content {
-        AssistantContent::Text(text) => vec![(text.text.clone(), FormatOpts::Markdown)],
+        AssistantContent::Text(text) => vec![(Cow::Borrowed(&text.text), FormatOpts::Markdown)],
         AssistantContent::ToolCall(tool_call) => {
             let text = serde_json::to_string_pretty(&tool_call)
                 .unwrap_or_else(|_| format!("{tool_call:?}"));
-            vec![(text, FormatOpts::Pre)]
+            vec![(Cow::Owned(text), FormatOpts::Pre)]
         }
         AssistantContent::Reasoning(reasoning) => {
-            vec![(reasoning.display_text(), FormatOpts::Markdown)]
+            vec![(Cow::Owned(reasoning.display_text()), FormatOpts::Markdown)]
         }
         AssistantContent::Image(img) => {
             let key = rig_image_to_egui(img);
 
-            vec![(key, FormatOpts::Image)]
+            vec![(Cow::Owned(key), FormatOpts::Image)]
         }
     }
 }
@@ -468,7 +469,7 @@ pub fn message_text(message: &Message) -> String {
         panic!()
     };
 
-    text
+    text.to_string()
 }
 
 pub fn message_images(message: &Message) -> Vec<&rig::message::Image> {
@@ -487,6 +488,7 @@ pub fn message_images(message: &Message) -> Vec<&rig::message::Image> {
                 _ => None,
             })
             .collect_vec(),
+        Message::System { .. } => vec![],
     }
 }
 

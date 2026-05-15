@@ -73,7 +73,7 @@ pub struct ExecArgs {
 
     /// Include workflow ids in output
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    #[arg(short = 'n', long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     show_ids: bool,
 
     /// Pretty print console output

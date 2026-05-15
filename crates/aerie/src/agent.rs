@@ -2,7 +2,6 @@
 use crate::rig::{
     self,
     agent::{Agent, AgentBuilder},
-    client::completion::CompletionModelHandle,
     completion::ToolDefinition,
 };
 use anyhow::anyhow;
@@ -10,6 +9,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use decorum::E64;
 use derive_builder::Builder;
 use itertools::Itertools;
+use rig_dynclient::{builder::DynClientBuilder, completion::CompletionModelHandle};
 use scopeguard::defer;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -26,8 +26,6 @@ use crate::{
     config::ConfigExt as _, storage::CachedDirStore as _, toolbox::ToolStore, utils::ErrorList,
     workflow::store::WorkflowStoreDir,
 };
-
-use rig_dynclient::builder::DynClientBuilder;
 
 pub use super::chat::{ChatContent, ChatEntry, ChatHistory, ChatSession};
 pub use super::config::{Preferences, ToolSelector, ToolSpec};
