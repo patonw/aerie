@@ -22,7 +22,7 @@ use tokio::process::Command;
 
 use crate::rmcp::{
     Peer, RoleClient, ServiceExt as _,
-    model::{ClientCapabilities, ClientInfo, Implementation, InitializeRequestParams, Tool},
+    model::{ClientInfo, Implementation, InitializeRequestParams, Tool},
     service::RunningService,
     transport::{
         ConfigureCommandExt, StreamableHttpClientTransport, TokioChildProcess,
@@ -478,16 +478,8 @@ impl ToolProvider {
 
                 let transport = StreamableHttpClientTransport::from_config(config);
 
-                let client_info = ClientInfo {
-                    meta: None,
-                    protocol_version: Default::default(),
-                    capabilities: ClientCapabilities::default(),
-                    client_info: Implementation {
-                        name: "aerie".to_string(),
-                        version: "0.1.0".to_string(),
-                        ..Default::default()
-                    },
-                };
+                let client_info =
+                    ClientInfo::new(Default::default(), Implementation::new("aerie", "0.1.0"));
 
                 let client = client_info.serve(transport).await.inspect_err(|e| {
                     tracing::error!("client error: {:?}", e);

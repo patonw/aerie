@@ -15,6 +15,7 @@ use crate::{
     workflow::with_timeout,
 };
 use itertools::Itertools;
+use rig_dynclient::completion::CompletionModelHandle;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
@@ -713,7 +714,7 @@ impl StructuredChat {
 #[allow(deprecated)]
 async fn one_shot_completion(
     run_ctx: &RunContext,
-    agent: &rig::agent::Agent<rig::client::completion::CompletionModelHandle<'static>>,
+    agent: &rig::agent::Agent<CompletionModelHandle<'static>>,
     prompt: Message,
     history: Vec<Message>,
 ) -> Result<CompletionResponse<()>, WorkflowError> {
@@ -855,7 +856,7 @@ enum StreamingError {
 // Following the example multi_turn_streaming_gemini, but I'm pretty lost.
 async fn multi_turn_completion(
     run_ctx: &RunContext,
-    agent: &rig::agent::Agent<rig::client::completion::CompletionModelHandle<'static>>,
+    agent: &rig::agent::Agent<CompletionModelHandle<'static>>,
     toolset: Arc<ToolSelector>,
     prompt: Message,
     chat_history: &mut Vec<Message>,
@@ -870,10 +871,16 @@ async fn multi_turn_completion(
     let prefs = run_ctx.agent_factory.prefs.load();
 
     if !run_ctx.streaming {
-        PromptRequest::from_agent(agent, prompt)
+        let resp = PromptRequest::from_agent(agent, prompt)
             .max_turns(5)
-            .with_history(chat_history)
+            .with_history(chat_history.clone())
+            .extended_details()
             .await?;
+
+        if let Some(messages) = resp.messages {
+            chat_history.extend(messages);
+        }
+
         return Ok(());
     }
 

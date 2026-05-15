@@ -472,7 +472,7 @@ pub fn render_message_width(
                     while let Some((idx, (text, fmt))) = dq.pop_front() {
                         match fmt {
                             FormatOpts::Plain => {
-                                ui.label(&text);
+                                ui.label(text.as_ref());
                             }
                             FormatOpts::Pre => {
                                 egui::ScrollArea::horizontal().id_salt(idx).show(ui, |ui| {
@@ -513,7 +513,7 @@ pub fn render_message_width(
                                 egui::ScrollArea::horizontal().show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         loop {
-                                            if let Some(image) = cache.get(&image) {
+                                            if let Some(image) = cache.get(image.as_ref()) {
                                                 show_image(ui, image, 100.0);
                                             }
 
@@ -530,7 +530,7 @@ pub fn render_message_width(
                                 });
                             }
                             FormatOpts::Unknown => {
-                                ui.label(&text);
+                                ui.label(text.as_ref());
                             }
                         }
 
@@ -551,7 +551,7 @@ pub fn render_message_width(
                     while let Some((idx, (text, fmt))) = dq.pop_front() {
                         match fmt {
                             FormatOpts::Plain => {
-                                ui.label(&text);
+                                ui.label(text.as_ref());
                                 all_text.push_str(&text);
                             }
                             FormatOpts::Pre => {
@@ -580,7 +580,7 @@ pub fn render_message_width(
 
                                 ui.horizontal(|ui| {
                                     loop {
-                                        if let Some(image) = cache.get(&image) {
+                                        if let Some(image) = cache.get(image.as_ref()) {
                                             show_image(ui, image, 100.0);
                                         }
 
@@ -594,7 +594,7 @@ pub fn render_message_width(
                             }
                             FormatOpts::Unknown => {
                                 all_text.push_str(&text);
-                                ui.label(&text);
+                                ui.label(text.as_ref());
                             }
                         }
 
@@ -655,6 +655,20 @@ pub fn render_message_width(
                     });
                 });
             }
+        }
+        Message::System { content } => {
+            // We don't actually include system messages in the chat history.
+            // They're properties of individual agents and can change within a workflow
+            // as different agents operate on the history.
+            egui::Frame::new()
+                .stroke(egui::Stroke::new(1.0, egui::Color32::GRAY))
+                .corner_radius(16)
+                .outer_margin(4)
+                .inner_margin(8)
+                .show(ui, |ui| {
+                    ui.set_width(width.unwrap_or(ui.available_width()));
+                    ui.label(content);
+                });
         }
     }
 }
