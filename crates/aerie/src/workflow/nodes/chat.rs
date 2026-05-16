@@ -14,6 +14,7 @@ use crate::{
     utils::{ErrorDistiller, canonicalize_msg},
     workflow::with_timeout,
 };
+use arc_swap::ArcSwap;
 use itertools::Itertools;
 use rig_dynclient::completion::CompletionModelHandle;
 use serde::{Deserialize, Serialize};
@@ -718,10 +719,7 @@ async fn one_shot_completion(
     prompt: Message,
     history: Vec<Message>,
 ) -> Result<CompletionResponse<()>, WorkflowError> {
-    use crate::rig::{
-        agent::Text,
-        streaming::{StreamedAssistantContent, StreamingCompletion},
-    };
+    use crate::rig::streaming::{StreamedAssistantContent, StreamingCompletion};
     use futures_util::stream::StreamExt as _;
 
     let prefs = run_ctx.agent_factory.prefs.load();
@@ -797,43 +795,38 @@ async fn one_shot_completion(
                     reasonings.push(reasoning.display_text());
                 }
                 StreamedAssistantContent::Final(_) => {}
-                StreamedAssistantContent::ReasoningDelta { .. } => {
-                    // TODO: append to last reasoning
+                StreamedAssistantContent::ReasoningDelta { reasoning, .. } => {
+                    if reasonings.is_empty() {
+                        reasonings.push(Default::default());
+                    }
+
+                    reasonings.last_mut().unwrap().push_str(&reasoning);
                 }
             },
             Err(err) => {
                 Err(WorkflowError::Provider(err.into()))?;
             }
         }
+
+        if let Some(scratch) = &agent_msg {
+            update_scratch(scratch, &texts, &reasonings, &tool_calls);
+        }
     }
 
-    // run_ctx.scratch.pop_back();
-
-    let mut contents = vec![];
-    if !reasonings.is_empty() {
-        contents.push(AssistantContent::Reasoning(Reasoning::multi(reasonings)))
-    }
-
-    if !texts.is_empty() {
-        contents.push(AssistantContent::Text(Text::from(&texts)));
-    }
-
-    if !tool_calls.is_empty() {
-        contents.extend(tool_calls.into_iter().map(AssistantContent::ToolCall));
-    }
-
-    if contents.is_empty() {
+    if let Some(Message::Assistant { id: _, content }) =
+        contents_to_message(&texts, &reasonings, &tool_calls)
+    {
+        Ok(CompletionResponse {
+            choice: content,
+            usage: Default::default(),
+            raw_response: (),
+            message_id: None,
+        })
+    } else {
         Err(WorkflowError::Unknown(
             "No response or error message from provider".into(),
-        ))?;
+        ))
     }
-
-    Ok(CompletionResponse {
-        choice: OneOrMany::many(contents).unwrap(),
-        usage: Default::default(),
-        raw_response: (),
-        message_id: None,
-    })
 }
 
 use thiserror::Error;
@@ -863,7 +856,6 @@ async fn multi_turn_completion(
 ) -> Result<(), StreamingError> {
     use crate::rig::{
         self,
-        agent::Text,
         streaming::{StreamedAssistantContent, StreamingCompletion},
     };
     use futures_util::stream::StreamExt as _;
@@ -933,13 +925,10 @@ async fn multi_turn_completion(
             if run_ctx.interrupt.load(Ordering::Relaxed) {
                 Err(WorkflowError::Interrupted)?;
             }
+
             match content {
                 Ok(StreamedAssistantContent::Text(text)) => {
                     texts.push_str(&text.text);
-                    let msg = Message::assistant(&texts);
-                    if let Some(a) = &agent_msg {
-                        a.store(Arc::new(Ok(msg)));
-                    }
                 }
                 Ok(StreamedAssistantContent::ToolCall { tool_call, .. }) => {
                     tool_calls.push(tool_call);
@@ -947,37 +936,29 @@ async fn multi_turn_completion(
                 Ok(StreamedAssistantContent::Reasoning(reasoning)) => {
                     reasonings.push(reasoning.display_text());
                 }
-                Ok(_) => {}
+                Ok(StreamedAssistantContent::ReasoningDelta { id: _, reasoning }) => {
+                    if reasonings.is_empty() {
+                        reasonings.push(Default::default());
+                    }
+
+                    reasonings.last_mut().unwrap().push_str(&reasoning);
+                }
+                Ok(_) => {
+                    tracing::trace!("Unhandled streamed content {content:?}");
+                }
                 err => {
                     err?;
                 }
             }
+
+            if let Some(scratch) = &agent_msg {
+                update_scratch(scratch, &texts, &reasonings, &tool_calls);
+            }
         }
 
-        let mut contents = Vec::new();
+        let done = tool_calls.is_empty();
 
-        if !reasonings.is_empty() {
-            contents.push(AssistantContent::Reasoning(Reasoning::multi(reasonings)))
-        }
-
-        if !texts.is_empty() {
-            contents.push(AssistantContent::Text(Text::from(&texts)));
-        }
-
-        let tool_call_contents = tool_calls
-            .iter()
-            .cloned()
-            .map(AssistantContent::ToolCall)
-            .collect_vec();
-
-        let done = tool_call_contents.is_empty();
-        contents.extend(tool_call_contents);
-
-        if !contents.is_empty() {
-            let msg = Message::Assistant {
-                id: None,
-                content: OneOrMany::many(contents).unwrap(),
-            };
+        if let Some(msg) = contents_to_message(&texts, &reasonings, &tool_calls) {
             chat_history.push(msg.clone());
 
             if let Some(a) = agent_msg {
@@ -1053,4 +1034,53 @@ async fn multi_turn_completion(
 
     tracing::warn!("Too many tool calls from completion model");
     Ok(())
+}
+
+fn update_scratch(
+    scratch: impl AsRef<ArcSwap<Result<Message, String>>>,
+    texts: &str,
+    reasonings: &[String],
+    tool_calls: &[ToolCall],
+) {
+    let Some(msg) = contents_to_message(texts, reasonings, tool_calls) else {
+        return;
+    };
+
+    scratch.as_ref().store(Arc::new(Ok(msg)));
+}
+
+fn contents_to_message(
+    texts: &str,
+    reasonings: &[String],
+    tool_calls: &[ToolCall],
+) -> Option<Message> {
+    use crate::rig::agent::Text;
+
+    let mut contents = Vec::new();
+    if !reasonings.is_empty() {
+        contents.push(AssistantContent::Reasoning(Reasoning::multi(
+            reasonings.to_owned(),
+        )))
+    }
+
+    if !texts.is_empty() {
+        contents.push(AssistantContent::Text(Text::from(texts)));
+    }
+
+    let tool_call_contents = tool_calls
+        .iter()
+        .cloned()
+        .map(AssistantContent::ToolCall)
+        .collect_vec();
+
+    contents.extend(tool_call_contents);
+
+    if contents.is_empty() {
+        None
+    } else {
+        Some(Message::Assistant {
+            id: None,
+            content: OneOrMany::many(contents).unwrap(),
+        })
+    }
 }
