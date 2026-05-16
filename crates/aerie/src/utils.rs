@@ -364,8 +364,16 @@ pub enum FormatOpts {
     Plain,
     Pre,
     Markdown,
+    Reasoning,
     Image,
     Unknown,
+}
+
+impl FormatOpts {
+    pub fn is_text(&self) -> bool {
+        use FormatOpts::*;
+        matches!(self, Plain | Pre | Markdown)
+    }
 }
 
 pub trait MessageExt {
@@ -454,7 +462,7 @@ pub fn extract_agent_content(content: &AssistantContent) -> Vec<(Cow<'_, str>, F
             vec![(Cow::Owned(text), FormatOpts::Pre)]
         }
         AssistantContent::Reasoning(reasoning) => {
-            vec![(Cow::Owned(reasoning.display_text()), FormatOpts::Markdown)]
+            vec![(Cow::Owned(reasoning.display_text()), FormatOpts::Reasoning)]
         }
         AssistantContent::Image(img) => {
             let key = rig_image_to_egui(img);
@@ -465,8 +473,13 @@ pub fn extract_agent_content(content: &AssistantContent) -> Vec<(Cow<'_, str>, F
 }
 
 pub fn message_text(message: &Message) -> String {
-    let Some((text, _)) = message.text_fmt_opts().into_iter().next() else {
-        panic!()
+    let Some((text, _)) = message
+        .text_fmt_opts()
+        .into_iter()
+        .find(|(_, f)| f.is_text())
+    else {
+        tracing::warn!("Message has no text");
+        return Default::default();
     };
 
     text.to_string()

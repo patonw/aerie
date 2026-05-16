@@ -506,6 +506,7 @@ pub fn render_message_width(
                             FormatOpts::Markdown => {
                                 CommonMarkViewer::new().show(ui, cache, &text);
                             }
+                            FormatOpts::Reasoning => {}
                             FormatOpts::Image => {
                                 let mut cache = IMAGE_CACHE.lock();
                                 let mut image = text;
@@ -573,6 +574,9 @@ pub fn render_message_width(
                             FormatOpts::Markdown => {
                                 all_text.push_str(&text);
                                 CommonMarkViewer::new().show(ui, cache, &text);
+                            }
+                            FormatOpts::Reasoning => {
+                                ui.label(egui::RichText::new(text.as_ref()).italics());
                             }
                             FormatOpts::Image => {
                                 let mut cache = IMAGE_CACHE.lock();
