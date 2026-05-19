@@ -342,6 +342,15 @@ pub struct Preferences {
     #[serde(default)]
     pub temperature: f64,
 
+    // Timeout on total request or non-streaming probably not useful, given
+    // variability of payload sizes.
+    //
+    /// Timeout between streaming updates.
+    ///
+    /// note: non-streaming timeouts controlled by underlying HTTP client.
+    #[serde(default)]
+    pub stream_idle: Option<u64>,
+
     /// PRNG seed for completion providers (which typically ignore it)
     pub seed: Option<SeedConfig>,
 

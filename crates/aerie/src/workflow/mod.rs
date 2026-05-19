@@ -32,6 +32,7 @@ use std::{
     fmt::Debug,
     hash::Hash,
     sync::{Arc, atomic::AtomicBool},
+    time::Duration,
 };
 use thiserror::Error;
 use typed_builder::TypedBuilder;
@@ -1424,4 +1425,17 @@ pub fn write_value(mut fh: impl std::io::Write, value: &Value) -> Result<(), any
     }
 
     Ok(())
+}
+
+pub async fn with_timeout<T>(
+    fut: impl Future<Output = T>,
+    timeout: Option<u64>,
+) -> Result<T, WorkflowError> {
+    if let Some(timeout) = timeout {
+        tokio::time::timeout(Duration::from_secs(timeout), fut)
+            .await
+            .map_err(|_| WorkflowError::Timeout)
+    } else {
+        Ok(fut.await)
+    }
 }

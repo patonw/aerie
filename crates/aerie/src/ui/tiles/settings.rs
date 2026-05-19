@@ -170,6 +170,28 @@ impl super::AppState {
 
                         ui.end_row();
 
+                        if settings.load().streaming {
+                            ui.label("stream idle").on_hover_text(
+                                "Seconds to wait between stream updates before failing\n\
+                                    (0 to wait indefinitely)",
+                            );
+                            settings.update(|settings_rw| {
+                                let mut value = settings_rw.stream_idle.unwrap_or_default();
+
+                                let widget =
+                                    egui::DragValue::new(&mut value).update_while_editing(false);
+                                ui.add(widget);
+
+                                if value < 1 {
+                                    settings_rw.stream_idle = None;
+                                } else {
+                                    settings_rw.stream_idle = Some(value);
+                                }
+                            });
+
+                            ui.end_row();
+                        }
+
                         ui.label("autorun").on_hover_text(
                             "Number of additional turns to execute chained workflows automatically",
                         );
