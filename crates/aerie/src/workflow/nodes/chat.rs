@@ -12,6 +12,7 @@ use crate::{
         message::{AssistantContent, Message, Reasoning, ToolCall, ToolFunction, UserContent},
     },
     utils::{ErrorDistiller, canonicalize_msg},
+    workflow::with_timeout,
 };
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -722,6 +723,8 @@ async fn one_shot_completion(
     };
     use futures_util::stream::StreamExt as _;
 
+    let prefs = run_ctx.agent_factory.prefs.load();
+
     if !run_ctx.streaming {
         let mut request = agent
             .completion(prompt.clone(), history)
@@ -765,7 +768,7 @@ async fn one_shot_completion(
         None
     };
 
-    while let Some(content) = stream.next().await {
+    while let Some(content) = with_timeout(stream.next(), prefs.stream_idle).await? {
         if run_ctx.interrupt.load(Ordering::Relaxed) {
             Err(WorkflowError::Interrupted)?;
         }
@@ -864,6 +867,8 @@ async fn multi_turn_completion(
     };
     use futures_util::stream::StreamExt as _;
 
+    let prefs = run_ctx.agent_factory.prefs.load();
+
     if !run_ctx.streaming {
         PromptRequest::from_agent(agent, prompt)
             .max_turns(5)
@@ -881,6 +886,8 @@ async fn multi_turn_completion(
         scratch.push_back(Ok(prompt.clone()));
     }
 
+    // Turns are tool call/result pairs, not retries of failed completion requests.
+    // A completion failure should immediately abort the node.
     for _ in 0..5 {
         let current_prompt = match chat_history.pop() {
             Some(prompt) => prompt,
@@ -915,7 +922,7 @@ async fn multi_turn_completion(
         let mut texts = String::new();
         let mut tool_calls = vec![];
 
-        while let Some(content) = stream.next().await {
+        while let Some(content) = with_timeout(stream.next(), prefs.stream_idle).await? {
             if run_ctx.interrupt.load(Ordering::Relaxed) {
                 Err(WorkflowError::Interrupted)?;
             }
@@ -969,6 +976,10 @@ async fn multi_turn_completion(
             if let Some(a) = agent_msg {
                 a.store(Arc::new(Ok(msg)));
             }
+        } else {
+            Err(WorkflowError::Unknown("Provider response is empty".into()))?;
+            // tracing::warn!("Provider response is empty");
+            // continue;
         }
 
         let mut tool_results = vec![];
@@ -1033,6 +1044,6 @@ async fn multi_turn_completion(
         }
     }
 
-    // TODO: out of turns
+    tracing::warn!("Too many tool calls from completion model");
     Ok(())
 }
