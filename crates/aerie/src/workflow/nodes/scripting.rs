@@ -1,5 +1,5 @@
 #![cfg(feature = "scripting")]
-use std::{borrow::Cow, collections::BTreeSet, sync::Arc};
+use std::{borrow::Cow, collections::BTreeSet, sync::Arc, time::Instant};
 
 use decorum::E64;
 use egui::RichText;
@@ -75,13 +75,25 @@ impl super::DynNode for RhaiNode {
 
     fn execute(
         &mut self,
-        _ctx: &super::RunContext,
+        run_ctx: &super::RunContext,
         _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<super::Value>>,
     ) -> Result<Vec<super::Value>, crate::workflow::WorkflowError> {
         self.validate(&inputs)?;
 
-        let engine = Engine::new();
+        let deadline = run_ctx.deadline;
+
+        let mut engine = Engine::new();
+        engine.on_progress(move |_| {
+            if let Some(deadline) = deadline
+                && deadline < Instant::now()
+            {
+                Some(Dynamic::UNIT)
+            } else {
+                None
+            }
+        });
+
         let mut scope = Scope::new();
         scope.push("hello", 42_i64);
 
