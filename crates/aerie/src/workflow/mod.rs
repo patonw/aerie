@@ -32,7 +32,7 @@ use std::{
     fmt::Debug,
     hash::Hash,
     sync::{Arc, atomic::AtomicBool},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 use typed_builder::TypedBuilder;
@@ -376,6 +376,10 @@ pub struct RunContext {
 
     #[builder(default)]
     pub models: Arc<BTreeMap<ModelRole, String>>,
+
+    /// Time at which execution must complete
+    #[builder(default)]
+    pub deadline: Option<Instant>,
 }
 
 impl RunContext {
@@ -391,6 +395,13 @@ impl RunContext {
     pub fn with_exec_id(&self, exec_id: ExecId) -> Self {
         Self {
             exec_id,
+            ..self.clone()
+        }
+    }
+
+    pub fn with_deadline(&self, deadline: Option<Instant>) -> Self {
+        Self {
+            deadline,
             ..self.clone()
         }
     }
@@ -1427,15 +1438,55 @@ pub fn write_value(mut fh: impl std::io::Write, value: &Value) -> Result<(), any
     Ok(())
 }
 
+pub fn deadline_secs(t: std::time::Instant) -> u64 {
+    t.duration_since(std::time::Instant::now())
+        .as_secs_f64()
+        .ceil() as u64
+}
+
+pub fn merge_deadline(
+    stream_idle: Option<u64>,
+    deadline: Option<std::time::Instant>,
+) -> Option<u64> {
+    match (stream_idle, deadline) {
+        (None, None) => None,
+        (None, Some(t)) => Some(deadline_secs(t)),
+        (Some(s), None) => Some(s),
+        (Some(s), Some(t)) => Some(s.min(deadline_secs(t))),
+    }
+}
+
+pub fn min_instant(
+    a: Option<std::time::Instant>,
+    b: Option<std::time::Instant>,
+) -> Option<std::time::Instant> {
+    match (a, b) {
+        (None, None) => None,
+        (Some(it), None) => Some(it),
+        (None, Some(it)) => Some(it),
+        (Some(a), Some(b)) => Some(a.min(b)),
+    }
+}
+
 pub async fn with_timeout<T>(
-    fut: impl Future<Output = T>,
+    fut: impl IntoFuture<Output = T>,
     timeout: Option<u64>,
 ) -> Result<T, WorkflowError> {
-    if let Some(timeout) = timeout {
-        tokio::time::timeout(Duration::from_secs(timeout), fut)
+    if timeout == Some(0) {
+        Err(WorkflowError::Timeout)
+    } else if let Some(timeout) = timeout {
+        tokio::time::timeout(Duration::from_secs(timeout), fut.into_future())
             .await
             .map_err(|_| WorkflowError::Timeout)
     } else {
-        Ok(fut.await)
+        Ok(fut.into_future().await)
     }
+}
+
+pub async fn with_deadline<T>(
+    fut: impl IntoFuture<Output = T>,
+    timeout: Option<u64>,
+    deadline: Option<Instant>,
+) -> Result<T, WorkflowError> {
+    with_timeout(fut, merge_deadline(timeout, deadline)).await
 }

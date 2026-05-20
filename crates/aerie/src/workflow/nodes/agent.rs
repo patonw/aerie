@@ -1,7 +1,7 @@
 use crate::{
     config::ModelRole,
     rig::message::Message,
-    workflow::{CheckContext, GraphId},
+    workflow::{CheckContext, GraphId, with_deadline},
 };
 use anyhow::Context as _;
 use decorum::E64;
@@ -10,7 +10,7 @@ use egui_snarl::NodeId;
 use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use std::{borrow::Cow, str::FromStr as _, sync::Arc, time::Duration};
+use std::{borrow::Cow, str::FromStr as _, sync::Arc};
 use strum::IntoEnumIterator as _;
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
@@ -1126,14 +1126,8 @@ impl InvokeTool {
         };
 
         let future = rig_tools.call(tool_name, args.to_string());
-        let tool_output =
-            if let Some(seconds) = run_ctx.agent_factory.toolbox.timeout(&toolset, tool_name) {
-                tokio::time::timeout(Duration::from_secs(seconds), future)
-                    .await
-                    .map_err(|_| WorkflowError::Timeout)??
-            } else {
-                future.await?
-            };
+        let timeout = run_ctx.agent_factory.toolbox.timeout(&toolset, tool_name);
+        let tool_output = with_deadline(future, timeout, run_ctx.deadline).await??;
 
         let msg = Arc::new(Message::tool_result(tool_name, &tool_output));
 

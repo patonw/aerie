@@ -1332,7 +1332,6 @@ impl DynNode for GateNode {
     }
 
     fn connect(&mut self, in_pin: usize, kind: ValueKind, ctx: &EditContext) -> Result<(), String> {
-        dbg!((&in_pin, kind));
         if in_pin == 1 {
             if self.kind != kind {
                 ctx.reset_out_pin(OutPinId {
