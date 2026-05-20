@@ -351,6 +351,13 @@ pub struct Preferences {
     #[serde(default)]
     pub stream_idle: Option<u64>,
 
+    /// Maximum number of times a completion model can respond with tool calls
+    /// before returning a textual reply, per completion request.
+    ///
+    /// note: these are tool call/result round-trips, not failure retries.
+    #[serde(default)]
+    pub tool_turns: Option<usize>,
+
     /// PRNG seed for completion providers (which typically ignore it)
     pub seed: Option<SeedConfig>,
 
