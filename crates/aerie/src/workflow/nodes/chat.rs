@@ -551,8 +551,12 @@ impl StructuredChat {
 
             // chat is the source of truth. history is just its shadow.
             let mut history = chat.iter_msgs().map(|it| it.as_ref().clone()).collect_vec();
-            // Use the last message as the prompt
-            let current_prompt = history.pop().unwrap();
+
+            // Use the last message as the prompt. Some times this will be used to extract data
+            // from the previous assistant response.
+            let Some(current_prompt) = history.pop() else {
+                Err(WorkflowError::Required(vec!["Input is missing".into()]))?
+            };
 
             let response =
                 one_shot_completion(run_ctx, &agent, current_prompt, history.clone()).await;
@@ -861,10 +865,11 @@ async fn multi_turn_completion(
     use futures_util::stream::StreamExt as _;
 
     let prefs = run_ctx.agent_factory.prefs.load();
+    let max_turns = prefs.tool_turns.unwrap_or(5);
 
     if !run_ctx.streaming {
         let resp = PromptRequest::from_agent(agent, prompt)
-            .max_turns(5)
+            .max_turns(max_turns)
             .with_history(chat_history.clone())
             .extended_details()
             .await?;
@@ -885,9 +890,9 @@ async fn multi_turn_completion(
         scratch.push_back(Ok(prompt.clone()));
     }
 
-    // Turns are tool call/result pairs, not retries of failed completion requests.
+    // Turns are tool call/result round-trips, not retries of failed completion requests.
     // A completion failure should immediately abort the node.
-    for _ in 0..5 {
+    for _ in 0..max_turns {
         let current_prompt = match chat_history.pop() {
             Some(prompt) => prompt,
             None => unreachable!("Chat history should never be empty at this point"),
