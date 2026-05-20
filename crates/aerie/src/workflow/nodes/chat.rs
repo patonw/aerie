@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     sync::{Arc, atomic::Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::{
@@ -12,7 +12,7 @@ use crate::{
         message::{AssistantContent, Message, Reasoning, ToolCall, ToolFunction, UserContent},
     },
     utils::{ErrorDistiller, canonicalize_msg},
-    workflow::with_timeout,
+    workflow::with_deadline,
 };
 use arc_swap::ArcSwap;
 use itertools::Itertools;
@@ -549,6 +549,11 @@ impl StructuredChat {
                 Err(WorkflowError::Interrupted)?;
             }
 
+            if let Some(deadline) = run_ctx.deadline
+                && deadline < Instant::now()
+            {
+                Err(WorkflowError::Timeout)?;
+            }
             // chat is the source of truth. history is just its shadow.
             let mut history = chat.iter_msgs().map(|it| it.as_ref().clone()).collect_vec();
 
@@ -739,10 +744,11 @@ async fn one_shot_completion(
             request = request.additional_params(json!({"seed": value}));
         }
 
-        return request
-            .send()
-            .await
-            .map_err(|e| WorkflowError::Provider(e.into()));
+        return match with_deadline(request.send(), None, run_ctx.deadline).await {
+            Ok(Ok(it)) => Ok(it),
+            Ok(Err(err)) => Err(WorkflowError::Provider(err.into())),
+            Err(err) => Err(err),
+        };
     }
 
     let mut request = agent
@@ -771,9 +777,17 @@ async fn one_shot_completion(
         None
     };
 
-    while let Some(content) = with_timeout(stream.next(), prefs.stream_idle).await? {
+    while let Some(content) =
+        with_deadline(stream.next(), prefs.stream_idle, run_ctx.deadline).await?
+    {
         if run_ctx.interrupt.load(Ordering::Relaxed) {
             Err(WorkflowError::Interrupted)?;
+        }
+
+        if let Some(deadline) = run_ctx.deadline
+            && deadline < Instant::now()
+        {
+            Err(WorkflowError::Timeout)?;
         }
 
         match content {
@@ -868,11 +882,15 @@ async fn multi_turn_completion(
     let max_turns = prefs.tool_turns.unwrap_or(5);
 
     if !run_ctx.streaming {
-        let resp = PromptRequest::from_agent(agent, prompt)
-            .max_turns(max_turns)
-            .with_history(chat_history.clone())
-            .extended_details()
-            .await?;
+        let resp = with_deadline(
+            PromptRequest::from_agent(agent, prompt)
+                .max_turns(max_turns)
+                .with_history(chat_history.clone())
+                .extended_details(),
+            None,
+            run_ctx.deadline,
+        )
+        .await??;
 
         if let Some(messages) = resp.messages {
             chat_history.extend(messages);
@@ -926,7 +944,9 @@ async fn multi_turn_completion(
         let mut texts = String::new();
         let mut tool_calls = vec![];
 
-        while let Some(content) = with_timeout(stream.next(), prefs.stream_idle).await? {
+        while let Some(content) =
+            with_deadline(stream.next(), prefs.stream_idle, run_ctx.deadline).await?
+        {
             if run_ctx.interrupt.load(Ordering::Relaxed) {
                 Err(WorkflowError::Interrupted)?;
             }
