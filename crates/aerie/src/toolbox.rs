@@ -98,11 +98,12 @@ fn prompt_schema() -> serde_json::Value {
                 },
                 "description": "image paths or URLs to pass to the next workflow",
             },
-        }
+        },
+        "required": [],
     })
 }
 
-fn parse_or_prompt_schema(schema: &str) -> serde_json::Value {
+pub fn parse_or_prompt_schema(schema: &str) -> serde_json::Value {
     Some(schema)
         .filter(|s| !s.is_empty())
         .and_then(|s| parse_schema(s.to_string()).ok())
