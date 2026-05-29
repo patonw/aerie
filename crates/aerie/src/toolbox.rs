@@ -17,6 +17,7 @@ use std::{
     iter::{self, once},
     path::{Path, PathBuf},
     sync::Arc,
+    time::SystemTime,
 };
 use tokio::process::Command;
 
@@ -695,7 +696,7 @@ impl Toolbox {
 pub struct ToolStore {
     path: PathBuf,
 
-    cache: Arc<ArcSwap<im::OrdMap<String, ToolSpec>>>,
+    cache: Arc<ArcSwap<im::OrdMap<String, (SystemTime, ToolSpec)>>>,
 }
 
 impl ToolStore {
@@ -731,13 +732,18 @@ impl crate::storage::CachedDirStore<ToolSpec> for ToolStore {
         &self.path
     }
 
-    fn view_cache<R>(&self, cb: impl FnOnce(&im::OrdMap<String, ToolSpec>) -> R) -> R {
+    fn view_cache<R>(
+        &self,
+        cb: impl FnOnce(&im::OrdMap<String, (SystemTime, ToolSpec)>) -> R,
+    ) -> R {
         cb(&self.cache.load())
     }
 
     fn update_cache(
         &self,
-        cb: impl Fn(&im::OrdMap<String, ToolSpec>) -> im::OrdMap<String, ToolSpec>,
+        cb: impl Fn(
+            &im::OrdMap<String, (SystemTime, ToolSpec)>,
+        ) -> im::OrdMap<String, (SystemTime, ToolSpec)>,
     ) {
         self.cache.rcu(|cache| cb(cache));
     }
