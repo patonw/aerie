@@ -5,6 +5,7 @@ use std::{
     hash::DefaultHasher,
     path::{Path, PathBuf},
     sync::Arc,
+    time::SystemTime,
 };
 
 use arc_swap::ArcSwap;
@@ -183,11 +184,11 @@ pub struct WorkflowStoreDir {
     path: PathBuf,
 
     /// Cache of loaded workflows
-    cache: Arc<ArcSwap<im::OrdMap<String, Workflow>>>,
+    cache: Arc<ArcSwap<im::OrdMap<String, (SystemTime, Workflow)>>>,
 }
 
 impl WorkflowStoreDir {
-    pub fn load_all(dir: impl AsRef<Path>, tutorial: bool) -> anyhow::Result<Self> {
+    pub fn init(dir: impl AsRef<Path>, tutorial: bool) -> anyhow::Result<Self> {
         let path = dir.as_ref().to_path_buf();
 
         let this = Self {
@@ -195,10 +196,8 @@ impl WorkflowStoreDir {
             cache: Default::default(),
         };
 
-        this.preload_all();
-
         let names = CachedDirStore::names(&this).collect_vec();
-        tracing::info!("Loaded all workflows: {names:?}");
+        tracing::info!("Discovered workflows: {names:?}");
 
         if tutorial && names.iter().all(|n| n == "__default__") {
             let bytes = include_bytes!("../../../../examples/workflows/beginner/basic.yml");
@@ -213,7 +212,7 @@ impl WorkflowStoreDir {
         }
 
         this.cache
-            .rcu(|cache| cache.update("".into(), Default::default()));
+            .rcu(|cache| cache.update("".into(), (SystemTime::now(), Default::default())));
 
         Ok(this)
     }
@@ -226,13 +225,18 @@ impl CachedDirStore<Workflow> for WorkflowStoreDir {
         &self.path
     }
 
-    fn view_cache<R>(&self, cb: impl FnOnce(&im::OrdMap<String, Workflow>) -> R) -> R {
+    fn view_cache<R>(
+        &self,
+        cb: impl FnOnce(&im::OrdMap<String, (SystemTime, Workflow)>) -> R,
+    ) -> R {
         cb(&self.cache.load())
     }
 
     fn update_cache(
         &self,
-        cb: impl Fn(&im::OrdMap<String, Workflow>) -> im::OrdMap<String, Workflow>,
+        cb: impl Fn(
+            &im::OrdMap<String, (SystemTime, Workflow)>,
+        ) -> im::OrdMap<String, (SystemTime, Workflow)>,
     ) {
         self.cache.rcu(|cache| cb(cache));
     }
@@ -246,7 +250,11 @@ impl WorkflowStore for WorkflowStoreDir {
     }
 
     fn save(&mut self, name: &str, value: Workflow) -> anyhow::Result<()> {
-        CachedDirStore::save(self, name, value)
+        if name.is_empty() || name == "__default__" {
+            Ok(())
+        } else {
+            CachedDirStore::save(self, name, value)
+        }
     }
 
     fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
@@ -269,9 +277,12 @@ impl WorkflowStore for WorkflowStoreDir {
             .unwrap_or(Cow::Owned(String::new()))
     }
 
-    // TODO: deprecate
     fn get(&self, key: &str) -> Option<Workflow> {
-        CachedDirStore::get_transient(self, key)
+        if key.is_empty() || key == "__default__" {
+            Some(Default::default())
+        } else {
+            CachedDirStore::load(self, key).ok()
+        }
     }
 
     fn put(&mut self, key: &str, value: Workflow) {
