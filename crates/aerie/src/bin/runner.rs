@@ -214,7 +214,7 @@ fn make_scaffolding(args: &Args) -> anyhow::Result<Scaffolding> {
     let workflow_store = args
         .workflows
         .as_ref()
-        .map(|p| WorkflowStoreDir::load_all(p, false))
+        .map(|p| WorkflowStoreDir::init(p, false))
         .transpose()?;
     let tool_store = args.tools.as_ref().map(|p| {
         let store = ToolStore::new(p);

@@ -249,7 +249,7 @@ impl App {
         let root = tiles.insert_container(hsplit);
         let mut tree = (self.ui_tree_fn)(egui_tiles::Tree::new("my_tree", root, tiles));
 
-        let flow_store = (self.workstore_fn)(WorkflowStoreDir::load_all(workflow_dir, true)?);
+        let flow_store = (self.workstore_fn)(WorkflowStoreDir::init(workflow_dir, true)?);
         let flow_state =
             WorkflowState::new(flow_store.clone(), Some(config_state.workflow.clone()));
 

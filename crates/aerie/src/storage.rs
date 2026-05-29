@@ -1,14 +1,26 @@
-use std::{borrow::Cow, fs::OpenOptions, path::Path};
+use std::{
+    borrow::Cow,
+    fs::OpenOptions,
+    path::Path,
+    time::{Duration, SystemTime},
+};
 
 use itertools::Itertools as _;
 use serde::{Serialize, de::DeserializeOwned};
 
 pub trait CachedDirStore<T: Clone + Serialize + DeserializeOwned> {
+    /// The file extension
     const EXT: &'static str;
 
+    /// Number of milliseconds between checking for file updates
+    const REFRESH_MS: u64 = 1000;
+
     fn base_path(&self) -> &Path;
-    fn view_cache<R>(&self, cb: impl FnOnce(&im::OrdMap<String, T>) -> R) -> R;
-    fn update_cache(&self, cb: impl Fn(&im::OrdMap<String, T>) -> im::OrdMap<String, T>);
+    fn view_cache<R>(&self, cb: impl FnOnce(&im::OrdMap<String, (SystemTime, T)>) -> R) -> R;
+    fn update_cache(
+        &self,
+        cb: impl Fn(&im::OrdMap<String, (SystemTime, T)>) -> im::OrdMap<String, (SystemTime, T)>,
+    );
 
     fn exists(&self, key: &str) -> bool {
         self.view_cache(|cache| {
@@ -41,10 +53,21 @@ pub trait CachedDirStore<T: Clone + Serialize + DeserializeOwned> {
 
     fn get_transient(&self, key: &str) -> Option<T> {
         self.view_cache(|cache| cache.get(key).cloned())
+            .map(|(_, v)| v)
     }
 
     fn put_cache(&self, key: &str, value: T) {
-        self.update_cache(|cache| cache.update(key.into(), value.clone()))
+        self.update_cache(|cache| cache.update(key.into(), (SystemTime::now(), value.clone())))
+    }
+
+    fn touch(&self, key: &str) {
+        self.update_cache(|cache| {
+            if let Some((_, value)) = cache.get(key) {
+                cache.update(key.into(), (SystemTime::now(), value.clone()))
+            } else {
+                cache.clone()
+            }
+        });
     }
 
     fn remove(&self, key: &str) -> anyhow::Result<()> {
@@ -76,11 +99,29 @@ pub trait CachedDirStore<T: Clone + Serialize + DeserializeOwned> {
     }
 
     fn load(&self, name: &str) -> anyhow::Result<T> {
-        if let Some(value) = self.view_cache(|cache| cache.get(name).cloned()) {
-            return Ok(value);
+        // Cache entry already exists
+        if let Some((ts, value)) = self.view_cache(|cache| cache.get(name).cloned()) {
+            // And has been refreshed within the interval
+            if let Ok(elapsed) = ts.elapsed()
+                && elapsed < Duration::from_millis(Self::REFRESH_MS)
+            {
+                return Ok(value);
+            }
+
+            // Or has the file has not been modified since last refresh
+            let path = self.base_path().join(name).with_extension(Self::EXT);
+            if let Ok(meta) = std::fs::metadata(path)
+                && let Ok(mtime) = meta.modified()
+                && mtime <= ts
+            {
+                self.touch(name);
+                return Ok(value);
+            }
         }
 
         let path = self.base_path().join(name).with_extension(Self::EXT);
+        tracing::debug!("Loading {path:?} from disk");
+
         let file = OpenOptions::new().read(true).open(path)?;
 
         let value: T = serde_yaml_ng::from_reader(file)?;
