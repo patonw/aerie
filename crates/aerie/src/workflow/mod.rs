@@ -380,6 +380,9 @@ pub struct RunContext {
     /// Time at which execution must complete
     #[builder(default)]
     pub deadline: Option<Instant>,
+
+    #[builder(default)]
+    pub run_events: runner::RunEventCast,
 }
 
 impl RunContext {
@@ -510,6 +513,7 @@ impl From<(OutPinId, InPinId)> for Wire {
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct GraphId(pub Uuid);
 
 impl Default for GraphId {
@@ -1081,6 +1085,10 @@ pub struct Workflow {
 }
 
 impl Workflow {
+    pub fn id(&self) -> GraphId {
+        self.graph.uuid
+    }
+
     pub fn fast_eq(&self, other: &Self) -> bool {
         self.graph.fast_eq(&other.graph) && Arc::ptr_eq(&self.metadata, &other.metadata)
     }
