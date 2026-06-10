@@ -190,7 +190,6 @@ nodes:
     value:
       Tools:
         toolset:
-        - chainer/chainpong
         - chainer/table-tennis
         size:
           x: 251.125

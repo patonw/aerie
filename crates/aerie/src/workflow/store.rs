@@ -12,7 +12,10 @@ use arc_swap::ArcSwap;
 use itertools::Itertools;
 use serde_yaml_ng as serde_yml;
 
-use crate::{storage::CachedDirStore, workflow::Workflow};
+use crate::{
+    storage::CachedDirStore,
+    workflow::{GraphId, Workflow},
+};
 
 pub trait WorkflowStore {
     fn load(&self, name: &str) -> anyhow::Result<Workflow>;
@@ -31,6 +34,11 @@ pub trait WorkflowStore {
 
     /// Puts into cache without saving
     fn put(&mut self, key: &str, value: Workflow);
+
+    fn name_for(&self, id: GraphId) -> Option<Cow<'_, str>> {
+        self.names()
+            .find(|name| self.load(name).map(|g| g.id() == id).unwrap_or(false))
+    }
 }
 
 /// Handles persistence of workflows

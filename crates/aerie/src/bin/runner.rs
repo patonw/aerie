@@ -18,8 +18,10 @@ use aerie::{
     toolbox::ToolStore,
     utils::{ImageResolver, message_text},
     workflow::{
-        CheckContext, RootContext, RunContext, Value, Workflow, runner::WorkflowRunner,
-        store::WorkflowStoreDir, write_value,
+        CheckContext, RootContext, RunContext, Value, Workflow,
+        runner::{ExecId, RunEventCast, WorkflowRunner},
+        store::WorkflowStoreDir,
+        write_value,
     },
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -223,6 +225,9 @@ struct ExecOverrides {
 
     #[builder(default=Arc::new(|| {}))]
     pub post_exec_fn: Arc<dyn Fn() + Send + Sync>,
+
+    #[builder(default)]
+    pub run_events: RunEventCast,
 }
 
 impl Default for ExecOverrides {
@@ -569,6 +574,14 @@ fn run_loop(
     mut workflow: Workflow,
 ) -> Result<(), anyhow::Error> {
     let autoruns = exec_args.autoruns;
+    let event_tx = &overrides.run_events;
+
+    let exec_id = ExecId::random();
+    event_tx.broadcast(json!({
+        "tags": ["runner"],
+        "msg": "starting run loop",
+        "exec-id": exec_id,
+    }));
 
     for run_count in 0..=autoruns {
         let Scaffolding {
@@ -581,6 +594,23 @@ fn run_loop(
             shutdown,
             ..
         } = scaffolding;
+
+        let exec_id = exec_id.scope(workflow.id(), run_count);
+        let workflow_name = workflow_store
+            .as_ref()
+            .and_then(|store| {
+                use aerie::workflow::store::WorkflowStore as _;
+                store.name_for(workflow.id())
+            })
+            .map(|n| n.to_string());
+
+        event_tx.broadcast(json!({
+            "tags": ["workflow"],
+            "msg": "initializing workflow",
+            "exec-id": exec_id,
+            "flow-id": workflow.id(),
+            "name": &workflow_name,
+        }));
 
         let mut extra_content = Vec::new();
         for image in &images {
@@ -601,12 +631,13 @@ fn run_loop(
 
         let run_ctx = RunContext::builder()
             .runtime(rt.clone())
-            .exec_id(workflow.graph.uuid.into())
+            .exec_id(exec_id)
             .agent_factory(agent_factory.clone())
             .metadata(workflow.metadata.clone())
             .history(session.history.clone())
             .seed(settings.seed.clone())
             .models(models.clone())
+            .run_events(event_tx.clone())
             .build();
 
         rt.spawn({
@@ -633,10 +664,17 @@ fn run_loop(
         let mut exec = WorkflowRunner::builder()
             .inputs(inputs)
             .run_ctx(run_ctx)
+            .run_events(overrides.run_events.clone())
             .build();
 
         exec.init(&workflow.graph);
         let mut snarl = Snarl::try_from(workflow.graph.as_ref().clone())?;
+
+        event_tx.broadcast(json!({
+            "tags": ["runner", "workflow"],
+            "msg": "starting workflow",
+            "exec-id": exec_id,
+        }));
 
         let result = loop {
             match exec.step(&mut snarl) {
@@ -668,6 +706,12 @@ fn run_loop(
 
         result?;
 
+        event_tx.broadcast(json!({
+            "tags": ["workflow"],
+            "msg": "finished workflow",
+            "exec-id": exec_id,
+        }));
+
         if run_count < autoruns {
             if let Some(next_prompt) = agent_factory.next_prompt.swap(Default::default()) {
                 prompt = next_prompt.as_ref().to_owned();
@@ -687,11 +731,25 @@ fn run_loop(
                 && let Some(store) = workflow_store
             {
                 workflow = store.load(next_workflow)?;
+                event_tx.broadcast(json!({
+                    "tags": ["runner", "workflow"],
+                    "msg": "chaining workflow",
+                    "from": &workflow_name,
+                    "next": next_workflow,
+                    "run_count": run_count,
+                    "autoruns": autoruns,
+                }));
             } else {
                 break;
             }
         }
     }
+
+    event_tx.broadcast(json!({
+        "tags": ["runner"],
+        "msg": "finished run loop",
+        "exec-id": exec_id,
+    }));
 
     Ok(())
 }
@@ -699,18 +757,32 @@ fn run_loop(
 #[cfg(feature = "runner-http")]
 mod service {
     use std::collections::BTreeMap;
+    use std::time::{Duration, Instant};
 
     use super::*;
     use aerie::storage::CachedDirStore;
     use aerie::workflow::OutputChannel;
     use aerie::workflow::store::WorkflowStore;
+    use async_stream::stream;
     use axum::extract::{Json, State};
+    use axum::response::Sse;
+    use axum::response::sse::Event;
     use axum::{
         Router,
         http::StatusCode,
         response::{self, IntoResponse},
         routing::{get, post},
     };
+    use glob::Pattern;
+
+    #[derive(Debug, Deserialize)]
+    struct ExecutionParams {
+        #[serde(default, rename = "#events")]
+        events: Vec<String>,
+
+        #[serde(flatten)]
+        args: ExecArgs,
+    }
 
     async fn execute_handler(
         State(scaffolding): State<Arc<Scaffolding>>,
@@ -784,6 +856,99 @@ mod service {
         response::Json(outputs).into_response()
     }
 
+    async fn sse_handler(
+        State(scaffolding): State<Arc<Scaffolding>>,
+        Json(payload): Json<ExecutionParams>,
+    ) -> impl IntoResponse //Sse<impl Stream<Item = Result<Event, Infallible>>>
+    {
+        let Some(workflow_store) = &scaffolding.workflow_store else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+
+        tracing::info!("Payload is {payload:?}");
+
+        let Ok(workflow) = CachedDirStore::load(workflow_store, &payload.args.workflow) else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+
+        let prompt = payload.args.input.clone().unwrap_or_default();
+        let images = payload.args.images.clone();
+
+        let (run_tx, mut run_rx) = async_broadcast::broadcast(64);
+        run_rx.set_overflow(true);
+
+        let (chan_tx, chan_rx) = flume::unbounded();
+        let overrides = ExecOverrides::builder()
+            .run_ctx_fn({
+                Arc::new(move |mut run_ctx| {
+                    let outputs = OutputChannel::default();
+                    chan_tx
+                        .send(outputs.clone())
+                        .expect("Could not send output channel");
+                    run_ctx.outputs = outputs.clone();
+                    run_ctx
+                })
+            })
+            .run_events(RunEventCast(run_tx))
+            .build();
+
+        let start = Instant::now();
+        let scaffolding = scaffolding.clone();
+        let mut task = tokio::task::spawn_blocking(move || {
+            run_loop(
+                &scaffolding,
+                &payload.args,
+                overrides,
+                prompt,
+                images,
+                workflow,
+            )
+        });
+
+        let event_filters = payload
+            .events
+            .iter()
+            .filter_map(|s| Pattern::new(s).ok())
+            .collect_vec();
+
+        let resp_stream = stream! {
+            let mut outputs = OutputChannel::default();
+            let mut out_rx = outputs.receiver();
+
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                        let elapsed = start.elapsed().as_secs();
+                        yield Ok(Event::default().comment(format!("keep-alive @ {elapsed}s")));
+                    }
+                    Ok(out_chan) = chan_rx.recv_async() => {
+                        outputs = out_chan;
+                        out_rx = outputs.receiver();
+                        yield Ok(Event::default().comment("Switching to new output channel"));
+                    }
+                    Ok((k,v)) = out_rx .recv_async() => {
+                        yield Event::default().event("output").json_data(json!({k: v}));
+                    }
+                    Ok(event) = run_rx.recv() => {
+                         if event.filter(&event_filters) {
+                             yield Event::default().event("run-event").json_data(
+                                event.with_elapsed(start.elapsed()));
+                         }
+                    }
+                    res = &mut task => {
+                        let elapsed = start.elapsed().as_secs_f32();
+                        let msg = format!("Finished task in {elapsed:.2}s with result: {res:?}");
+                        tracing::info!("{msg}");
+                        yield Ok::<_, axum::Error>(Event::default().comment(msg.escape_default().to_string()));
+                        break;
+                    }
+                }
+            }
+        };
+
+        Sse::new(resp_stream).into_response()
+    }
+
     pub fn start_server(args: &Args, server_args: &HttpServerArgs) -> anyhow::Result<()> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -827,6 +992,7 @@ mod service {
                     }),
                 )
                 .route("/execute", post(execute_handler))
+                .route("/sse", post(sse_handler))
                 .with_state(scaffolding.clone());
 
             let HttpServerArgs { host, port } = server_args;
