@@ -843,6 +843,9 @@ impl DynNode for Matcher {
             Some(Value::Message(message)) => Cow::Owned(message_text(message)),
             Some(Value::Json(value)) => match value.as_ref() {
                 serde_json::Value::String(text) => Cow::Borrowed(text.as_str()),
+                serde_json::Value::Bool(value) => {
+                    Cow::Borrowed(if *value { "true" } else { "false" })
+                }
                 _ => Err(WorkflowError::Conversion(format!(
                     "Unsuppported conversion: {value:?}"
                 )))?,

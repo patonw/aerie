@@ -144,7 +144,8 @@ jobs:
       - name: Create a draft release
         uses: softprops/action-gh-release@v2
         with:
-          draft: ${{ github.ref != 'refs/heads/main' }}
+          # draft: ${{ github.ref != 'refs/heads/main' }}
+          draft: true
           prerelease: true
           tag_name: ${{ needs.build.outputs.build-id }}
           generate_release_notes: true
