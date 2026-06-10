@@ -476,9 +476,7 @@ impl DynNode for ExtendHistory {
 
         let history = match &inputs[0] {
             Some(Value::Chat(history)) => history.clone(),
-            None => Err(WorkflowError::Required(vec![
-                "Chat history required".into(),
-            ]))?,
+            None => Default::default(),
             _ => unreachable!(),
         };
 
