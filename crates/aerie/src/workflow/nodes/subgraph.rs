@@ -10,8 +10,10 @@ use egui_snarl::NodeId;
 use im::vector;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use serde_with::skip_serializing_none;
 use serde_yaml_ng as serde_yml;
+use uuid::Uuid;
 
 use crate::{
     ui::AppEvent,
@@ -107,10 +109,20 @@ impl Subgraph {
         ctx.node_state.reset(exec_id);
         let state_view = ctx.node_state.view(exec_id);
 
+        ctx.run_events.broadcast(json!({
+            "exec-id": ctx.exec_id,
+            "msg": "starting subgraph",
+            "tags": ["subgraph"],
+            "title": &self.title,
+            "flavor": &self.flavor,
+            "graph": &self.graph.uuid,
+        }));
+
         let mut exec = WorkflowRunner::builder()
             .inputs(inputs)
             .run_ctx(ctx.with_exec_id(exec_id).with_deadline(deadline))
             .state_view(state_view)
+            .run_events(ctx.run_events.clone())
             .build();
 
         exec.init(&self.graph);
@@ -164,6 +176,15 @@ impl Subgraph {
 
         let mut loop_index = 0;
         ctx.node_state.reset(ctx.exec_id.scope(self.graph.uuid, 0));
+        ctx.run_events.broadcast(json!({
+            "exec-id": ctx.exec_id,
+            "scope": Uuid::from(ctx.exec_id.scope(self.graph.uuid, 0)),
+            "msg": "starting subgraph",
+            "tags": ["subgraph"],
+            "title": &self.title,
+            "flavor": &self.flavor,
+            "graph": &self.graph.uuid,
+        }));
 
         // Runs the subgraph until it stops requesting to repeat.
         // Final results gathered from Finish node on last pass.
@@ -177,10 +198,17 @@ impl Subgraph {
             let exec_id = ctx.exec_id.scope(self.graph.uuid, loop_index);
             let state_view = ctx.node_state.view(exec_id);
 
+            ctx.run_events.broadcast(json!({
+                "exec-id": exec_id,
+                "tags": ["subgraph/pass"],
+                "pass": loop_index,
+            }));
+
             let mut exec = WorkflowRunner::builder()
                 .inputs(inputs.clone())
                 .run_ctx(ctx.with_exec_id(exec_id).with_deadline(deadline))
                 .state_view(state_view)
+                .run_events(ctx.run_events.clone())
                 .build();
 
             exec.init(&self.graph);
@@ -291,6 +319,16 @@ impl Subgraph {
 
         ctx.node_state.reset(ctx.exec_id.scope(self.graph.uuid, 0));
 
+        ctx.run_events.broadcast(json!({
+            "exec-id": ctx.exec_id,
+            "scope": Uuid::from(ctx.exec_id.scope(self.graph.uuid, 0)),
+            "msg": "starting subgraph",
+            "tags": ["subgraph"],
+            "title": &self.title,
+            "flavor": &self.flavor,
+            "graph": &self.graph.uuid,
+        }));
+
         let mut results = self.init_outputs();
 
         let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
@@ -304,10 +342,18 @@ impl Subgraph {
             let sliced = par_slice(&inputs, i);
             let exec_id = ctx.exec_id.scope(self.graph.uuid, i);
             let state_view = ctx.node_state.view(exec_id);
+
+            ctx.run_events.broadcast(json!({
+                "exec-id": exec_id,
+                "tags": ["subgraph/pass"],
+                "pass": i,
+            }));
+
             let mut exec = WorkflowRunner::builder()
                 .inputs(sliced)
                 .run_ctx(ctx.with_exec_id(exec_id).with_deadline(deadline))
                 .state_view(state_view)
+                .run_events(ctx.run_events.clone())
                 .build();
 
             exec.init(&self.graph);
@@ -379,6 +425,16 @@ impl Subgraph {
         let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
         ctx.event(AppEvent::ProgressBegin(graph_id.0, num_iters));
 
+        ctx.run_events.broadcast(json!({
+            "exec-id": ctx.exec_id,
+            "scope": Uuid::from(ctx.exec_id.scope(self.graph.uuid, 0)),
+            "msg": "starting subgraph",
+            "tags": ["subgraph"],
+            "title": &self.title,
+            "flavor": &self.flavor,
+            "graph": &self.graph.uuid,
+        }));
+
         let all_out = (0..num_iters)
             .into_par_iter()
             .map(|i| {
@@ -390,10 +446,18 @@ impl Subgraph {
                     .timeout
                     .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
                 let deadline = min_instant(deadline, ctx.deadline);
+
+                ctx.run_events.broadcast(json!({
+                    "exec-id": exec_id,
+                    "tags": ["subgraph/pass"],
+                    "pass": i,
+                }));
+
                 let mut exec = WorkflowRunner::builder()
                     .inputs(sliced)
                     .run_ctx(ctx.with_exec_id(exec_id).with_deadline(deadline))
                     .state_view(state_view)
+                    .run_events(ctx.run_events.clone())
                     .build();
 
                 exec.init(&self.graph);
