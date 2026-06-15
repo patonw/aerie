@@ -29,7 +29,7 @@ use serde_yaml_ng as serde_yml;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    fmt::Debug,
+    fmt::{Debug, Display},
     hash::Hash,
     sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},
@@ -381,6 +381,14 @@ pub struct RunContext {
     #[builder(default)]
     pub deadline: Option<Instant>,
 
+    /// Path from root workflow through subgraphs to current node, by graph id.
+    #[builder(default)]
+    pub id_stack: im::Vector<(GraphId, usize)>,
+
+    /// Path from root workflow through subgraphs to current node, by display title.
+    #[builder(default)]
+    pub title_stack: im::Vector<(String, usize)>,
+
     #[builder(default)]
     pub run_events: runner::RunEventCast,
 }
@@ -405,6 +413,22 @@ impl RunContext {
     pub fn with_deadline(&self, deadline: Option<Instant>) -> Self {
         Self {
             deadline,
+            ..self.clone()
+        }
+    }
+
+    pub fn with_scope(&self, title: &str, id: GraphId, pass: usize) -> Self {
+        let mut title_stack = self.title_stack.clone();
+        title_stack.push_back((title.to_string(), pass));
+
+        let mut id_stack = self.id_stack.clone();
+        id_stack.push_back((id, pass));
+
+        let exec_id = self.exec_id.scope(id, pass);
+        Self {
+            exec_id,
+            id_stack,
+            title_stack,
             ..self.clone()
         }
     }
@@ -515,6 +539,12 @@ impl From<(OutPinId, InPinId)> for Wire {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct GraphId(pub Uuid);
+
+impl Display for GraphId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
 
 impl Default for GraphId {
     fn default() -> Self {

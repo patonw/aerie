@@ -105,7 +105,8 @@ impl Subgraph {
             .timeout
             .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
 
-        let exec_id = ctx.exec_id.scope(self.graph.uuid, 0);
+        let ctx = ctx.with_scope(&self.title, self.graph.uuid, 0);
+        let exec_id = ctx.exec_id;
         ctx.node_state.reset(exec_id);
         let state_view = ctx.node_state.view(exec_id);
 
@@ -120,7 +121,7 @@ impl Subgraph {
 
         let mut exec = WorkflowRunner::builder()
             .inputs(inputs)
-            .run_ctx(ctx.with_exec_id(exec_id).with_deadline(deadline))
+            .run_ctx(ctx.with_deadline(deadline))
             .state_view(state_view)
             .run_events(ctx.run_events.clone())
             .build();
@@ -195,7 +196,8 @@ impl Subgraph {
             let deadline = min_instant(deadline, ctx.deadline);
 
             tracing::debug!("Looping subgraph run #{loop_index}");
-            let exec_id = ctx.exec_id.scope(self.graph.uuid, loop_index);
+            let ctx = ctx.with_scope(&self.title, self.graph.uuid, loop_index);
+            let exec_id = ctx.exec_id;
             let state_view = ctx.node_state.view(exec_id);
 
             ctx.run_events.broadcast(json!({
@@ -206,7 +208,7 @@ impl Subgraph {
 
             let mut exec = WorkflowRunner::builder()
                 .inputs(inputs.clone())
-                .run_ctx(ctx.with_exec_id(exec_id).with_deadline(deadline))
+                .run_ctx(ctx.with_deadline(deadline))
                 .state_view(state_view)
                 .run_events(ctx.run_events.clone())
                 .build();
@@ -340,7 +342,8 @@ impl Subgraph {
             let deadline = min_instant(deadline, ctx.deadline);
 
             let sliced = par_slice(&inputs, i);
-            let exec_id = ctx.exec_id.scope(self.graph.uuid, i);
+            let ctx = ctx.with_scope(&self.title, self.graph.uuid, i);
+            let exec_id = ctx.exec_id;
             let state_view = ctx.node_state.view(exec_id);
 
             ctx.run_events.broadcast(json!({
@@ -351,7 +354,7 @@ impl Subgraph {
 
             let mut exec = WorkflowRunner::builder()
                 .inputs(sliced)
-                .run_ctx(ctx.with_exec_id(exec_id).with_deadline(deadline))
+                .run_ctx(ctx.with_deadline(deadline))
                 .state_view(state_view)
                 .run_events(ctx.run_events.clone())
                 .build();
@@ -440,7 +443,8 @@ impl Subgraph {
             .map(|i| {
                 tracing::trace!("Initializing runner for {graph_id:?} pass {i}");
                 let sliced = par_slice(&inputs, i);
-                let exec_id = ctx.exec_id.scope(self.graph.uuid, i);
+                let ctx = ctx.with_scope(&self.title, self.graph.uuid, i);
+                let exec_id = ctx.exec_id;
                 let state_view = ctx.node_state.view(exec_id);
                 let deadline = self
                     .timeout
@@ -455,7 +459,7 @@ impl Subgraph {
 
                 let mut exec = WorkflowRunner::builder()
                     .inputs(sliced)
-                    .run_ctx(ctx.with_exec_id(exec_id).with_deadline(deadline))
+                    .run_ctx(ctx.with_deadline(deadline))
                     .state_view(state_view)
                     .run_events(ctx.run_events.clone())
                     .build();
