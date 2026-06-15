@@ -1,9 +1,11 @@
-use std::{borrow::Cow, convert::identity, str::FromStr as _, sync::Arc};
+use std::{borrow::Cow, convert::identity, iter::once, str::FromStr as _, sync::Arc};
 
 use decorum::E64;
 use egui_commonmark::CommonMarkCache;
 use egui_phosphor::regular::{BRACKETS_SQUARE, NUMPAD};
+use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
@@ -401,6 +403,9 @@ impl UiNode for Text {
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Preview {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
+
     size: Option<crate::utils::EVec2>,
 
     #[serde(default)]
@@ -412,13 +417,14 @@ impl FlexNode for Preview {}
 
 impl std::hash::Hash for Preview {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.title.hash(state);
         self.size.hash(state);
     }
 }
 
 impl PartialEq for Preview {
     fn eq(&self, other: &Self) -> bool {
-        self.size.eq(&other.size)
+        self.title.eq(&other.title) && self.size.eq(&other.size)
     }
 }
 
@@ -445,7 +451,37 @@ impl DynNode for Preview {
     ) -> Result<Vec<Value>, WorkflowError> {
         if let Some(value) = inputs.first().and_then(|it| it.as_ref()) {
             ctx.previews.update(ctx.exec_id, self.uuid.0, value.clone());
+
+            let mut id_path = ctx
+                .id_stack
+                .iter()
+                .map(|(t, i)| format!("{t}#{i}"))
+                .chain(once(format!["{}.preview", &self.uuid]))
+                .join("/");
+
+            let title = if self.title.is_empty() {
+                "Preview"
+            } else {
+                &self.title
+            };
+            let mut title_path = ctx
+                .title_stack
+                .iter()
+                .map(|(t, i)| format!("{t}#{i}"))
+                .chain(once(format!["{title}.preview"]))
+                .join("/");
+
+            id_path.insert(0, '/');
+            title_path.insert(0, '/');
+            ctx.run_events.broadcast(json!({
+                "tags": im::ordset![
+                    // id_path, // Quite noisy
+                    title_path
+                ],
+                "data": serde_json::to_value(value).unwrap_or_default(),
+            }));
         }
+
         Ok(vec![])
     }
 }
@@ -456,7 +492,15 @@ impl UiNode for Preview {
     }
 
     fn title(&self) -> &str {
-        "Preview"
+        if self.title.is_empty() {
+            "Preview"
+        } else {
+            &self.title
+        }
+    }
+
+    fn title_mut(&mut self) -> Option<&mut String> {
+        Some(&mut self.title)
     }
 
     fn has_body(&self) -> bool {
