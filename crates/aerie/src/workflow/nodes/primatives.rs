@@ -604,6 +604,14 @@ impl UiNode for OutputNode {
             squelch(ui.text_edit_singleline(&mut self.label));
         });
     }
+
+    fn theme(&self, codex: &dyn crate::workflow::ThemeCodex) -> crate::workflow::NodeTheme {
+        codex.neutral_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::PACKAGE)
+    }
 }
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]

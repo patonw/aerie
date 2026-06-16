@@ -17,8 +17,8 @@ use crate::{
     ui::AppEvent,
     utils::ImmutableMapExt,
     workflow::{
-        CheckContext, DynNode, FlexNode, GraphId, MetaNode, ShadowGraph, UiNode, Value, ValueKind,
-        WorkNode, WorkflowError, min_instant,
+        CheckContext, DynNode, FlexNode, GraphId, MetaNode, NodeTheme, ShadowGraph, ThemeCodex,
+        UiNode, Value, ValueKind, WorkNode, WorkflowError, min_instant,
         nodes::LoopControl,
         runner::{ExecState, WorkflowRunner},
     },
@@ -745,6 +745,10 @@ impl UiNode for Subgraph {
                 ui.checkbox(&mut self.parallel, "parallel");
             }
         });
+    }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.nesting_theme()
     }
 }
 

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ui::{AppEvent, shortcuts::squelch},
     utils::message_text,
-    workflow::{AnyPin, FlexNode, WorkflowError},
+    workflow::{AnyPin, FlexNode, NodeTheme, ThemeCodex, WorkflowError},
 };
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
@@ -288,6 +288,14 @@ impl UiNode for Start {
             });
         }
     }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.finisher_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::PLAY)
+    }
 }
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -522,6 +530,14 @@ impl UiNode for Finish {
             });
         }
     }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.finisher_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::SEAL_CHECK)
+    }
 }
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -597,6 +613,14 @@ impl UiNode for LoopControl {
         ui.label(name);
 
         kind.default_pin()
+    }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.finisher_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::SWAP)
     }
 }
 
@@ -731,6 +755,14 @@ impl UiNode for Fallback {
         ui.label(format!("{}", pin_id + 1));
 
         self.out_kind(pin_id).default_pin()
+    }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.branching_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::EGG_CRACK)
     }
 }
 
@@ -1090,6 +1122,14 @@ impl UiNode for Matcher {
 
         self.out_kind(pin_id).default_pin()
     }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.branching_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::TREE_STRUCTURE)
+    }
 }
 
 // a la I/O select
@@ -1207,6 +1247,14 @@ impl UiNode for Select {
         }
 
         self.out_kind(pin_id).default_pin()
+    }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.branching_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::FUNNEL)
     }
 }
 
