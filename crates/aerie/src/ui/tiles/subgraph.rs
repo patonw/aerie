@@ -1,3 +1,4 @@
+use egui::Label;
 use egui::RichText;
 use egui_phosphor::regular::ARROW_CLOCKWISE;
 use egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE;
@@ -49,15 +50,27 @@ impl super::AppState {
             // But then we'd need shared ownership of the stack.
             viewer.shadow = shadow;
 
-            let widget = SnarlWidget::new()
-                .id(viewer.view_id)
-                .style(get_subgraph_style());
+            let style = egui_snarl::ui::SnarlStyle {
+                wire_width: Some(1f32.max(viewer.transform.inverse().scaling * 0.5)),
+                ..get_subgraph_style()
+            };
+
+            let widget = SnarlWidget::new().id(viewer.view_id).style(style);
 
             let pointee = widget.show(&mut snarl, viewer, ui).contains_pointer();
 
             // Unfortunately, there's no event for node movement so we have to
             // iterate through the whole collection to find moved nodes.
             viewer.cast_positions(&snarl);
+
+            if cfg!(feature = "debug-ui") {
+                let egui::Pos2 { x, y } = ui.max_rect().right_top();
+                let over_rect =
+                    egui::Rect::from_two_pos(egui::pos2(x - 64.0, y), egui::pos2(x, y + 20.0));
+                let scale_debug =
+                    egui::Label::new(format!("Scale: {:.02}", viewer.transform.scaling));
+                ui.place(over_rect, scale_debug);
+            }
 
             if pointee {
                 let mut shortcuts = ShortcutHandler::builder()
@@ -133,7 +146,7 @@ impl super::AppState {
 
         ui.set_max_width(150.0);
         ui.vertical_centered_justified(|ui| {
-            ui.heading("Subgraph");
+            ui.add(Label::new(RichText::new("Subgraph").heading()).selectable(false));
 
             for info in self.workflows.view_stack.iter_levels() {
                 let limit = self.workflows.node_state.max_pass(info.exec_id);

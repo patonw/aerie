@@ -10,7 +10,10 @@ use serde_with::skip_serializing_none;
 use crate::{
     ui::{resizable_frame, shortcuts::squelch},
     utils::message_to_json,
-    workflow::{DynNode, EditContext, FlexNode, RunContext, UiNode, Value, WorkflowError},
+    workflow::{
+        DynNode, EditContext, FlexNode, NodeTheme, RunContext, ThemeCodex, UiNode, Value,
+        WorkflowError,
+    },
 };
 
 use super::ValueKind;
@@ -66,6 +69,10 @@ impl UiNode for CommentNode {
                 });
             });
         });
+    }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.comment_theme()
     }
 }
 
