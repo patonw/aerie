@@ -6,13 +6,13 @@ use std::{
 
 use crate::{
     rig::{
-        self, OneOrMany,
+        OneOrMany,
         agent::PromptRequest,
         completion::{Completion, CompletionError, CompletionResponse},
         message::{AssistantContent, Message, Reasoning, ToolCall, ToolFunction, UserContent},
     },
     utils::{ErrorDistiller, canonicalize_msg},
-    workflow::with_deadline,
+    workflow::{NodeTheme, ThemeCodex, with_deadline},
 };
 use arc_swap::ArcSwap;
 use itertools::Itertools;
@@ -22,7 +22,7 @@ use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
-    ChatContent, ToolSelector,
+    ChatContent, ToolSelector, rig,
     ui::{resizable_frame, shortcuts::squelch},
     utils::{CowExt as _, extract_json, message_text},
     workflow::{FlexNode, WorkflowError},
@@ -169,6 +169,14 @@ impl UiNode for ChatNode {
         };
 
         self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.remote_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::CHATS_CIRCLE)
     }
 }
 
@@ -442,6 +450,14 @@ impl UiNode for StructuredChat {
                     Attempt to find tool arguments inside its text response.",
             );
         });
+    }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.remote_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::TABLE)
     }
 }
 

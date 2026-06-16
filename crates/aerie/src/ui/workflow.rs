@@ -25,7 +25,7 @@ use crate::{
     ui::shortcuts::{ShortcutHandler, squelch},
     utils::ErrorDistiller as _,
     workflow::{
-        EditContext, GraphId, MetaNode, ShadowGraph, WorkNode, Workflow,
+        EditContext, GraphId, MetaNode, ShadowGraph, StandardTheme, ThemeCodex, WorkNode, Workflow,
         nodes::{
             ChatContext, ChatNode, CommentNode, Demote, EnvironmentNode, Fallback, Flavor,
             GateNode, GraphSubmenu, InvokeTool, Matcher, Number, OutputNode, Panic, Preview,
@@ -416,6 +416,9 @@ pub struct WorkflowViewer {
 
     #[builder(default)]
     pub alerts: im::OrdMap<(GraphId, NodeId), Cow<'static, str>>,
+
+    #[builder(default=Arc::new(StandardTheme))]
+    pub themes: Arc<dyn ThemeCodex>,
 }
 
 impl WorkflowViewer {
@@ -559,38 +562,40 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
 
     fn node_frame(
         &mut self,
-        default: egui::Frame,
-        node: NodeId,
+        mut frame: egui::Frame,
+        node_id: NodeId,
         _inputs: &[egui_snarl::InPin],
         _outputs: &[egui_snarl::OutPin],
         snarl: &Snarl<WorkNode>,
     ) -> egui::Frame {
-        if let Some(_msg) = self.alerts.get(&(self.edit_ctx.current_graph, node)) {
-            default.stroke((8.0, Color32::YELLOW.gamma_multiply(0.75)))
-        } else if snarl[node].0.downcast_ref::<CommentNode>().is_some() {
-            default.fill(CommentNode::bg_color())
-        } else {
-            default
+        if let Some(_msg) = self.alerts.get(&(self.edit_ctx.current_graph, node_id)) {
+            frame = frame.stroke((8.0, Color32::YELLOW.gamma_multiply(0.75)));
         }
+
+        let node = &snarl[node_id];
+        let theme = node.as_ui().theme(self.themes.as_ref());
+        let frame = theme.apply_body(frame);
+
+        theme.apply_overview(frame, self.transform.scaling)
     }
 
     fn header_frame(
         &mut self,
-        default: egui::Frame,
-        node: NodeId,
+        frame: egui::Frame,
+        node_id: NodeId,
         _inputs: &[egui_snarl::InPin],
         _outputs: &[egui_snarl::OutPin],
         snarl: &Snarl<WorkNode>,
     ) -> egui::Frame {
-        if snarl[node].0.downcast_ref::<CommentNode>().is_some() {
-            let node_info = snarl.get_node_info(node).unwrap();
-            if node_info.open {
-                default.fill(CommentNode::bg_color())
-            } else {
-                default.fill(Color32::from_rgb(0x88, 0x88, 0))
-            }
+        let node = &snarl[node_id];
+        let theme = node.as_ui().theme(self.themes.as_ref());
+        let node_info = snarl.get_node_info(node_id).unwrap();
+
+        if node_info.open {
+            let frame = theme.apply_header(frame);
+            theme.apply_overview(frame, self.transform.scaling)
         } else {
-            default
+            theme.apply_collapsed(frame)
         }
     }
 
@@ -704,6 +709,18 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         ui: &mut Ui,
         snarl: &mut Snarl<WorkNode>,
     ) {
+        if self.transform.scaling <= 0.34
+            && let Some(icon) = snarl[node].as_ui().icon()
+        {
+            // let egui::Vec2 { x, y } = rect.size();
+            // let text = RichText::new(icon).size(x.min(y) * 0.5);
+
+            let text = RichText::new(icon).size(128.0).strong();
+            let widget = egui::Label::new(text).selectable(false);
+
+            ui.place(rect, widget);
+        }
+
         if self.shadow.is_disabled(node) {
             let painter = ui.painter();
             painter.rect_filled(

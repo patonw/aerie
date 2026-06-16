@@ -1,7 +1,7 @@
 use crate::{
     config::ModelRole,
     rig::message::Message,
-    workflow::{CheckContext, GraphId, with_deadline},
+    workflow::{CheckContext, GraphId, NodeTheme, ThemeCodex, with_deadline},
 };
 use anyhow::Context as _;
 use decorum::E64;
@@ -1073,6 +1073,14 @@ impl UiNode for InvokeTool {
         };
 
         self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.remote_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::WRENCH)
     }
 }
 
