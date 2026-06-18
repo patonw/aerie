@@ -324,6 +324,12 @@ impl DynNode for Text {
 }
 
 impl UiNode for Text {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.value == other.value && self.delim == other.delim)
+    }
+
     fn title(&self) -> &str {
         "Text"
     }
