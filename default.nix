@@ -5,7 +5,7 @@
   gitignore ? import sources."gitignore.nix" {},
   nixgl ? import sources.nixGL {},
   rust-toolchain ? fenix.combine [
-    fenix.complete.toolchain
+    fenix.stable.toolchain
     fenix.targets.wasm32-unknown-unknown.latest.rust-std
   ],
   naersk ? pkgs.callPackage sources.naersk {
