@@ -85,6 +85,12 @@ impl DynNode for ChatNode {
 }
 
 impl UiNode for ChatNode {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.name == other.name && self.prompt == other.prompt)
+    }
+
     fn title(&self) -> &str {
         if self.name.is_empty() {
             "Chat"
@@ -340,6 +346,15 @@ impl DynNode for StructuredChat {
 }
 
 impl UiNode for StructuredChat {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other.downcast_ref::<Self>().is_some_and(|other| {
+            self.name == other.name
+                && self.prompt == other.prompt
+                && self.retries == other.retries
+                && self.extract == other.extract
+        })
+    }
+
     fn title(&self) -> &str {
         if self.name.is_empty() {
             "Structured Output"

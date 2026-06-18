@@ -134,6 +134,10 @@ impl WorkNode {
     pub fn is_eager(&self) -> bool {
         self.0.as_ref().downcast_ref::<Select>().is_some()
     }
+
+    pub fn weak_eq(&self, other: &Self) -> bool {
+        self.0.weak_eq(other.0.as_ref()) // inside a box
+    }
 }
 
 pub struct GraphSubmenu(
