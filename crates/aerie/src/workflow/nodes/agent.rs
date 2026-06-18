@@ -88,6 +88,12 @@ impl DynNode for Tools {
 }
 
 impl UiNode for Tools {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.toolset == other.toolset)
+    }
+
     fn title(&self) -> &str {
         if self.name.is_empty() {
             "Tools"
@@ -403,6 +409,14 @@ mod legacy {
     }
 
     impl UiNode for AgentNode {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other.downcast_ref::<Self>().is_some_and(|other| {
+                self.model == other.model
+                    && self.preamble == other.preamble
+                    && self.temperature == other.temperature
+            })
+        }
+
         fn title(&self) -> &str {
             if self.name.is_empty() {
                 "Agent (Deprecated)"
@@ -658,6 +672,14 @@ impl DynNode for RoleAgent {
 }
 
 impl UiNode for RoleAgent {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other.downcast_ref::<Self>().is_some_and(|other| {
+            self.role == other.role
+                && self.preamble == other.preamble
+                && self.temperature == other.temperature
+        })
+    }
+
     fn title(&self) -> &str {
         if self.name.is_empty() {
             "Agent"
@@ -872,6 +894,12 @@ impl DynNode for ChatContext {
 }
 
 impl UiNode for ChatContext {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.context_doc == other.context_doc)
+    }
+
     fn title(&self) -> &str {
         "Context"
     }
@@ -1007,6 +1035,12 @@ impl DynNode for InvokeTool {
 }
 
 impl UiNode for InvokeTool {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other.downcast_ref::<Self>().is_some_and(|other| {
+            self.tool_name == other.tool_name && self.arguments == other.arguments
+        })
+    }
+
     fn title(&self) -> &str {
         "Invoke Tool"
     }

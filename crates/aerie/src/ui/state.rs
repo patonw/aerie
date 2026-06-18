@@ -532,6 +532,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         self.redo_stack.remove(&self.editing);
 
         if let Some(viewer) = &self.viewer {
+            // TODO: also compute changes for subgraph viewer
             let edited = shadow
                 .nodes
                 .iter()
@@ -540,7 +541,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
                         .graph
                         .nodes
                         .get(id)
-                        .map(|other| meta.value != other.value)
+                        .map(|other| !meta.value.weak_eq(&other.value))
                         .unwrap_or_default()
                 })
                 .map(|(id, _)| *id)
@@ -554,7 +555,6 @@ impl<W: WorkflowStore> WorkflowState<W> {
                 .map(|w| w.in_pin.node)
                 .collect::<im::OrdSet<NodeId>>();
 
-            // TODO: consider wires too
             viewer.events.insert(AppEvent::NodesChanged(
                 self.shadow.graph.uuid,
                 edited.union(connected),

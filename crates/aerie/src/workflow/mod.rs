@@ -941,6 +941,19 @@ where
 }
 
 impl ShadowGraph<WorkNode> {
+    pub fn weak_eq(&self, other: &Self) -> bool {
+        let cmp_nodes = |id| {
+            self.nodes
+                .get(id)
+                .zip(other.nodes.get(id))
+                .is_some_and(|(a, b)| a.value.weak_eq(&b.value))
+        };
+
+        self.wires == other.wires
+            && self.disabled == other.disabled
+            && self.nodes.keys().all(cmp_nodes)
+    }
+
     pub fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
         let mut alerts = im::OrdMap::new();
         for (id, subnode) in &self.nodes {
@@ -1326,7 +1339,11 @@ pub trait DynNode {
     }
 }
 
-pub trait UiNode: DynNode {
+pub trait UiNode: DynNode + DynEq {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        self.dyn_eq(other)
+    }
+
     /// Callback to enforce uniqueness after a node is duplicated using copy/paste
     fn on_paste(&mut self) {}
 

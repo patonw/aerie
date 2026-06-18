@@ -238,6 +238,14 @@ fn rhai_to_value(data: &Dynamic, kind: ValueKind) -> Result<Value, &'static str>
 }
 
 impl super::UiNode for RhaiNode {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other.downcast_ref::<Self>().is_some_and(|other| {
+            self.script == other.script
+                && self.inputs == other.inputs
+                && self.outputs == other.outputs
+        })
+    }
+
     fn title(&self) -> &str {
         if self.name.is_empty() {
             "Rhai script"

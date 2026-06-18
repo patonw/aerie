@@ -340,7 +340,7 @@ impl Subgraph {
 
             ctx.event(AppEvent::ProgressAdd(graph_id.0, 1));
 
-            for (res, val) in results.iter_mut().zip(exec.outputs.into_iter()) {
+            for (res, val) in results.iter_mut().zip(exec.outputs) {
                 push_values(res, val);
             }
         }
@@ -442,7 +442,7 @@ impl Subgraph {
             .try_fold(
                 || results.clone(),
                 |mut acc: Vec<Value>, item| -> Result<_, WorkflowError> {
-                    for (res, val) in acc.iter_mut().zip(item?.into_iter()) {
+                    for (res, val) in acc.iter_mut().zip(item?) {
                         push_values(res, val);
                     }
                     Ok(acc)
@@ -451,7 +451,7 @@ impl Subgraph {
             .try_reduce(
                 || results.clone(),
                 |mut left, right| {
-                    for (acc, items) in left.iter_mut().zip(right.into_iter()) {
+                    for (acc, items) in left.iter_mut().zip(right) {
                         concat_values(acc, items);
                     }
                     Ok(left)
@@ -588,6 +588,16 @@ impl DynNode for Subgraph {
 }
 
 impl UiNode for Subgraph {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other.downcast_ref::<Self>().is_some_and(|other| {
+            self.flavor == other.flavor
+                && self.parallel == other.parallel
+                && self.limit == other.limit
+                && self.timeout == other.timeout
+                && self.graph.weak_eq(&other.graph)
+        })
+    }
+
     fn on_paste(&mut self) {
         let uuid = crate::workflow::GraphId::new();
         let nodes = self

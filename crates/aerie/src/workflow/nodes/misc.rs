@@ -48,6 +48,12 @@ impl DynNode for CommentNode {
 }
 
 impl UiNode for CommentNode {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.comment == other.comment)
+    }
+
     fn title(&self) -> &str {
         "Comment"
     }
@@ -178,6 +184,12 @@ impl DynNode for TemplateNode {
 }
 
 impl UiNode for TemplateNode {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.template == other.template)
+    }
+
     fn title(&self) -> &str {
         "Template"
     }
