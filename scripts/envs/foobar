@@ -1,0 +1,6 @@
+export BASE_URL=http://localhost:8058
+export EXTRA_HEADERS=(
+  X-User-Name:foobar
+  X-User-Env:OMDB_API_KEY=placeholder
+  X-User-Env:WHOAMI=foobar
+)

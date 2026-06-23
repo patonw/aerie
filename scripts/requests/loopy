@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+source $(dirname $BASH_SOURCE)/_init_
+
+xh POST $BASE_URL/sse \
+  ${EXTRA_HEADERS[*]} \
+  workflow=loopy \
+  "#events[0]=**/*.preview" \
+  $@

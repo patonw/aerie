@@ -1,7 +1,4 @@
-use std::{
-    borrow::Cow,
-    sync::{Arc, LazyLock},
-};
+use std::{borrow::Cow, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -17,14 +14,6 @@ use crate::{
 };
 
 use super::ValueKind;
-
-static ENV_JSON: LazyLock<Arc<serde_json::Value>> = LazyLock::new(|| {
-    let entries = std::env::vars()
-        .map(|(k, v)| (k, serde_json::Value::String(v)))
-        .collect();
-
-    Arc::new(serde_json::Value::Object(entries))
-});
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -271,11 +260,19 @@ impl DynNode for EnvironmentNode {
 
     fn execute(
         &mut self,
-        _ctx: &RunContext,
+        ctx: &RunContext,
         _node_id: egui_snarl::NodeId,
         _inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        Ok(vec![Value::Json(ENV_JSON.clone())])
+        let entries = ctx
+            .agent_factory
+            .env
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+            .collect();
+        let entries = Arc::new(serde_json::Value::Object(entries));
+
+        Ok(vec![Value::Json(entries)])
     }
 }
 

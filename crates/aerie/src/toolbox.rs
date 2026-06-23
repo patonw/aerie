@@ -419,7 +419,10 @@ impl ToolProvider {
         }
     }
 
-    pub async fn from_spec(spec: &ToolSpec) -> anyhow::Result<Self> {
+    pub async fn from_spec(
+        spec: &ToolSpec,
+        vars: &std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<Self> {
         let client = match spec {
             ToolSpec::Stdio {
                 dir,
@@ -441,7 +444,7 @@ impl ToolProvider {
                             }
 
                             for (k, v) in env.split("\n").filter_map(|s| s.split_once('=')) {
-                                let value = subst::substitute(v, &subst::Env)
+                                let value = subst::substitute(v, vars)
                                     .map(Cow::Owned)
                                     .unwrap_or(Cow::Borrowed(v));
 
@@ -462,10 +465,12 @@ impl ToolProvider {
                 let auth_var = auth_var.as_ref().filter(|s| !s.is_empty());
                 let config = if uri.contains(API_KEY) {
                     let Some(var_name) = auth_var else {
-                        anyhow::bail!("No enviroment for API KEY deifned")
+                        anyhow::bail!("No enviroment for API KEY defined")
                     };
 
-                    let token = std::env::var(var_name)?;
+                    let token = vars
+                        .get(var_name)
+                        .context(format!("Environment variable {var_name} not found"))?;
                     let uri = uri.replace(API_KEY, &token);
 
                     StreamableHttpClientTransportConfig::with_uri(uri.as_str())
@@ -474,7 +479,9 @@ impl ToolProvider {
 
                     // optional auth
                     if let Some(var_name) = auth_var {
-                        let token = std::env::var(var_name)?;
+                        let token = vars
+                            .get(var_name)
+                            .context(format!("Environment variable {var_name} not found"))?;
                         config = config.auth_header(token);
                     }
 
@@ -711,14 +718,19 @@ impl ToolStore {
         }
     }
 
-    pub async fn load_provider(&self, toolbox: Toolbox, name: &str) -> anyhow::Result<Toolbox> {
+    pub async fn load_provider(
+        &self,
+        toolbox: Toolbox,
+        name: &str,
+        vars: &std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<Toolbox> {
         use crate::storage::CachedDirStore as _;
         let Ok(spec) = self.load(name) else {
             anyhow::bail!("Could not load tool spec for {name}");
         };
 
         if spec.enabled() {
-            let provider = ToolProvider::from_spec(&spec)
+            let provider = ToolProvider::from_spec(&spec, vars)
                 .await
                 .context(format!("Could not load provider {name} with spec {spec:?}"))?;
 
