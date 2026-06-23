@@ -1,7 +1,8 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     convert::identity,
     fs::OpenOptions,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     str::FromStr as _,
     sync::{
@@ -24,10 +25,12 @@ use aerie::{
         write_value,
     },
 };
+use anyhow::Context as _;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use clap::{Parser, Subcommand};
 use egui_snarl::Snarl;
 use itertools::Itertools as _;
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
@@ -236,24 +239,128 @@ impl Default for ExecOverrides {
     }
 }
 
-/// App state common to all subcommands
-struct Scaffolding {
+#[derive(Debug, Default, Clone)]
+struct UserData {
+    name: String,
+    env: HashMap<String, String>,
+}
+
+impl UserData {
+    #[allow(unused)]
+    pub fn with_env(self, env: impl IntoIterator<Item = (String, String)>) -> Self {
+        Self {
+            env: env.into_iter().collect(),
+            ..self
+        }
+    }
+}
+
+impl From<&str> for UserData {
+    fn from(value: &str) -> Self {
+        Self {
+            name: value.to_string(),
+            env: Default::default(),
+        }
+    }
+}
+
+#[derive(TypedBuilder)]
+struct ScopeFactory {
     pub models: Arc<BTreeMap<ModelRole, String>>,
     pub workflow_store: Option<WorkflowStoreDir>,
     pub session: ChatSession,
-    pub settings: Preferences,
+    pub settings: Arc<Preferences>,
+    pub rt: tokio::runtime::Handle,
+    pub agent_factory: AgentFactory,
+    pub shutdown: CancellationToken,
+
+    #[builder(default=Mutex::new(LruCache::new(NonZeroUsize::new(64).unwrap())))]
+    pub scopes: Mutex<LruCache<String, Arc<ExecScope>>>,
+}
+
+impl ScopeFactory {
+    pub fn no_tools(&self) -> Arc<ExecScope> {
+        self.scopes
+            .lock()
+            .unwrap()
+            .get_or_insert("###no_tools###".into(), || {
+                let agent_factory = self
+                    .agent_factory
+                    .clone()
+                    .with_env(std::env::vars())
+                    .with_tools(None);
+
+                Arc::new(
+                    ExecScope::builder()
+                        .models(self.models.clone())
+                        .workflow_store(self.workflow_store.clone())
+                        .session(self.session.clone())
+                        .settings(self.settings.clone())
+                        .rt(self.rt.clone())
+                        .agent_factory(agent_factory)
+                        .shutdown(self.shutdown.clone())
+                        .build(),
+                )
+            })
+            .clone()
+    }
+
+    pub fn user_scope(&self, user_data: &UserData) -> Arc<ExecScope> {
+        let UserData { name, env } = user_data;
+        self.scopes
+            .lock()
+            .unwrap()
+            .get_or_insert(name.clone(), || {
+                let env = std::env::vars().chain(env.clone());
+                let agent_factory = self.agent_factory.clone().with_env(env);
+
+                let load_results = self.rt.block_on(async { agent_factory.load_tools().await });
+                for result in load_results {
+                    if let Err(err) = result {
+                        tracing::error!(error = %err);
+                    }
+                }
+
+                Arc::new(
+                    ExecScope::builder()
+                        .models(self.models.clone())
+                        .workflow_store(self.workflow_store.clone())
+                        .session(self.session.clone())
+                        .settings(self.settings.clone())
+                        .rt(self.rt.clone())
+                        .agent_factory(agent_factory)
+                        .shutdown(self.shutdown.clone())
+                        .build(),
+                )
+            })
+            .clone()
+    }
+}
+
+/// App state common to all subcommands
+#[derive(TypedBuilder, Clone)]
+struct ExecScope {
+    pub models: Arc<BTreeMap<ModelRole, String>>,
+    pub workflow_store: Option<WorkflowStoreDir>,
+    pub session: ChatSession,
+    pub settings: Arc<Preferences>,
     pub rt: tokio::runtime::Handle,
     pub agent_factory: AgentFactory,
     pub shutdown: CancellationToken,
 }
 
 /// Instantiate and initialize common objects from global arguments
-fn make_scaffolding(args: &Args, rt: &tokio::runtime::Handle) -> anyhow::Result<Scaffolding> {
+fn nameless_scope(args: &Args, rt: &tokio::runtime::Handle) -> anyhow::Result<Arc<ExecScope>> {
+    Ok(make_scope_factory(args, rt)?.user_scope(&UserData::default()))
+}
+
+fn make_scope_factory(args: &Args, rt: &tokio::runtime::Handle) -> anyhow::Result<ScopeFactory> {
     let workflow_store = args
         .workflows
         .as_ref()
         .map(|p| WorkflowStoreDir::init(p, false))
-        .transpose()?;
+        .transpose()?
+        .context("Workflow directory required for server mode")?;
     let tool_store = args.tools.as_ref().map(|p| {
         let store = ToolStore::new(p);
         store.preload_all();
@@ -283,14 +390,12 @@ fn make_scaffolding(args: &Args, rt: &tokio::runtime::Handle) -> anyhow::Result<
     } else {
         Default::default()
     };
-
     let mut settings = if settings_path.is_file() {
         let text = std::fs::read_to_string(&settings_path)?;
         toml::from_str(&text)?
     } else {
         Preferences::default()
     };
-
     tracing::debug!("Loaded settings {settings:?}");
     if let Some(profile) = &args.profile {
         if !settings.has_profile(profile) {
@@ -305,7 +410,6 @@ fn make_scaffolding(args: &Args, rt: &tokio::runtime::Handle) -> anyhow::Result<
     if let Some(temperature) = &args.temperature {
         settings.temperature = *temperature;
     }
-
     let models: BTreeMap<ModelRole, String> = if args.models.is_empty() {
         settings.get_model_map()
     } else {
@@ -330,41 +434,37 @@ fn make_scaffolding(args: &Args, rt: &tokio::runtime::Handle) -> anyhow::Result<
 
         model_map
     };
-
     let models = Arc::new(models);
-
-    // The chain tool requires these. It's an impediment to concurrent execution.
-    // Need to scope this by run somehow
     let next_workflow: Arc<ArcSwapOption<String>> = Default::default();
     let next_prompt: Arc<ArcSwapOption<String>> = Default::default();
     let next_images: Arc<ArcSwap<Vec<String>>> = Default::default();
-
     let agent_factory = AgentFactory::builder()
         .rt(rt.clone())
         .prefs(Arc::new(ArcSwap::from_pointee(settings.clone())))
         .tools(tool_store)
-        .store(workflow_store.clone())
+        .store(Some(workflow_store.clone()))
         .next_workflow(next_workflow.clone())
         .next_prompt(next_prompt.clone())
         .next_images(next_images.clone())
         .build();
 
-    let load_results = rt.block_on(async { agent_factory.load_tools().await });
-    for result in load_results {
-        if let Err(err) = result {
-            tracing::error!(error = %err);
-        }
-    }
+    // // Now loads on new scope
+    // let load_results = rt.block_on(async { agent_factory.load_tools().await });
+    // for result in load_results {
+    //     if let Err(err) = result {
+    //         tracing::error!(error = %err);
+    //     }
+    // }
 
-    Ok(Scaffolding {
-        models,
-        workflow_store,
-        session,
-        settings,
-        rt: rt.clone(),
-        agent_factory,
-        shutdown: CancellationToken::new(),
-    })
+    Ok(ScopeFactory::builder()
+        .models(models)
+        .workflow_store(Some(workflow_store))
+        .session(session)
+        .settings(Arc::new(settings))
+        .rt(rt.clone())
+        .agent_factory(agent_factory)
+        .shutdown(CancellationToken::new())
+        .build())
 }
 
 /// Runs recursive checks on workflows (i.e. missing tools, etc)
@@ -374,11 +474,12 @@ fn check_workflows(args: &Args, pretty: bool) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
 
-    let Scaffolding {
+    let exec_scope = nameless_scope(args, rt.handle())?;
+    let ExecScope {
         workflow_store,
         agent_factory,
         ..
-    } = make_scaffolding(args, rt.handle())?;
+    } = exec_scope.as_ref();
     let toolbox = &agent_factory.toolbox;
 
     let Some(store) = workflow_store else {
@@ -450,7 +551,7 @@ fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
 
-    let mut scaffolding = make_scaffolding(args, rt.handle())?;
+    let scaffolding = nameless_scope(args, rt.handle())?;
 
     let mut prompt = input.as_ref().cloned().unwrap_or_default();
     if &prompt == "-" {
@@ -469,7 +570,7 @@ fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
     } else if workflow_path.is_file() {
         let reader = OpenOptions::new().read(true).open(workflow_path)?;
         serde_yml::from_reader(reader)?
-    } else if let Some(store) = &mut scaffolding.workflow_store {
+    } else if let Some(store) = &scaffolding.workflow_store {
         store.load(workflow)?
     } else {
         anyhow::bail!("Invalid file: {workflow:?}");
@@ -566,7 +667,7 @@ fn execute_workflow(args: &Args, exec_args: &ExecArgs) -> anyhow::Result<()> {
 
 /// Template method to run workflows, possibly auto-running chained workflows
 fn run_loop(
-    scaffolding: &Scaffolding,
+    scaffolding: &ExecScope,
     exec_args: &ExecArgs,
     overrides: ExecOverrides,
     mut prompt: String,
@@ -584,7 +685,7 @@ fn run_loop(
     }));
 
     for run_count in 0..=autoruns {
-        let Scaffolding {
+        let ExecScope {
             models,
             workflow_store,
             session,
@@ -757,6 +858,7 @@ fn run_loop(
 #[cfg(feature = "runner-http")]
 mod service {
     use std::collections::BTreeMap;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     use super::*;
@@ -765,6 +867,7 @@ mod service {
     use aerie::workflow::store::WorkflowStore;
     use async_stream::stream;
     use axum::extract::{Json, State};
+    use axum::http::HeaderMap;
     use axum::response::Sse;
     use axum::response::sse::Event;
     use axum::{
@@ -774,6 +877,34 @@ mod service {
         routing::{get, post},
     };
     use glob::Pattern;
+    use tokio::task::block_in_place;
+
+    struct MaybeUserData(anyhow::Result<Option<UserData>>);
+
+    impl From<axum::http::HeaderMap> for MaybeUserData {
+        fn from(headers: axum::http::HeaderMap) -> Self {
+            // TODO: config or build feature?
+            if let Some(user_header) = headers.get("X-User-Name") {
+                let env = headers
+                    .get_all("X-User-Env")
+                    .iter()
+                    .filter_map(|kv| kv.to_str().ok())
+                    .filter_map(|kv| kv.split_once("="))
+                    .map(|(k, v)| (k.to_string(), v.to_string()));
+
+                let result = user_header
+                    .to_str()
+                    .context("Invalid header value")
+                    .map(|name| name.into())
+                    .map(|ud: UserData| ud.with_env(env))
+                    .map(Some);
+
+                return Self(result);
+            }
+
+            Self(Ok(None))
+        }
+    }
 
     #[derive(Debug, Deserialize)]
     struct ExecutionParams {
@@ -785,9 +916,16 @@ mod service {
     }
 
     async fn execute_handler(
-        State(scaffolding): State<Arc<Scaffolding>>,
+        headers: HeaderMap,
+        State(scope_factory): State<Arc<ScopeFactory>>,
         Json(payload): Json<ExecArgs>,
     ) -> impl IntoResponse {
+        let Ok(user_data) = MaybeUserData::from(headers).0 else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+
+        let scaffolding =
+            block_in_place(|| scope_factory.user_scope(&user_data.unwrap_or_default()));
         // let scaffolding_ = scaffolding.lock().await;
         let Some(workflow_store) = &scaffolding.workflow_store else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -857,11 +995,19 @@ mod service {
     }
 
     async fn sse_handler(
-        State(scaffolding): State<Arc<Scaffolding>>,
+        headers: HeaderMap,
+        State(scope_factory): State<Arc<ScopeFactory>>,
         Json(payload): Json<ExecutionParams>,
     ) -> impl IntoResponse //Sse<impl Stream<Item = Result<Event, Infallible>>>
     {
+        let Ok(user_data) = MaybeUserData::from(headers).0 else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+
+        let scaffolding =
+            block_in_place(|| scope_factory.user_scope(&user_data.unwrap_or_default()));
         let Some(workflow_store) = &scaffolding.workflow_store else {
+            tracing::error!("Server started without workflow directory");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
 
@@ -954,31 +1100,29 @@ mod service {
             .enable_all()
             .build()?;
 
-        let scaffolding = make_scaffolding(args, rt.handle())?;
-        let rt = scaffolding.rt.clone();
+        let scope_factory = Arc::new(make_scope_factory(args, rt.handle())?);
 
         // TODO: require workflow store
 
-        let scaffolding = Arc::new(scaffolding);
-        let shutdown = scaffolding.shutdown.clone();
+        let shutdown = scope_factory.shutdown.clone();
         rt.spawn(async move {
             let _ = tokio::signal::ctrl_c().await;
             tracing::info!("Received interrupt. Beginning shutdown sequence...");
             shutdown.cancel();
         });
 
-        let shutdown = scaffolding.shutdown.clone();
+        let shutdown = scope_factory.shutdown.clone();
 
         rt.block_on(async move {
             let app = Router::new()
-                .route("/", get(|| async { "Hello, World!" }))
                 .route(
                     "/list",
                     get({
-                        let scaffolding_ = scaffolding.clone();
+                        let scope_factory = scope_factory.clone();
                         || async move {
+                            let scope = scope_factory.no_tools();
                             // let scaffolding_ = scaffolding.lock().await;
-                            let Some(workflow_store) = &scaffolding_.workflow_store else {
+                            let Some(workflow_store) = &scope.workflow_store else {
                                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
                             };
 
@@ -993,7 +1137,7 @@ mod service {
                 )
                 .route("/execute", post(execute_handler))
                 .route("/sse", post(sse_handler))
-                .with_state(scaffolding.clone());
+                .with_state(scope_factory.clone());
 
             let HttpServerArgs { host, port } = server_args;
             let addr = format!("{host}:{port}");
@@ -1016,7 +1160,7 @@ mod service {
 
 #[cfg(feature = "runner-mcp")]
 mod mcp_server {
-    use super::{ExecOverrides, Scaffolding, run_loop};
+    use super::{ExecOverrides, ExecScope, run_loop};
 
     use aerie::{
         toolbox::parse_or_prompt_schema,
@@ -1033,7 +1177,7 @@ mod mcp_server {
 
     #[derive(TypedBuilder)]
     pub struct RunnerService {
-        scaffolding: Arc<Scaffolding>,
+        scaffolding: Arc<ExecScope>,
 
         #[builder(default)]
         autoruns: usize,
@@ -1225,7 +1369,7 @@ mod mcp_server {
             .enable_all()
             .build()?;
 
-        let scaffolding = super::make_scaffolding(args, rt.handle())?;
+        let scaffolding = super::nameless_scope(args, rt.handle())?;
 
         let shutdown = scaffolding.shutdown.clone();
         rt.spawn(async move {
@@ -1241,7 +1385,7 @@ mod mcp_server {
             use rmcp::{ServiceExt, transport::stdio};
             let shutdown = scaffolding.shutdown.clone();
             let runner_service = RunnerService::builder()
-                .scaffolding(Arc::new(scaffolding))
+                .scaffolding(scaffolding.clone())
                 .autoruns(mcp_args.autoruns)
                 .build();
 

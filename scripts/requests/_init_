@@ -1,0 +1,17 @@
+if [ $# -eq 0 ]; then
+  echo "Error: Environment profile required" >&2
+  exit 1
+fi
+
+PROFILE=$(dirname $BASH_SOURCE)/../envs/$1
+
+if [ ! -f "$PROFILE" ]; then
+  echo "Profile '$1' does not exist" >&2
+  exit 2
+fi
+
+source $(dirname $BASH_SOURCE)/../envs/$1
+#export $(grep -v '^#' $PROFILE | xargs)
+shift
+
+

@@ -1,6 +1,6 @@
 [package]
 name = "aerie"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2024"
 default-run = "aerie"
 
@@ -48,7 +48,7 @@ petgraph = { version = "0.8", default-features = false, features = [
 ] }
 regex = "1.12.2"
 # rig-dynclient = { path = "/code/rust/rig-dynclient", features = ["rmcp"] }
-rig-dynclient = { git = "https://github.com/patonw/rig-dynclient.git", tag = "v0.38.2", features = [
+rig-dynclient = { git = "https://github.com/patonw/rig-dynclient.git", tag = "v0.39.0", features = [
   "rmcp",
 ] }
 rpds = { version = "1.2.0", features = ["serde"] }
