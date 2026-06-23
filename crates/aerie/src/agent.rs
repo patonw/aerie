@@ -13,6 +13,7 @@ use rig_dynclient::{builder::DynClientBuilder, completion::CompletionModelHandle
 use scopeguard::defer;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     hash::Hash,
     sync::{
         Arc,
@@ -86,6 +87,9 @@ pub struct AgentFactory {
     // #[builder(default, setter(strip_option))]
     pub tools: Option<ToolStore>,
 
+    #[builder(default=std::env::vars().collect())]
+    pub env: HashMap<String, String>,
+
     #[builder(default)]
     pub errors: ErrorList<anyhow::Error>,
 
@@ -112,6 +116,18 @@ pub struct AgentFactory {
 }
 
 impl AgentFactory {
+    pub fn with_tools(self, tools: Option<ToolStore>) -> Self {
+        Self { tools, ..self }
+    }
+
+    pub fn with_env(self, env: impl IntoIterator<Item = (String, String)>) -> Self {
+        Self {
+            env: env.into_iter().collect(),
+            toolbox: Default::default(),
+            ..self
+        }
+    }
+
     #[allow(deprecated)]
     pub fn agent_builder(&self, provider_model: &str) -> anyhow::Result<AgentBuilderT> {
         let temperature = self.prefs.view(|s| s.temperature);
@@ -120,7 +136,8 @@ impl AgentFactory {
 
         tracing::info!("Building agent with provider {provider} model {model}");
 
-        let completion = DynClientBuilder::new().completion(provider.leak(), &model)?;
+        let completion =
+            DynClientBuilder::with_env(self.env.clone()).completion(provider.leak(), &model)?;
 
         let handle = CompletionModelHandle::new(Arc::from(completion));
         Ok(AgentBuilder::new(handle).temperature(temperature))
@@ -192,7 +209,7 @@ impl AgentFactory {
                 task_count.fetch_sub(1, Ordering::Relaxed);
             };
 
-            tool_store.load_provider(toolbox, name).await?;
+            tool_store.load_provider(toolbox, name, &self.env).await?;
         }
         Ok(())
     }
