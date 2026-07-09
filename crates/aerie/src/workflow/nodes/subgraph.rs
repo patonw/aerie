@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     sync::{Arc, atomic::Ordering},
+    time::{Duration, Instant},
 };
 
 use egui::{Sense, UiBuilder};
@@ -16,8 +17,8 @@ use crate::{
     ui::AppEvent,
     utils::ImmutableMapExt,
     workflow::{
-        CheckContext, DynNode, FlexNode, GraphId, MetaNode, ShadowGraph, UiNode, Value, ValueKind,
-        WorkNode, WorkflowError,
+        CheckContext, DynNode, FlexNode, GraphId, MetaNode, NodeTheme, ShadowGraph, ThemeCodex,
+        UiNode, Value, ValueKind, WorkNode, WorkflowError, min_instant,
         nodes::LoopControl,
         runner::{ExecState, WorkflowRunner},
     },
@@ -51,10 +52,15 @@ pub struct Subgraph {
     #[serde(default)]
     pub flavor: Flavor,
 
+    /// Attempt data parallelism
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub parallel: bool,
 
+    /// Maximum number of passes
     pub limit: Option<usize>,
+
+    /// Max seconds for each pass
+    pub timeout: Option<u64>,
 
     pub graph: ShadowGraph<WorkNode>,
 }
@@ -72,6 +78,7 @@ impl Default for Subgraph {
             flavor: Flavor::Simple,
             parallel: false,
             limit: None,
+            timeout: None,
             graph,
         }
     }
@@ -92,13 +99,17 @@ impl Subgraph {
         let mut ctx = ctx.clone();
         ctx.is_subgraph = true;
 
+        let deadline = self
+            .timeout
+            .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
+
         let exec_id = ctx.exec_id.scope(self.graph.uuid, 0);
         ctx.node_state.reset(exec_id);
         let state_view = ctx.node_state.view(exec_id);
 
         let mut exec = WorkflowRunner::builder()
             .inputs(inputs)
-            .run_ctx(ctx.with_exec_id(exec_id))
+            .run_ctx(ctx.with_exec_id(exec_id).with_deadline(deadline))
             .state_view(state_view)
             .build();
 
@@ -111,6 +122,12 @@ impl Subgraph {
         loop {
             if interrupt.load(Ordering::Relaxed) {
                 break;
+            }
+
+            if let Some(deadline) = deadline
+                && deadline <= Instant::now()
+            {
+                Err(WorkflowError::Timeout)?;
             }
 
             match exec.step(&mut target) {
@@ -151,13 +168,18 @@ impl Subgraph {
         // Runs the subgraph until it stops requesting to repeat.
         // Final results gathered from Finish node on last pass.
         let mut results = loop {
+            let deadline = self
+                .timeout
+                .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
+            let deadline = min_instant(deadline, ctx.deadline);
+
             tracing::debug!("Looping subgraph run #{loop_index}");
             let exec_id = ctx.exec_id.scope(self.graph.uuid, loop_index);
             let state_view = ctx.node_state.view(exec_id);
 
             let mut exec = WorkflowRunner::builder()
                 .inputs(inputs.clone())
-                .run_ctx(ctx.with_exec_id(exec_id))
+                .run_ctx(ctx.with_exec_id(exec_id).with_deadline(deadline))
                 .state_view(state_view)
                 .build();
 
@@ -172,6 +194,12 @@ impl Subgraph {
             let result = loop {
                 if interrupt.load(Ordering::Relaxed) {
                     break Ok(false);
+                }
+
+                if let Some(deadline) = deadline
+                    && deadline <= Instant::now()
+                {
+                    Err(WorkflowError::Timeout)?;
                 }
 
                 let result = exec.step(&mut target);
@@ -268,12 +296,17 @@ impl Subgraph {
         let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
         ctx.event(AppEvent::ProgressBegin(graph_id.0, num_iters));
         for i in 0..num_iters {
+            let deadline = self
+                .timeout
+                .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
+            let deadline = min_instant(deadline, ctx.deadline);
+
             let sliced = par_slice(&inputs, i);
             let exec_id = ctx.exec_id.scope(self.graph.uuid, i);
             let state_view = ctx.node_state.view(exec_id);
             let mut exec = WorkflowRunner::builder()
                 .inputs(sliced)
-                .run_ctx(ctx.with_exec_id(exec_id))
+                .run_ctx(ctx.with_exec_id(exec_id).with_deadline(deadline))
                 .state_view(state_view)
                 .build();
 
@@ -286,6 +319,12 @@ impl Subgraph {
             loop {
                 if interrupt.load(Ordering::Relaxed) {
                     Err(WorkflowError::Interrupted)?;
+                }
+
+                if let Some(deadline) = deadline
+                    && deadline <= Instant::now()
+                {
+                    Err(WorkflowError::Timeout)?;
                 }
 
                 match exec.step(&mut target) {
@@ -301,7 +340,7 @@ impl Subgraph {
 
             ctx.event(AppEvent::ProgressAdd(graph_id.0, 1));
 
-            for (res, val) in results.iter_mut().zip(exec.outputs.into_iter()) {
+            for (res, val) in results.iter_mut().zip(exec.outputs) {
                 push_values(res, val);
             }
         }
@@ -347,9 +386,13 @@ impl Subgraph {
                 let sliced = par_slice(&inputs, i);
                 let exec_id = ctx.exec_id.scope(self.graph.uuid, i);
                 let state_view = ctx.node_state.view(exec_id);
+                let deadline = self
+                    .timeout
+                    .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
+                let deadline = min_instant(deadline, ctx.deadline);
                 let mut exec = WorkflowRunner::builder()
                     .inputs(sliced)
-                    .run_ctx(ctx.with_exec_id(exec_id))
+                    .run_ctx(ctx.with_exec_id(exec_id).with_deadline(deadline))
                     .state_view(state_view)
                     .build();
 
@@ -358,6 +401,11 @@ impl Subgraph {
             })
             .map(|mut exec| -> Result<Vec<Option<Value>>, WorkflowError> {
                 let interrupt = ctx.interrupt.clone();
+                let deadline = self
+                    .timeout
+                    .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
+                let deadline = min_instant(deadline, ctx.deadline);
+
                 tracing::trace!(
                     "Running graph {graph_id:?} exec {:?}",
                     exec.state_view.exec_id
@@ -369,6 +417,12 @@ impl Subgraph {
                 loop {
                     if interrupt.load(Ordering::Relaxed) {
                         Err(WorkflowError::Interrupted)?;
+                    }
+
+                    if let Some(deadline) = deadline
+                        && deadline <= Instant::now()
+                    {
+                        Err(WorkflowError::Timeout)?;
                     }
 
                     match exec.step(&mut target) {
@@ -388,7 +442,7 @@ impl Subgraph {
             .try_fold(
                 || results.clone(),
                 |mut acc: Vec<Value>, item| -> Result<_, WorkflowError> {
-                    for (res, val) in acc.iter_mut().zip(item?.into_iter()) {
+                    for (res, val) in acc.iter_mut().zip(item?) {
                         push_values(res, val);
                     }
                     Ok(acc)
@@ -397,7 +451,7 @@ impl Subgraph {
             .try_reduce(
                 || results.clone(),
                 |mut left, right| {
-                    for (acc, items) in left.iter_mut().zip(right.into_iter()) {
+                    for (acc, items) in left.iter_mut().zip(right) {
                         concat_values(acc, items);
                     }
                     Ok(left)
@@ -534,6 +588,16 @@ impl DynNode for Subgraph {
 }
 
 impl UiNode for Subgraph {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other.downcast_ref::<Self>().is_some_and(|other| {
+            self.flavor == other.flavor
+                && self.parallel == other.parallel
+                && self.limit == other.limit
+                && self.timeout == other.timeout
+                && self.graph.weak_eq(&other.graph)
+        })
+    }
+
     fn on_paste(&mut self) {
         let uuid = crate::workflow::GraphId::new();
         let nodes = self
@@ -655,6 +719,21 @@ impl UiNode for Subgraph {
                     .insert(crate::ui::AppEvent::EnterSubgraph(ctx.current_node));
             }
 
+            if let Some(timeout) = &mut self.timeout {
+                ui.add(egui::DragValue::new(timeout).prefix("timeout: ").suffix("s"))
+                    .on_hover_text(
+                        "Maximum seconds per pass of the subgraph.\n\
+                            The node will fail if the subgraph execution takes more time than this.\n\
+                            Set to 0 to remove the timeout.",
+                    );
+
+                if *timeout < 1 {
+                    self.timeout = None;
+                }
+            } else if ui.button("no timeout").clicked() {
+                self.timeout = Some(60);
+            }
+
             if self.flavor == Flavor::Looping {
                 if let Some(limit) = &mut self.limit {
                     ui.add(egui::DragValue::new(limit).prefix("limit: "))
@@ -676,6 +755,10 @@ impl UiNode for Subgraph {
                 ui.checkbox(&mut self.parallel, "parallel");
             }
         });
+    }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.nesting_theme()
     }
 }
 

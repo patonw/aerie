@@ -387,6 +387,12 @@ impl DynNode for CreateMessage {
 }
 
 impl UiNode for CreateMessage {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.kind == other.kind && self.content == other.content)
+    }
+
     fn title(&self) -> &str {
         "Create Message"
     }

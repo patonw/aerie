@@ -1,10 +1,15 @@
+use std::time::Instant;
+
 use egui_phosphor::regular::{IMAGE_BROKEN, IMAGES, X_CIRCLE};
+use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
 use crate::{
     utils::{ErrorDistiller as _, IMAGE_CACHE, ImageResolver, rig_image_to_egui},
-    workflow::{DynNode, FlexNode, UiNode, Value, ValueKind, WorkNode, nodes::GraphSubmenu},
+    workflow::{
+        DynNode, FlexNode, UiNode, Value, ValueKind, WorkNode, WorkflowError, nodes::GraphSubmenu,
+    },
 };
 
 /// Stores images as data URIs in the graph
@@ -186,21 +191,35 @@ impl DynNode for FetchImages {
 
     fn execute(
         &mut self,
-        _ctx: &super::RunContext,
+        run_ctx: &super::RunContext,
         _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, crate::workflow::WorkflowError> {
         let texts = match &inputs[0] {
-            Some(Value::Text(text)) => vec![text.as_str()],
-            Some(Value::TextList(texts)) => texts.iter().map(|s| s.as_str()).collect(),
+            Some(Value::Text(text)) => vec![text.to_string()],
+            Some(Value::TextList(texts)) => texts.iter().map(|s| s.to_string()).collect(),
             None => vec![],
             _ => unreachable!(),
         };
 
         let images = texts
-            .iter()
-            .map(|uri| ImageResolver::default().to_rig_image(uri))
-            .collect::<anyhow::Result<im::Vector<_>>>()?;
+            .into_par_iter()
+            .map(|uri| {
+                if let Some(deadline) = run_ctx.deadline
+                    && deadline < Instant::now()
+                {
+                    Err(WorkflowError::Timeout)?;
+                }
+
+                // Unfortunately, most of the time is spent in resizing the image
+                // with a compute-bound function lacking cancel support.
+                // It's an order of magnitude slower on debug builds but snappy
+                // on release builds so not worth the effort to fork.
+                ImageResolver::default().to_rig_image(&uri)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let images = im::Vector::from(images);
 
         Ok(vec![Value::Images(images)])
     }

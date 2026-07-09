@@ -1,19 +1,20 @@
 use std::{
     borrow::Cow,
     sync::{Arc, atomic::Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::{
     rig::{
-        self, OneOrMany,
+        OneOrMany,
         agent::PromptRequest,
         completion::{Completion, CompletionError, CompletionResponse},
         message::{AssistantContent, Message, Reasoning, ToolCall, ToolFunction, UserContent},
     },
     utils::{ErrorDistiller, canonicalize_msg},
-    workflow::with_timeout,
+    workflow::{NodeTheme, ThemeCodex, with_deadline},
 };
+use arc_swap::ArcSwap;
 use itertools::Itertools;
 use rig_dynclient::completion::CompletionModelHandle;
 use serde::{Deserialize, Serialize};
@@ -21,7 +22,7 @@ use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
-    ChatContent, ToolSelector,
+    ChatContent, ToolSelector, rig,
     ui::{resizable_frame, shortcuts::squelch},
     utils::{CowExt as _, extract_json, message_text},
     workflow::{FlexNode, WorkflowError},
@@ -84,6 +85,12 @@ impl DynNode for ChatNode {
 }
 
 impl UiNode for ChatNode {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.name == other.name && self.prompt == other.prompt)
+    }
+
     fn title(&self) -> &str {
         if self.name.is_empty() {
             "Chat"
@@ -168,6 +175,14 @@ impl UiNode for ChatNode {
         };
 
         self.in_kinds(pin_id).first().unwrap().default_pin()
+    }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.remote_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::CHATS_CIRCLE)
     }
 }
 
@@ -331,6 +346,15 @@ impl DynNode for StructuredChat {
 }
 
 impl UiNode for StructuredChat {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other.downcast_ref::<Self>().is_some_and(|other| {
+            self.name == other.name
+                && self.prompt == other.prompt
+                && self.retries == other.retries
+                && self.extract == other.extract
+        })
+    }
+
     fn title(&self) -> &str {
         if self.name.is_empty() {
             "Structured Output"
@@ -442,6 +466,14 @@ impl UiNode for StructuredChat {
             );
         });
     }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.remote_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::TABLE)
+    }
 }
 
 // TODO: investigate why errors in the MCP server cause a panic here
@@ -548,10 +580,19 @@ impl StructuredChat {
                 Err(WorkflowError::Interrupted)?;
             }
 
+            if let Some(deadline) = run_ctx.deadline
+                && deadline < Instant::now()
+            {
+                Err(WorkflowError::Timeout)?;
+            }
             // chat is the source of truth. history is just its shadow.
             let mut history = chat.iter_msgs().map(|it| it.as_ref().clone()).collect_vec();
-            // Use the last message as the prompt
-            let current_prompt = history.pop().unwrap();
+
+            // Use the last message as the prompt. Some times this will be used to extract data
+            // from the previous assistant response.
+            let Some(current_prompt) = history.pop() else {
+                Err(WorkflowError::Required(vec!["Input is missing".into()]))?
+            };
 
             let response =
                 one_shot_completion(run_ctx, &agent, current_prompt, history.clone()).await;
@@ -718,10 +759,7 @@ async fn one_shot_completion(
     prompt: Message,
     history: Vec<Message>,
 ) -> Result<CompletionResponse<()>, WorkflowError> {
-    use crate::rig::{
-        agent::Text,
-        streaming::{StreamedAssistantContent, StreamingCompletion},
-    };
+    use crate::rig::streaming::{StreamedAssistantContent, StreamingCompletion};
     use futures_util::stream::StreamExt as _;
 
     let prefs = run_ctx.agent_factory.prefs.load();
@@ -737,10 +775,11 @@ async fn one_shot_completion(
             request = request.additional_params(json!({"seed": value}));
         }
 
-        return request
-            .send()
-            .await
-            .map_err(|e| WorkflowError::Provider(e.into()));
+        return match with_deadline(request.send(), None, run_ctx.deadline).await {
+            Ok(Ok(it)) => Ok(it),
+            Ok(Err(err)) => Err(WorkflowError::Provider(err.into())),
+            Err(err) => Err(err),
+        };
     }
 
     let mut request = agent
@@ -769,9 +808,17 @@ async fn one_shot_completion(
         None
     };
 
-    while let Some(content) = with_timeout(stream.next(), prefs.stream_idle).await? {
+    while let Some(content) =
+        with_deadline(stream.next(), prefs.stream_idle, run_ctx.deadline).await?
+    {
         if run_ctx.interrupt.load(Ordering::Relaxed) {
             Err(WorkflowError::Interrupted)?;
+        }
+
+        if let Some(deadline) = run_ctx.deadline
+            && deadline < Instant::now()
+        {
+            Err(WorkflowError::Timeout)?;
         }
 
         match content {
@@ -797,43 +844,38 @@ async fn one_shot_completion(
                     reasonings.push(reasoning.display_text());
                 }
                 StreamedAssistantContent::Final(_) => {}
-                StreamedAssistantContent::ReasoningDelta { .. } => {
-                    // TODO: append to last reasoning
+                StreamedAssistantContent::ReasoningDelta { reasoning, .. } => {
+                    if reasonings.is_empty() {
+                        reasonings.push(Default::default());
+                    }
+
+                    reasonings.last_mut().unwrap().push_str(&reasoning);
                 }
             },
             Err(err) => {
                 Err(WorkflowError::Provider(err.into()))?;
             }
         }
+
+        if let Some(scratch) = &agent_msg {
+            update_scratch(scratch, &texts, &reasonings, &tool_calls);
+        }
     }
 
-    // run_ctx.scratch.pop_back();
-
-    let mut contents = vec![];
-    if !reasonings.is_empty() {
-        contents.push(AssistantContent::Reasoning(Reasoning::multi(reasonings)))
-    }
-
-    if !texts.is_empty() {
-        contents.push(AssistantContent::Text(Text::from(&texts)));
-    }
-
-    if !tool_calls.is_empty() {
-        contents.extend(tool_calls.into_iter().map(AssistantContent::ToolCall));
-    }
-
-    if contents.is_empty() {
+    if let Some(Message::Assistant { id: _, content }) =
+        contents_to_message(&texts, &reasonings, &tool_calls)
+    {
+        Ok(CompletionResponse {
+            choice: content,
+            usage: Default::default(),
+            raw_response: (),
+            message_id: None,
+        })
+    } else {
         Err(WorkflowError::Unknown(
             "No response or error message from provider".into(),
-        ))?;
+        ))
     }
-
-    Ok(CompletionResponse {
-        choice: OneOrMany::many(contents).unwrap(),
-        usage: Default::default(),
-        raw_response: (),
-        message_id: None,
-    })
 }
 
 use thiserror::Error;
@@ -863,19 +905,23 @@ async fn multi_turn_completion(
 ) -> Result<(), StreamingError> {
     use crate::rig::{
         self,
-        agent::Text,
         streaming::{StreamedAssistantContent, StreamingCompletion},
     };
     use futures_util::stream::StreamExt as _;
 
     let prefs = run_ctx.agent_factory.prefs.load();
+    let max_turns = prefs.tool_turns.unwrap_or(5);
 
     if !run_ctx.streaming {
-        let resp = PromptRequest::from_agent(agent, prompt)
-            .max_turns(5)
-            .with_history(chat_history.clone())
-            .extended_details()
-            .await?;
+        let resp = with_deadline(
+            PromptRequest::from_agent(agent, prompt)
+                .max_turns(max_turns)
+                .with_history(chat_history.clone())
+                .extended_details(),
+            None,
+            run_ctx.deadline,
+        )
+        .await??;
 
         if let Some(messages) = resp.messages {
             chat_history.extend(messages);
@@ -893,9 +939,9 @@ async fn multi_turn_completion(
         scratch.push_back(Ok(prompt.clone()));
     }
 
-    // Turns are tool call/result pairs, not retries of failed completion requests.
+    // Turns are tool call/result round-trips, not retries of failed completion requests.
     // A completion failure should immediately abort the node.
-    for _ in 0..5 {
+    for _ in 0..max_turns {
         let current_prompt = match chat_history.pop() {
             Some(prompt) => prompt,
             None => unreachable!("Chat history should never be empty at this point"),
@@ -929,17 +975,16 @@ async fn multi_turn_completion(
         let mut texts = String::new();
         let mut tool_calls = vec![];
 
-        while let Some(content) = with_timeout(stream.next(), prefs.stream_idle).await? {
+        while let Some(content) =
+            with_deadline(stream.next(), prefs.stream_idle, run_ctx.deadline).await?
+        {
             if run_ctx.interrupt.load(Ordering::Relaxed) {
                 Err(WorkflowError::Interrupted)?;
             }
+
             match content {
                 Ok(StreamedAssistantContent::Text(text)) => {
                     texts.push_str(&text.text);
-                    let msg = Message::assistant(&texts);
-                    if let Some(a) = &agent_msg {
-                        a.store(Arc::new(Ok(msg)));
-                    }
                 }
                 Ok(StreamedAssistantContent::ToolCall { tool_call, .. }) => {
                     tool_calls.push(tool_call);
@@ -947,37 +992,29 @@ async fn multi_turn_completion(
                 Ok(StreamedAssistantContent::Reasoning(reasoning)) => {
                     reasonings.push(reasoning.display_text());
                 }
-                Ok(_) => {}
+                Ok(StreamedAssistantContent::ReasoningDelta { id: _, reasoning }) => {
+                    if reasonings.is_empty() {
+                        reasonings.push(Default::default());
+                    }
+
+                    reasonings.last_mut().unwrap().push_str(&reasoning);
+                }
+                Ok(_) => {
+                    tracing::trace!("Unhandled streamed content {content:?}");
+                }
                 err => {
                     err?;
                 }
             }
+
+            if let Some(scratch) = &agent_msg {
+                update_scratch(scratch, &texts, &reasonings, &tool_calls);
+            }
         }
 
-        let mut contents = Vec::new();
+        let done = tool_calls.is_empty();
 
-        if !reasonings.is_empty() {
-            contents.push(AssistantContent::Reasoning(Reasoning::multi(reasonings)))
-        }
-
-        if !texts.is_empty() {
-            contents.push(AssistantContent::Text(Text::from(&texts)));
-        }
-
-        let tool_call_contents = tool_calls
-            .iter()
-            .cloned()
-            .map(AssistantContent::ToolCall)
-            .collect_vec();
-
-        let done = tool_call_contents.is_empty();
-        contents.extend(tool_call_contents);
-
-        if !contents.is_empty() {
-            let msg = Message::Assistant {
-                id: None,
-                content: OneOrMany::many(contents).unwrap(),
-            };
+        if let Some(msg) = contents_to_message(&texts, &reasonings, &tool_calls) {
             chat_history.push(msg.clone());
 
             if let Some(a) = agent_msg {
@@ -1053,4 +1090,53 @@ async fn multi_turn_completion(
 
     tracing::warn!("Too many tool calls from completion model");
     Ok(())
+}
+
+fn update_scratch(
+    scratch: impl AsRef<ArcSwap<Result<Message, String>>>,
+    texts: &str,
+    reasonings: &[String],
+    tool_calls: &[ToolCall],
+) {
+    let Some(msg) = contents_to_message(texts, reasonings, tool_calls) else {
+        return;
+    };
+
+    scratch.as_ref().store(Arc::new(Ok(msg)));
+}
+
+fn contents_to_message(
+    texts: &str,
+    reasonings: &[String],
+    tool_calls: &[ToolCall],
+) -> Option<Message> {
+    use crate::rig::agent::Text;
+
+    let mut contents = Vec::new();
+    if !reasonings.is_empty() {
+        contents.push(AssistantContent::Reasoning(Reasoning::multi(
+            reasonings.to_owned(),
+        )))
+    }
+
+    if !texts.is_empty() {
+        contents.push(AssistantContent::Text(Text::from(texts)));
+    }
+
+    let tool_call_contents = tool_calls
+        .iter()
+        .cloned()
+        .map(AssistantContent::ToolCall)
+        .collect_vec();
+
+    contents.extend(tool_call_contents);
+
+    if contents.is_empty() {
+        None
+    } else {
+        Some(Message::Assistant {
+            id: None,
+            content: OneOrMany::many(contents).unwrap(),
+        })
+    }
 }

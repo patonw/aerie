@@ -147,6 +147,14 @@ pub fn json_editor(
 }
 
 impl UiNode for ParseJson {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other.downcast_ref::<Self>().is_some_and(|other| {
+            self.text == other.text
+                && self.extract == other.extract
+                && self.as_array == other.as_array
+        })
+    }
+
     fn title(&self) -> &str {
         "Parse JSON"
     }
@@ -296,6 +304,12 @@ impl DynNode for ValidateJson {
 }
 
 impl UiNode for ValidateJson {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.schema == other.schema)
+    }
+
     fn title(&self) -> &str {
         "Validate JSON"
     }
@@ -440,6 +454,12 @@ impl DynNode for TransformJson {
 }
 
 impl UiNode for TransformJson {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.filter == other.filter)
+    }
+
     fn title(&self) -> &str {
         "Transform JSON"
     }

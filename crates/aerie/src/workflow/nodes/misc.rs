@@ -10,7 +10,10 @@ use serde_with::skip_serializing_none;
 use crate::{
     ui::{resizable_frame, shortcuts::squelch},
     utils::message_to_json,
-    workflow::{DynNode, EditContext, FlexNode, RunContext, UiNode, Value, WorkflowError},
+    workflow::{
+        DynNode, EditContext, FlexNode, NodeTheme, RunContext, ThemeCodex, UiNode, Value,
+        WorkflowError,
+    },
 };
 
 use super::ValueKind;
@@ -45,6 +48,12 @@ impl DynNode for CommentNode {
 }
 
 impl UiNode for CommentNode {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.comment == other.comment)
+    }
+
     fn title(&self) -> &str {
         "Comment"
     }
@@ -66,6 +75,10 @@ impl UiNode for CommentNode {
                 });
             });
         });
+    }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.comment_theme()
     }
 }
 
@@ -171,6 +184,12 @@ impl DynNode for TemplateNode {
 }
 
 impl UiNode for TemplateNode {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.template == other.template)
+    }
+
     fn title(&self) -> &str {
         "Template"
     }

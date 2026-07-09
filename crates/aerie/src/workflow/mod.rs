@@ -32,7 +32,7 @@ use std::{
     fmt::Debug,
     hash::Hash,
     sync::{Arc, atomic::AtomicBool},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 use typed_builder::TypedBuilder;
@@ -376,6 +376,10 @@ pub struct RunContext {
 
     #[builder(default)]
     pub models: Arc<BTreeMap<ModelRole, String>>,
+
+    /// Time at which execution must complete
+    #[builder(default)]
+    pub deadline: Option<Instant>,
 }
 
 impl RunContext {
@@ -391,6 +395,13 @@ impl RunContext {
     pub fn with_exec_id(&self, exec_id: ExecId) -> Self {
         Self {
             exec_id,
+            ..self.clone()
+        }
+    }
+
+    pub fn with_deadline(&self, deadline: Option<Instant>) -> Self {
+        Self {
+            deadline,
             ..self.clone()
         }
     }
@@ -930,6 +941,19 @@ where
 }
 
 impl ShadowGraph<WorkNode> {
+    pub fn weak_eq(&self, other: &Self) -> bool {
+        let cmp_nodes = |id| {
+            self.nodes
+                .get(id)
+                .zip(other.nodes.get(id))
+                .is_some_and(|(a, b)| a.value.weak_eq(&b.value))
+        };
+
+        self.wires == other.wires
+            && self.disabled == other.disabled
+            && self.nodes.keys().all(cmp_nodes)
+    }
+
     pub fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
         let mut alerts = im::OrdMap::new();
         for (id, subnode) in &self.nodes {
@@ -1100,6 +1124,121 @@ impl Workflow {
     }
 }
 
+#[derive(Default, Debug, Clone, Copy, TypedBuilder)]
+#[builder(field_defaults(default, setter(strip_option)))]
+pub struct NodeTheme {
+    #[builder(setter(into))]
+    pub frame_stroke: Option<egui::Stroke>,
+
+    pub body_fill: Option<egui::Color32>,
+
+    pub collapsed_fill: Option<egui::Color32>,
+}
+
+impl NodeTheme {
+    pub fn apply_body(&self, mut frame: egui::Frame) -> egui::Frame {
+        if let Some(stroke) = self.frame_stroke {
+            frame = frame.stroke(stroke);
+        }
+
+        if let Some(color) = self.body_fill {
+            frame = frame.fill(color);
+        }
+
+        frame
+    }
+
+    pub fn apply_header(&self, mut frame: egui::Frame) -> egui::Frame {
+        if let Some(stroke) = self.frame_stroke {
+            frame = frame.stroke(stroke);
+        }
+
+        if let Some(color) = self.body_fill {
+            frame = frame.fill(color);
+        }
+
+        frame
+    }
+
+    pub fn apply_collapsed(&self, mut frame: egui::Frame) -> egui::Frame {
+        frame = self.apply_header(frame);
+
+        if let Some(color) = self.collapsed_fill {
+            frame = frame.fill(color);
+        }
+
+        frame
+    }
+
+    pub fn apply_overview(&self, mut frame: egui::Frame, scaling: f32) -> egui::Frame {
+        if let Some(mut stroke) = self.frame_stroke {
+            // Scale-invariant stroke to make themed nodes easier to spot in overview
+            stroke.width /= scaling;
+            frame = frame.stroke(stroke);
+        }
+
+        frame
+    }
+}
+
+// trait overkill?
+pub trait ThemeCodex {
+    fn comment_theme(&self) -> NodeTheme;
+
+    fn neutral_theme(&self) -> NodeTheme;
+
+    fn finisher_theme(&self) -> NodeTheme;
+
+    fn branching_theme(&self) -> NodeTheme;
+
+    fn remote_theme(&self) -> NodeTheme;
+
+    fn nesting_theme(&self) -> NodeTheme;
+}
+
+// TODO: import themes from preferences
+#[derive(Default, Debug, Clone)]
+pub struct StandardTheme;
+
+impl ThemeCodex for StandardTheme {
+    fn comment_theme(&self) -> NodeTheme {
+        NodeTheme::builder()
+            .body_fill(egui::Color32::LIGHT_YELLOW.gamma_multiply(0.75))
+            .collapsed_fill(Color32::from_rgb(0x88, 0x88, 0))
+            .build()
+    }
+
+    fn neutral_theme(&self) -> NodeTheme {
+        NodeTheme::builder()
+            .frame_stroke((2.0, Color32::DARK_GRAY))
+            .build()
+    }
+
+    fn finisher_theme(&self) -> NodeTheme {
+        NodeTheme::builder()
+            .frame_stroke((2.0, egui::Color32::from_rgb(0x26, 0x9f, 0x4c)))
+            .build()
+    }
+
+    fn branching_theme(&self) -> NodeTheme {
+        NodeTheme::builder()
+            .frame_stroke((2.0, egui::Color32::from_rgb(0xe1, 0xa3, 0x72)))
+            .build()
+    }
+
+    fn remote_theme(&self) -> NodeTheme {
+        NodeTheme::builder()
+            .frame_stroke((2.0, egui::Color32::from_rgb(0x32, 0x84, 0xa9)))
+            .build()
+    }
+
+    fn nesting_theme(&self) -> NodeTheme {
+        NodeTheme::builder()
+            .frame_stroke((2.0, egui::Color32::from_rgb(0x8b, 0x44, 0x3a)))
+            .build()
+    }
+}
+
 pub trait DynNode {
     fn priority(&self) -> usize {
         5000
@@ -1200,7 +1339,11 @@ pub trait DynNode {
     }
 }
 
-pub trait UiNode: DynNode {
+pub trait UiNode: DynNode + DynEq {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        self.dyn_eq(other)
+    }
+
     /// Callback to enforce uniqueness after a node is duplicated using copy/paste
     fn on_paste(&mut self) {}
 
@@ -1260,6 +1403,15 @@ pub trait UiNode: DynNode {
     #[expect(unused_variables)]
     fn show_output(&mut self, ui: &mut egui::Ui, ctx: &EditContext, pin_id: usize) -> PinInfo {
         self.out_kind(pin_id).default_pin()
+    }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        let _ = codex;
+        NodeTheme::builder().build()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        None
     }
 }
 
@@ -1427,15 +1579,55 @@ pub fn write_value(mut fh: impl std::io::Write, value: &Value) -> Result<(), any
     Ok(())
 }
 
+pub fn deadline_secs(t: std::time::Instant) -> u64 {
+    t.duration_since(std::time::Instant::now())
+        .as_secs_f64()
+        .ceil() as u64
+}
+
+pub fn merge_deadline(
+    stream_idle: Option<u64>,
+    deadline: Option<std::time::Instant>,
+) -> Option<u64> {
+    match (stream_idle, deadline) {
+        (None, None) => None,
+        (None, Some(t)) => Some(deadline_secs(t)),
+        (Some(s), None) => Some(s),
+        (Some(s), Some(t)) => Some(s.min(deadline_secs(t))),
+    }
+}
+
+pub fn min_instant(
+    a: Option<std::time::Instant>,
+    b: Option<std::time::Instant>,
+) -> Option<std::time::Instant> {
+    match (a, b) {
+        (None, None) => None,
+        (Some(it), None) => Some(it),
+        (None, Some(it)) => Some(it),
+        (Some(a), Some(b)) => Some(a.min(b)),
+    }
+}
+
 pub async fn with_timeout<T>(
-    fut: impl Future<Output = T>,
+    fut: impl IntoFuture<Output = T>,
     timeout: Option<u64>,
 ) -> Result<T, WorkflowError> {
-    if let Some(timeout) = timeout {
-        tokio::time::timeout(Duration::from_secs(timeout), fut)
+    if timeout == Some(0) {
+        Err(WorkflowError::Timeout)
+    } else if let Some(timeout) = timeout {
+        tokio::time::timeout(Duration::from_secs(timeout), fut.into_future())
             .await
             .map_err(|_| WorkflowError::Timeout)
     } else {
-        Ok(fut.await)
+        Ok(fut.into_future().await)
     }
+}
+
+pub async fn with_deadline<T>(
+    fut: impl IntoFuture<Output = T>,
+    timeout: Option<u64>,
+    deadline: Option<Instant>,
+) -> Result<T, WorkflowError> {
+    with_timeout(fut, merge_deadline(timeout, deadline)).await
 }

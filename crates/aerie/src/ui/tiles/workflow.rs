@@ -1,6 +1,6 @@
 use std::{borrow::Cow, convert::identity, sync::atomic::Ordering, time::Duration};
 
-use egui::{Align2, Color32, ComboBox};
+use egui::{Align2, Color32, ComboBox, Label, RichText};
 use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular::{
     ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, DOWNLOAD_SIMPLE, INFO, MAGIC_WAND, PENCIL, TRASH,
@@ -52,14 +52,26 @@ impl super::AppState {
                 viewer.shadow = shadow;
                 viewer.edit_ctx.metadata = meta;
 
-                let widget = SnarlWidget::new()
-                    .id(viewer.view_id)
-                    .style(get_snarl_style());
+                let style = egui_snarl::ui::SnarlStyle {
+                    wire_width: Some(1f32.max(viewer.transform.inverse().scaling * 0.5)),
+                    ..get_snarl_style()
+                };
+
+                let widget = SnarlWidget::new().id(viewer.view_id).style(style);
                 pointee = widget.show(&mut snarl, viewer, ui).contains_pointer();
 
                 // Unfortunately, there's no event for node movement so we have to
                 // iterate through the whole collection to find moved nodes.
                 viewer.cast_positions(&snarl);
+
+                if cfg!(feature = "debug-ui") {
+                    let egui::Pos2 { x, y } = ui.max_rect().right_top();
+                    let over_rect =
+                        egui::Rect::from_two_pos(egui::pos2(x - 64.0, y), egui::pos2(x, y + 20.0));
+                    let scale_debug =
+                        egui::Label::new(format!("Scale: {:.02}", viewer.transform.scaling));
+                    ui.place(over_rect, scale_debug);
+                }
 
                 (viewer.shadow.clone(), widget)
             };
@@ -217,7 +229,7 @@ impl super::AppState {
 
         ui.set_max_width(150.0);
         ui.vertical_centered_justified(|ui| {
-            ui.heading("Workflow");
+            ui.add(Label::new(RichText::new("Workflow").heading()).selectable(false));
             ComboBox::from_id_salt("workflow")
                 .wrap()
                 .width(ui.available_width())

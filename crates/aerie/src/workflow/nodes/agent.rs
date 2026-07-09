@@ -1,7 +1,7 @@
 use crate::{
     config::ModelRole,
     rig::message::Message,
-    workflow::{CheckContext, GraphId},
+    workflow::{CheckContext, GraphId, NodeTheme, ThemeCodex, with_deadline},
 };
 use anyhow::Context as _;
 use decorum::E64;
@@ -10,7 +10,7 @@ use egui_snarl::NodeId;
 use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use std::{borrow::Cow, str::FromStr as _, sync::Arc, time::Duration};
+use std::{borrow::Cow, str::FromStr as _, sync::Arc};
 use strum::IntoEnumIterator as _;
 
 use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
@@ -88,6 +88,12 @@ impl DynNode for Tools {
 }
 
 impl UiNode for Tools {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.toolset == other.toolset)
+    }
+
     fn title(&self) -> &str {
         if self.name.is_empty() {
             "Tools"
@@ -403,6 +409,14 @@ mod legacy {
     }
 
     impl UiNode for AgentNode {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other.downcast_ref::<Self>().is_some_and(|other| {
+                self.model == other.model
+                    && self.preamble == other.preamble
+                    && self.temperature == other.temperature
+            })
+        }
+
         fn title(&self) -> &str {
             if self.name.is_empty() {
                 "Agent (Deprecated)"
@@ -658,6 +672,14 @@ impl DynNode for RoleAgent {
 }
 
 impl UiNode for RoleAgent {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other.downcast_ref::<Self>().is_some_and(|other| {
+            self.role == other.role
+                && self.preamble == other.preamble
+                && self.temperature == other.temperature
+        })
+    }
+
     fn title(&self) -> &str {
         if self.name.is_empty() {
             "Agent"
@@ -872,6 +894,12 @@ impl DynNode for ChatContext {
 }
 
 impl UiNode for ChatContext {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.context_doc == other.context_doc)
+    }
+
     fn title(&self) -> &str {
         "Context"
     }
@@ -1007,6 +1035,12 @@ impl DynNode for InvokeTool {
 }
 
 impl UiNode for InvokeTool {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other.downcast_ref::<Self>().is_some_and(|other| {
+            self.tool_name == other.tool_name && self.arguments == other.arguments
+        })
+    }
+
     fn title(&self) -> &str {
         "Invoke Tool"
     }
@@ -1074,6 +1108,14 @@ impl UiNode for InvokeTool {
 
         self.in_kinds(pin_id).first().unwrap().default_pin()
     }
+
+    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+        codex.remote_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::WRENCH)
+    }
 }
 
 impl InvokeTool {
@@ -1126,14 +1168,8 @@ impl InvokeTool {
         };
 
         let future = rig_tools.call(tool_name, args.to_string());
-        let tool_output =
-            if let Some(seconds) = run_ctx.agent_factory.toolbox.timeout(&toolset, tool_name) {
-                tokio::time::timeout(Duration::from_secs(seconds), future)
-                    .await
-                    .map_err(|_| WorkflowError::Timeout)??
-            } else {
-                future.await?
-            };
+        let timeout = run_ctx.agent_factory.toolbox.timeout(&toolset, tool_name);
+        let tool_output = with_deadline(future, timeout, run_ctx.deadline).await??;
 
         let msg = Arc::new(Message::tool_result(tool_name, &tool_output));
 

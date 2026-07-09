@@ -324,6 +324,12 @@ impl DynNode for Text {
 }
 
 impl UiNode for Text {
+    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+        other
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.value == other.value && self.delim == other.delim)
+    }
+
     fn title(&self) -> &str {
         "Text"
     }
@@ -603,6 +609,14 @@ impl UiNode for OutputNode {
             ui.label("label:");
             squelch(ui.text_edit_singleline(&mut self.label));
         });
+    }
+
+    fn theme(&self, codex: &dyn crate::workflow::ThemeCodex) -> crate::workflow::NodeTheme {
+        codex.neutral_theme()
+    }
+
+    fn icon(&self) -> Option<&str> {
+        Some(egui_phosphor::regular::PACKAGE)
     }
 }
 
