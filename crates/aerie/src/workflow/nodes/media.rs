@@ -1,15 +1,20 @@
 use std::time::Instant;
 
+#[cfg(feature = "ui")]
 use egui_phosphor::regular::{IMAGE_BROKEN, IMAGES, X_CIRCLE};
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
+#[cfg(feature = "ui")]
 use crate::{
-    utils::{ErrorDistiller as _, IMAGE_CACHE, ImageResolver, rig_image_to_egui},
-    workflow::{
-        DynNode, FlexNode, UiNode, Value, ValueKind, WorkNode, WorkflowError, nodes::GraphSubmenu,
-    },
+    utils::{ErrorDistiller as _, IMAGE_CACHE, rig_image_to_egui},
+    workflow::{UiNode, WorkNode, nodes::GraphSubmenu},
+};
+
+use crate::{
+    utils::ImageResolver,
+    workflow::{DynNode, FlexNode, Value, ValueKind, WorkflowError},
 };
 
 /// Stores images as data URIs in the graph
@@ -24,6 +29,10 @@ pub struct LoadImages {
 impl FlexNode for LoadImages {}
 
 impl DynNode for LoadImages {
+    fn title(&self) -> &str {
+        "Images"
+    }
+
     fn inputs(&self) -> usize {
         0
     }
@@ -48,11 +57,8 @@ impl DynNode for LoadImages {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for LoadImages {
-    fn title(&self) -> &str {
-        "Images"
-    }
-
     fn tooltip(&self) -> &str {
         "Load images from disk at edit-time and inline them into the workflow.\n\
             **warning**: this will significantly increase the file size of the workflow."
@@ -181,6 +187,10 @@ pub struct FetchImages {}
 impl FlexNode for FetchImages {}
 
 impl DynNode for FetchImages {
+    fn title(&self) -> &str {
+        "Fetch Images"
+    }
+
     fn in_kinds(&'_ self, _in_pin: usize) -> std::borrow::Cow<'_, [super::ValueKind]> {
         std::borrow::Cow::Borrowed(&[ValueKind::TextList, ValueKind::Text])
     }
@@ -225,16 +235,14 @@ impl DynNode for FetchImages {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for FetchImages {
-    fn title(&self) -> &str {
-        "Fetch Images"
-    }
-
     fn tooltip(&self) -> &str {
         "Fetch remote images from URLs"
     }
 }
 
+#[cfg(feature = "ui")]
 fn media_nodes(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
     ui.menu_button("Media", |ui| {
         if ui
@@ -242,7 +250,7 @@ fn media_nodes(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: 
             .on_hover_text("Retrieve remote images from URLs (at run time).")
             .clicked()
         {
-            snarl.insert_node(pos, FetchImages::default().into());
+            snarl.insert_node(pos.into(), FetchImages::default().into());
         }
 
         if ui
@@ -250,11 +258,12 @@ fn media_nodes(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: 
             .on_hover_text("Load images from disk and embed them into the graph.")
             .clicked()
         {
-            snarl.insert_node(pos, LoadImages::default().into());
+            snarl.insert_node(pos.into(), LoadImages::default().into());
         }
     });
 }
 
+#[cfg(feature = "ui")]
 inventory::submit! {
     GraphSubmenu("media", media_nodes)
 }

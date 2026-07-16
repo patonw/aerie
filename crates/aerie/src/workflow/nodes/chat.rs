@@ -4,6 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "ui")]
+use crate::workflow::{NodeTheme, ThemeCodex};
 use crate::{
     rig::{
         OneOrMany,
@@ -12,7 +14,7 @@ use crate::{
         message::{AssistantContent, Message, Reasoning, ToolCall, ToolFunction, UserContent},
     },
     utils::{ErrorDistiller, canonicalize_msg},
-    workflow::{NodeTheme, ThemeCodex, with_deadline},
+    workflow::with_deadline,
 };
 use arc_swap::ArcSwap;
 use itertools::Itertools;
@@ -23,12 +25,16 @@ use serde_with::skip_serializing_none;
 
 use crate::{
     ChatContent, ToolSelector, rig,
-    ui::{resizable_frame, shortcuts::squelch},
     utils::{CowExt as _, extract_json, message_text},
     workflow::{FlexNode, WorkflowError},
 };
 
-use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
+#[cfg(feature = "ui")]
+use crate::ui::{resizable_frame, shortcuts::squelch};
+
+use super::{DynNode, RunContext, Value, ValueKind};
+#[cfg(feature = "ui")]
+use super::{EditContext, UiNode};
 
 // TODO: Hash & eq by hand to ignore chat
 #[skip_serializing_none]
@@ -46,6 +52,14 @@ pub struct ChatNode {
 impl FlexNode for ChatNode {}
 
 impl DynNode for ChatNode {
+    fn title(&self) -> &str {
+        if self.name.is_empty() {
+            "Chat"
+        } else {
+            &self.name
+        }
+    }
+
     fn inputs(&self) -> usize {
         3
     }
@@ -84,19 +98,12 @@ impl DynNode for ChatNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for ChatNode {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other
             .downcast_ref::<Self>()
             .is_some_and(|other| self.name == other.name && self.prompt == other.prompt)
-    }
-
-    fn title(&self) -> &str {
-        if self.name.is_empty() {
-            "Chat"
-        } else {
-            &self.name
-        }
     }
 
     fn title_mut(&mut self) -> Option<&mut String> {
@@ -304,6 +311,14 @@ impl FlexNode for StructuredChat {}
 
 // outputs: chat, message, structured data
 impl DynNode for StructuredChat {
+    fn title(&self) -> &str {
+        if self.name.is_empty() {
+            "Structured Output"
+        } else {
+            &self.name
+        }
+    }
+
     fn inputs(&self) -> usize {
         4
     }
@@ -345,6 +360,7 @@ impl DynNode for StructuredChat {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for StructuredChat {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other.downcast_ref::<Self>().is_some_and(|other| {
@@ -353,14 +369,6 @@ impl UiNode for StructuredChat {
                 && self.retries == other.retries
                 && self.extract == other.extract
         })
-    }
-
-    fn title(&self) -> &str {
-        if self.name.is_empty() {
-            "Structured Output"
-        } else {
-            &self.name
-        }
     }
 
     fn title_mut(&mut self) -> Option<&mut String> {

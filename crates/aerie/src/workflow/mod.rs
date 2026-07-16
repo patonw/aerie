@@ -5,6 +5,7 @@ use crate::{
         message::Message,
         tool::{ToolSetError, server::ToolServerError},
     },
+    utils::EPos2,
     workflow::nodes::LoopControl,
 };
 use arc_swap::ArcSwap;
@@ -13,11 +14,11 @@ use downcast_rs::{Downcast, impl_downcast};
 use dyn_clone::DynClone;
 use dyn_eq::DynEq;
 use dyn_hash::DynHash;
+#[cfg(feature = "ui")]
 use egui::{Color32, Stroke};
-use egui_snarl::{
-    InPinId, Node as SnarlNode, NodeId, OutPinId, Snarl,
-    ui::{PinInfo, WireStyle},
-};
+#[cfg(feature = "ui")]
+use egui_snarl::ui::{PinInfo, WireStyle};
+use egui_snarl::{InPinId, Node as SnarlNode, NodeId, NodePos, OutPinId, Snarl};
 use either::Either;
 use im::Vector;
 use itertools::Itertools;
@@ -42,9 +43,9 @@ use crate::{
     AgentFactory, ChatHistory, ToolSelector, Toolbox,
     agent::AgentSpec,
     config::SeedConfig,
+    events::{AppEvent, AppEvents},
     rig::message::Image,
     transmute::Transmuter,
-    ui::{AppEvent, AppEvents},
     utils::{AtomicBuffer, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
     workflow::{
         nodes::{Finish, Flavor, Start},
@@ -55,6 +56,12 @@ use crate::{
 pub mod nodes;
 pub mod runner;
 pub mod store;
+
+#[cfg(feature = "ui")]
+pub mod theme;
+
+#[cfg(feature = "ui")]
+pub use theme::*;
 
 pub use nodes::WorkNode;
 // Note: Need to use decourm wrappers for floats in the graph to allow for hashing and equivalence,
@@ -158,6 +165,7 @@ impl Default for ValueKind {
     }
 }
 
+#[cfg(feature = "ui")]
 impl ValueKind {
     pub fn color(&self) -> Color32 {
         use ValueKind::*;
@@ -186,7 +194,9 @@ impl ValueKind {
         // Wish we could have dashed or thick wires instead
         pin.with_wire_style(WireStyle::Bezier5)
     }
+}
 
+impl ValueKind {
     pub fn is_list(&self) -> bool {
         use ValueKind::*;
         matches!(self, TextList | FloatList | IntList | MsgList | Images)
@@ -493,7 +503,7 @@ pub struct MetaNode<T> {
 
     /// Position of the top-left corner of the node.
     /// This does not include frame margin.
-    pub pos: egui::Pos2,
+    pub pos: EPos2,
 
     /// Flag indicating that the node is open - not collapsed.
     pub open: bool,
@@ -505,7 +515,7 @@ where
 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.value.hash(state);
-        let egui::Pos2 { x, y } = self.pos;
+        let NodePos { x, y } = self.pos.into();
         let (x, y): (E32, E32) = (E32::assert(x), E32::assert(y));
         x.hash(state);
         y.hash(state);
@@ -517,7 +527,7 @@ impl<T> From<SnarlNode<T>> for MetaNode<T> {
     fn from(other: SnarlNode<T>) -> Self {
         Self {
             value: other.value,
-            pos: other.pos,
+            pos: other.pos.into(),
             open: other.open,
         }
     }
@@ -552,6 +562,7 @@ impl Default for GraphId {
     }
 }
 
+#[cfg(feature = "ui")]
 impl GraphId {
     fn new() -> Self {
         Default::default()
@@ -1162,121 +1173,6 @@ impl Workflow {
     }
 }
 
-#[derive(Default, Debug, Clone, Copy, TypedBuilder)]
-#[builder(field_defaults(default, setter(strip_option)))]
-pub struct NodeTheme {
-    #[builder(setter(into))]
-    pub frame_stroke: Option<egui::Stroke>,
-
-    pub body_fill: Option<egui::Color32>,
-
-    pub collapsed_fill: Option<egui::Color32>,
-}
-
-impl NodeTheme {
-    pub fn apply_body(&self, mut frame: egui::Frame) -> egui::Frame {
-        if let Some(stroke) = self.frame_stroke {
-            frame = frame.stroke(stroke);
-        }
-
-        if let Some(color) = self.body_fill {
-            frame = frame.fill(color);
-        }
-
-        frame
-    }
-
-    pub fn apply_header(&self, mut frame: egui::Frame) -> egui::Frame {
-        if let Some(stroke) = self.frame_stroke {
-            frame = frame.stroke(stroke);
-        }
-
-        if let Some(color) = self.body_fill {
-            frame = frame.fill(color);
-        }
-
-        frame
-    }
-
-    pub fn apply_collapsed(&self, mut frame: egui::Frame) -> egui::Frame {
-        frame = self.apply_header(frame);
-
-        if let Some(color) = self.collapsed_fill {
-            frame = frame.fill(color);
-        }
-
-        frame
-    }
-
-    pub fn apply_overview(&self, mut frame: egui::Frame, scaling: f32) -> egui::Frame {
-        if let Some(mut stroke) = self.frame_stroke {
-            // Scale-invariant stroke to make themed nodes easier to spot in overview
-            stroke.width /= scaling;
-            frame = frame.stroke(stroke);
-        }
-
-        frame
-    }
-}
-
-// trait overkill?
-pub trait ThemeCodex {
-    fn comment_theme(&self) -> NodeTheme;
-
-    fn neutral_theme(&self) -> NodeTheme;
-
-    fn finisher_theme(&self) -> NodeTheme;
-
-    fn branching_theme(&self) -> NodeTheme;
-
-    fn remote_theme(&self) -> NodeTheme;
-
-    fn nesting_theme(&self) -> NodeTheme;
-}
-
-// TODO: import themes from preferences
-#[derive(Default, Debug, Clone)]
-pub struct StandardTheme;
-
-impl ThemeCodex for StandardTheme {
-    fn comment_theme(&self) -> NodeTheme {
-        NodeTheme::builder()
-            .body_fill(egui::Color32::LIGHT_YELLOW.gamma_multiply(0.75))
-            .collapsed_fill(Color32::from_rgb(0x88, 0x88, 0))
-            .build()
-    }
-
-    fn neutral_theme(&self) -> NodeTheme {
-        NodeTheme::builder()
-            .frame_stroke((2.0, Color32::DARK_GRAY))
-            .build()
-    }
-
-    fn finisher_theme(&self) -> NodeTheme {
-        NodeTheme::builder()
-            .frame_stroke((2.0, egui::Color32::from_rgb(0x26, 0x9f, 0x4c)))
-            .build()
-    }
-
-    fn branching_theme(&self) -> NodeTheme {
-        NodeTheme::builder()
-            .frame_stroke((2.0, egui::Color32::from_rgb(0xe1, 0xa3, 0x72)))
-            .build()
-    }
-
-    fn remote_theme(&self) -> NodeTheme {
-        NodeTheme::builder()
-            .frame_stroke((2.0, egui::Color32::from_rgb(0x32, 0x84, 0xa9)))
-            .build()
-    }
-
-    fn nesting_theme(&self) -> NodeTheme {
-        NodeTheme::builder()
-            .frame_stroke((2.0, egui::Color32::from_rgb(0x8b, 0x44, 0x3a)))
-            .build()
-    }
-}
-
 pub trait DynNode {
     fn priority(&self) -> usize {
         5000
@@ -1284,6 +1180,10 @@ pub trait DynNode {
 
     fn uuid(&self) -> Option<Uuid> {
         None
+    }
+
+    fn title(&self) -> &str {
+        ""
     }
 
     fn value(&self, out_pin: usize) -> Value {
@@ -1377,6 +1277,7 @@ pub trait DynNode {
     }
 }
 
+#[cfg(feature = "ui")]
 pub trait UiNode: DynNode + DynEq {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         self.dyn_eq(other)
@@ -1392,10 +1293,6 @@ pub trait UiNode: DynNode + DynEq {
 
     fn title_mut(&mut self) -> Option<&mut String> {
         None
-    }
-
-    fn title(&self) -> &str {
-        ""
     }
 
     fn tooltip(&self) -> &str {
@@ -1453,11 +1350,17 @@ pub trait UiNode: DynNode + DynEq {
     }
 }
 
+#[cfg(feature = "ui")]
 #[typetag::serde]
 pub trait FlexNode:
     Downcast + DynNode + UiNode + Debug + DynHash + DynEq + DynClone + Send + Sync
 {
 }
+
+#[cfg(not(feature = "ui"))]
+#[typetag::serde]
+pub trait FlexNode: Downcast + DynNode + Debug + DynHash + DynEq + DynClone + Send + Sync {}
+
 impl_downcast!(FlexNode);
 dyn_eq::eq_trait_object!(FlexNode);
 dyn_clone::clone_trait_object!(FlexNode);
@@ -1547,6 +1450,7 @@ impl From<ToolServerError> for WorkflowError {
     }
 }
 
+#[cfg(feature = "scripting")]
 impl From<Box<rhai::EvalAltResult>> for WorkflowError {
     fn from(value: Box<rhai::EvalAltResult>) -> Self {
         WorkflowError::Unknown(value.to_string())
@@ -1564,12 +1468,12 @@ pub fn fixup_workflow(mut snarl: Snarl<WorkNode>) -> Snarl<WorkNode> {
 
     if snarl.nodes().count() < 1 || !snarl.nodes().any(|n| n.is_start()) {
         tracing::info!("Inserting missing start node");
-        snarl.insert_node(egui::pos2(0.0, 0.0), Start::default().into());
+        snarl.insert_node(NodePos::new(0.0, 0.0), Start::default().into());
     }
 
     if !snarl.nodes().any(|n| n.is_finish()) {
         tracing::info!("Inserting missing finish node");
-        snarl.insert_node(egui::pos2(1000.0, 0.0), Finish::default().into());
+        snarl.insert_node(NodePos::new(1000.0, 0.0), Finish::default().into());
     }
 
     snarl
