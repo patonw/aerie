@@ -4,13 +4,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
 
+#[cfg(feature = "ui")]
 use crate::{
     ui::{resizable_frame, shortcuts::squelch},
+    workflow::{EditContext, NodeTheme, ThemeCodex, UiNode},
+};
+
+use crate::{
     utils::message_to_json,
-    workflow::{
-        DynNode, EditContext, FlexNode, NodeTheme, RunContext, ThemeCodex, UiNode, Value,
-        WorkflowError,
-    },
+    workflow::{DynNode, FlexNode, RunContext, Value, WorkflowError},
 };
 
 use super::ValueKind;
@@ -27,6 +29,10 @@ pub struct CommentNode {
 impl FlexNode for CommentNode {}
 
 impl DynNode for CommentNode {
+    fn title(&self) -> &str {
+        "Comment"
+    }
+
     fn inputs(&self) -> usize {
         0
     }
@@ -36,15 +42,12 @@ impl DynNode for CommentNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for CommentNode {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other
             .downcast_ref::<Self>()
             .is_some_and(|other| self.comment == other.comment)
-    }
-
-    fn title(&self) -> &str {
-        "Comment"
     }
 
     fn has_body(&self) -> bool {
@@ -71,6 +74,7 @@ impl UiNode for CommentNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl CommentNode {
     pub fn bg_color() -> egui::Color32 {
         egui::Color32::LIGHT_YELLOW.gamma_multiply(0.75)
@@ -89,6 +93,10 @@ pub struct TemplateNode {
 impl FlexNode for TemplateNode {}
 
 impl DynNode for TemplateNode {
+    fn title(&self) -> &str {
+        "Template"
+    }
+
     fn inputs(&self) -> usize {
         2
     }
@@ -172,15 +180,12 @@ impl DynNode for TemplateNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for TemplateNode {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other
             .downcast_ref::<Self>()
             .is_some_and(|other| self.template == other.template)
-    }
-
-    fn title(&self) -> &str {
-        "Template"
     }
 
     fn tooltip(&self) -> &str {
@@ -250,6 +255,10 @@ pub struct EnvironmentNode {}
 impl FlexNode for EnvironmentNode {}
 
 impl DynNode for EnvironmentNode {
+    fn title(&self) -> &str {
+        "Environment"
+    }
+
     fn inputs(&self) -> usize {
         0
     }
@@ -276,11 +285,8 @@ impl DynNode for EnvironmentNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for EnvironmentNode {
-    fn title(&self) -> &str {
-        "Environment"
-    }
-
     fn tooltip(&self) -> &str {
         "Gets the current set of environment variables"
     }

@@ -1886,7 +1886,7 @@ dependencies = [
 [[package]]
 name = "egui-snarl"
 version = "0.9.0"
-source = "git+https://github.com/patonw/egui-snarl?branch=update-selection#30f182db3ea84aa6b8e923a00a72dd0062ff3c91"
+source = "git+https://github.com/patonw/egui-snarl?branch=ui-flag#ff54f14730200fded2c543d02807e03b50828d4e"
 dependencies = [
  "egui",
  "egui-scale",

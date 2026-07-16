@@ -439,10 +439,10 @@ impl WorkflowViewer {
         for (id, pos, data) in snarl.nodes_pos_ids() {
             nodes
                 .entry(id)
-                .and_modify(|n| n.pos = pos)
+                .and_modify(|n| n.pos = pos.into())
                 .or_insert(MetaNode {
                     value: data.clone(),
-                    pos,
+                    pos: pos.into(),
                     open: true,
                 });
         }
@@ -666,6 +666,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                             ui.label(HAND_PALM).on_hover_text("Disabled");
                         }
                         Some(ExecState::Failed(err)) => {
+                            #[allow(clippy::collapsible_match)]
                             if ui
                                 .label(RichText::new(WARNING_OCTAGON).color(Color32::RED))
                                 .on_hover_text(format!("{err:?}"))
@@ -845,86 +846,86 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
     fn show_graph_menu(&mut self, pos: egui::Pos2, ui: &mut Ui, snarl: &mut Snarl<WorkNode>) {
         ui.menu_button("Control", |ui| {
             if ui.button("Fallback").clicked() {
-                snarl.insert_node(pos, Fallback::default().into());
+                snarl.insert_node(pos.into(), Fallback::default().into());
                 ui.close();
             }
 
             if ui.button("Matcher").clicked() {
-                snarl.insert_node(pos, Matcher::default().into());
+                snarl.insert_node(pos.into(), Matcher::default().into());
                 ui.close();
             }
 
             if ui.button("Select").clicked() {
-                snarl.insert_node(pos, Select::default().into());
+                snarl.insert_node(pos.into(), Select::default().into());
                 ui.close();
             }
 
             if ui.button("Gate").clicked() {
-                snarl.insert_node(pos, GateNode::default().into());
+                snarl.insert_node(pos.into(), GateNode::default().into());
                 ui.close();
             }
 
             if ui.button("Demote").clicked() {
-                snarl.insert_node(pos, Demote::default().into());
+                snarl.insert_node(pos.into(), Demote::default().into());
                 ui.close();
             }
 
             if ui.button("Panic").clicked() {
-                snarl.insert_node(pos, Panic::default().into());
+                snarl.insert_node(pos.into(), Panic::default().into());
                 ui.close();
             }
         });
 
         ui.menu_button("Value", |ui| {
             if ui.button("Number").clicked() {
-                snarl.insert_node(pos, Number::default().into());
+                snarl.insert_node(pos.into(), Number::default().into());
                 ui.close();
             }
 
             if ui.button("Plain Text").clicked() {
-                snarl.insert_node(pos, Text::default().into());
+                snarl.insert_node(pos.into(), Text::default().into());
                 ui.close();
             }
 
             if ui.button("Template").clicked() {
-                snarl.insert_node(pos, TemplateNode::default().into());
+                snarl.insert_node(pos.into(), TemplateNode::default().into());
                 ui.close();
             }
             if ui.button("Environment").clicked() {
-                snarl.insert_node(pos, EnvironmentNode::default().into());
+                snarl.insert_node(pos.into(), EnvironmentNode::default().into());
                 ui.close();
             }
         });
 
         ui.menu_button("LLM", |ui| {
             if ui.button("Agent").clicked() {
-                snarl.insert_node(pos, RoleAgent::default().into());
+                snarl.insert_node(pos.into(), RoleAgent::default().into());
                 ui.close();
             }
 
             if ui.button("Context").clicked() {
-                snarl.insert_node(pos, ChatContext::default().into());
+                snarl.insert_node(pos.into(), ChatContext::default().into());
                 ui.close();
             }
 
             if ui.button("Chat").clicked() {
-                snarl.insert_node(pos, ChatNode::default().into());
+                snarl.insert_node(pos.into(), ChatNode::default().into());
                 ui.close();
             }
 
             if ui.button("Structured").clicked() {
-                snarl.insert_node(pos, StructuredChat::default().into());
+                snarl.insert_node(pos.into(), StructuredChat::default().into());
                 ui.close();
             }
         });
 
         ui.menu_button("Tools", |ui| {
             if ui.button("Select Tools").clicked() {
-                snarl.insert_node(pos, Tools::default().into());
+                snarl.insert_node(pos.into(), Tools::default().into());
                 ui.close();
             }
             if ui.button("Invoke Tools").clicked() {
-                snarl.insert_node(pos, InvokeTool::default().into());
+                snarl.insert_node(pos.into(), InvokeTool::default().into());
                 ui.close();
             }
         });
@@ -938,17 +939,17 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         }
 
         if ui.button("Preview").clicked() {
-            snarl.insert_node(pos, Preview::default().into());
+            snarl.insert_node(pos.into(), Preview::default().into());
             ui.close();
         }
 
         if ui.button("Output").clicked() {
-            snarl.insert_node(pos, OutputNode::default().into());
+            snarl.insert_node(pos.into(), OutputNode::default().into());
             ui.close();
         }
 
         if ui.button("Comment").clicked() {
-            let node_id = snarl.insert_node(pos, CommentNode::default().into());
+            let node_id = snarl.insert_node(pos.into(), CommentNode::default().into());
 
             self.shadow = self
                 .shadow
@@ -1183,10 +1184,11 @@ pub fn merge_graphs(
         } else if !value.is_protected() {
             value.as_ui_mut().on_paste();
 
+            let new_pos = pos + offset;
             let new_id = if open {
-                snarl.insert_node(pos + offset, value)
+                snarl.insert_node(new_pos.into(), value)
             } else {
-                snarl.insert_node_collapsed(pos + offset, value)
+                snarl.insert_node_collapsed(new_pos.into(), value)
             };
 
             *target = target.with_node(&new_id, snarl.get_node_info(new_id));

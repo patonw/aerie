@@ -471,7 +471,7 @@ impl ToolProvider {
                     let token = vars
                         .get(var_name)
                         .context(format!("Environment variable {var_name} not found"))?;
-                    let uri = uri.replace(API_KEY, &token);
+                    let uri = uri.replace(API_KEY, token);
 
                     StreamableHttpClientTransportConfig::with_uri(uri.as_str())
                 } else {

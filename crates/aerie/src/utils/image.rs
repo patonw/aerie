@@ -1,7 +1,9 @@
 use ::image::ImageFormat;
 use anyhow::Context as _;
 use cached::proc_macro::cached;
+#[cfg(feature = "ui")]
 use egui::{Sense, mutex::Mutex};
+#[cfg(feature = "ui")]
 use lru::LruCache;
 use regex::Regex;
 use std::{
@@ -27,9 +29,11 @@ pub static MERMAID_MD: LazyLock<Regex> =
 
 pub static MAX_IMAGE_DIM: AtomicU32 = AtomicU32::new(512);
 
+#[cfg(feature = "ui")]
 pub static IMAGE_CACHE: LazyLock<Mutex<LruCache<String, egui::ImageSource<'static>>>> =
     LazyLock::new(|| Mutex::new(LruCache::unbounded()));
 
+#[cfg(feature = "ui")]
 pub fn prune_image_cache(ctx: &egui::Context) {
     let mut cache = IMAGE_CACHE.lock();
     while cache.len() > 100
@@ -41,6 +45,7 @@ pub fn prune_image_cache(ctx: &egui::Context) {
     }
 }
 
+#[cfg(feature = "ui")]
 /// Converts a rig image to egui, caching the result and returning a lookup key
 pub fn rig_image_to_egui(img: &rig::message::Image) -> String {
     let key = format!("{:x}", image_fingerprint(img));
@@ -366,6 +371,7 @@ fn downsample_image_bytes(
     Ok((image_bytes, Some(ImageFormat::Jpeg)))
 }
 
+#[cfg(feature = "ui")]
 pub fn show_image(ui: &mut egui::Ui, image: &egui::ImageSource<'static>, max_dim: f32) {
     let widget = egui::Image::new(image.clone()).fit_to_exact_size(egui::vec2(max_dim, max_dim));
     let response = ui.add(widget).on_hover_ui(|ui| {

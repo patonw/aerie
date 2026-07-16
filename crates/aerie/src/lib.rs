@@ -2,11 +2,13 @@ pub mod agent;
 pub mod app;
 pub mod chat;
 pub mod config;
+pub mod events;
 pub mod logging;
 pub mod pipeline;
 pub mod storage;
 pub mod toolbox;
 pub mod transmute;
+#[cfg(feature = "ui")]
 pub mod ui;
 pub mod utils;
 pub mod workflow;
@@ -22,6 +24,7 @@ pub use toolbox::{ToolProvider, Toolbox};
 pub use anyhow;
 pub use arc_swap;
 pub use decorum;
+#[cfg(feature = "ui")]
 pub use egui;
 pub use egui_snarl as snarl;
 pub use im;

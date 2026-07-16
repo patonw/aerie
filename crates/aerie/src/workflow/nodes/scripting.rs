@@ -7,8 +7,11 @@ use std::{
 };
 
 use decorum::E64;
+#[cfg(feature = "ui")]
 use egui::RichText;
+#[cfg(feature = "ui")]
 use egui_phosphor::regular::{ARROW_CIRCLE_DOWN, ARROW_CIRCLE_UP, TRASH};
+#[cfg(feature = "ui")]
 use egui_snarl::{InPinId, OutPinId};
 use im::vector;
 use itertools::Itertools;
@@ -16,13 +19,14 @@ use rhai::{Dynamic, Engine, Scope};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
+#[cfg(feature = "ui")]
 use crate::{
-    ui::{AppEvent, resizable_frame, shortcuts::squelch},
-    workflow::{
-        AnyPin, DynNode as _, EditContext, Value, ValueKind, WorkNode, WorkflowError,
-        nodes::GraphSubmenu,
-    },
+    events::AppEvent,
+    ui::{resizable_frame, shortcuts::squelch},
+    workflow::{AnyPin, DynNode as _, EditContext, WorkNode, nodes::GraphSubmenu},
 };
+
+use crate::workflow::{Value, ValueKind, WorkflowError};
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize, Serialize)]
@@ -54,6 +58,14 @@ impl Default for RhaiNode {
 }
 
 impl super::DynNode for RhaiNode {
+    fn title(&self) -> &str {
+        if self.name.is_empty() {
+            "Rhai script"
+        } else {
+            self.name.as_str()
+        }
+    }
+
     fn inputs(&self) -> usize {
         self.inputs.len()
     }
@@ -243,6 +255,7 @@ fn rhai_to_value(data: &Dynamic, kind: ValueKind) -> Result<Value, &'static str>
     })
 }
 
+#[cfg(feature = "ui")]
 impl super::UiNode for RhaiNode {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other.downcast_ref::<Self>().is_some_and(|other| {
@@ -250,14 +263,6 @@ impl super::UiNode for RhaiNode {
                 && self.inputs == other.inputs
                 && self.outputs == other.outputs
         })
-    }
-
-    fn title(&self) -> &str {
-        if self.name.is_empty() {
-            "Rhai script"
-        } else {
-            self.name.as_str()
-        }
     }
 
     fn title_mut(&mut self) -> Option<&mut String> {
@@ -571,15 +576,17 @@ impl super::UiNode for RhaiNode {
 #[typetag::serde]
 impl super::FlexNode for RhaiNode {}
 
+#[cfg(feature = "ui")]
 fn script_node_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
     ui.menu_button("Scripting", |ui| {
         if ui.button("Rhai").clicked() {
-            snarl.insert_node(pos, RhaiNode::default().into());
+            snarl.insert_node(pos.into(), RhaiNode::default().into());
             ui.close();
         }
     });
 }
 
+#[cfg(feature = "ui")]
 inventory::submit! {
     GraphSubmenu("scripting", script_node_menu)
 }

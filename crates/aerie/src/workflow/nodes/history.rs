@@ -1,24 +1,24 @@
 use std::{borrow::Cow, sync::Arc};
 
-use crate::{
-    rig::{
-        OneOrMany,
-        message::{AssistantContent, Message, ToolCall, ToolFunction},
-    },
-    utils::ImageResolver,
-};
 use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
 use crate::{
-    ChatContent, rig,
-    ui::{resizable_frame, shortcuts::squelch},
-    utils::EVec2,
-    workflow::{FlexNode, WorkflowError},
+    ChatContent,
+    rig::{
+        self, OneOrMany,
+        message::{AssistantContent, Message, ToolCall, ToolFunction},
+    },
+    utils::{EVec2, ImageResolver},
+    workflow::{DynNode, FlexNode, RunContext, Value, ValueKind, WorkflowError},
 };
 
-use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
+#[cfg(feature = "ui")]
+use crate::{
+    ui::{resizable_frame, shortcuts::squelch},
+    workflow::{EditContext, UiNode},
+};
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Deserialize, Serialize)]
 pub struct GraftHistory {}
@@ -27,6 +27,10 @@ pub struct GraftHistory {}
 impl FlexNode for GraftHistory {}
 
 impl DynNode for GraftHistory {
+    fn title(&self) -> &str {
+        "Side Conversation"
+    }
+
     fn inputs(&self) -> usize {
         2
     }
@@ -74,11 +78,8 @@ impl DynNode for GraftHistory {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for GraftHistory {
-    fn title(&self) -> &str {
-        "Side Conversation"
-    }
-
     fn show_input(
         &mut self,
         ui: &mut egui::Ui,
@@ -105,6 +106,10 @@ pub struct MaskHistory {
 impl FlexNode for MaskHistory {}
 
 impl DynNode for MaskHistory {
+    fn title(&self) -> &str {
+        "Mask Chat"
+    }
+
     fn inputs(&self) -> usize {
         2
     }
@@ -162,11 +167,8 @@ impl DynNode for MaskHistory {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for MaskHistory {
-    fn title(&self) -> &str {
-        "Mask Chat"
-    }
-
     fn tooltip(&self) -> &str {
         "Non-destructively limit the number of history entries visible.\nCan also remove an existing mask."
     }
@@ -236,6 +238,10 @@ pub struct CreateMessage {
 impl FlexNode for CreateMessage {}
 
 impl DynNode for CreateMessage {
+    fn title(&self) -> &str {
+        "Create Message"
+    }
+
     fn inputs(&self) -> usize {
         2
     }
@@ -386,15 +392,12 @@ impl DynNode for CreateMessage {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for CreateMessage {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other
             .downcast_ref::<Self>()
             .is_some_and(|other| self.kind == other.kind && self.content == other.content)
-    }
-
-    fn title(&self) -> &str {
-        "Create Message"
     }
 
     fn show_input(
@@ -457,6 +460,10 @@ pub struct ExtendHistory {
 impl FlexNode for ExtendHistory {}
 
 impl DynNode for ExtendHistory {
+    fn title(&self) -> &str {
+        "Extend History"
+    }
+
     fn inputs(&self) -> usize {
         self.count + 2 // Slot for history plus empty to add new msg
     }
@@ -504,11 +511,8 @@ impl DynNode for ExtendHistory {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for ExtendHistory {
-    fn title(&self) -> &str {
-        "Extend History"
-    }
-
     fn show_input(
         &mut self,
         ui: &mut egui::Ui,
@@ -532,6 +536,7 @@ impl UiNode for ExtendHistory {
     }
 }
 
+#[cfg(feature = "ui")]
 fn history_node_menu(
     ui: &mut egui::Ui,
     snarl: &mut egui_snarl::Snarl<super::WorkNode>,
@@ -539,26 +544,28 @@ fn history_node_menu(
 ) {
     ui.menu_button("History", |ui| {
         if ui.button("Create Message").clicked() {
-            snarl.insert_node(pos, CreateMessage::default().into());
+            snarl.insert_node(pos.into(), CreateMessage::default().into());
             ui.close();
         }
 
         if ui.button("Mask History").clicked() {
-            snarl.insert_node(pos, MaskHistory::default().into());
+            snarl.insert_node(pos.into(), MaskHistory::default().into());
             ui.close();
         }
 
         if ui.button("Extend History").clicked() {
-            snarl.insert_node(pos, ExtendHistory::default().into());
+            snarl.insert_node(pos.into(), ExtendHistory::default().into());
             ui.close();
         }
 
         if ui.button("Side Chat").clicked() {
-            snarl.insert_node(pos, GraftHistory::default().into());
+            snarl.insert_node(pos.into(), GraftHistory::default().into());
             ui.close();
         }
     });
 }
+
+#[cfg(feature = "ui")]
 inventory::submit! {
     super::GraphSubmenu("history", history_node_menu)
 }

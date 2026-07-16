@@ -1,6 +1,9 @@
 use delegate::delegate;
+#[cfg(feature = "ui")]
 use egui::Ui;
-use egui_snarl::{NodeId, Snarl};
+use egui_snarl::NodeId;
+#[cfg(feature = "ui")]
+use egui_snarl::Snarl;
 use serde::{Deserialize, Serialize};
 use std::{
     hash::Hash,
@@ -32,7 +35,10 @@ pub const MIN_HEIGHT: f32 = 32.0;
 
 use crate::workflow::{FlexNode, WorkflowError};
 
-pub use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
+#[cfg(feature = "ui")]
+pub use super::{EditContext, UiNode};
+
+pub use super::{DynNode, RunContext, Value, ValueKind};
 
 #[derive(Debug, Clone, Eq, Serialize, Deserialize)]
 pub struct WorkNode(pub Box<dyn FlexNode>);
@@ -57,28 +63,28 @@ impl<T: FlexNode> From<T> for WorkNode {
 
 impl WorkNode {
     delegate! {
-        // Pointless now
-        // TODO: deprecate and replace with trait method calls
         to self.0 {
-                #[call(deref)]
-                pub fn as_dyn(&self) -> &dyn DynNode;
+            #[call(deref)]
+            pub fn as_dyn(&self) -> &dyn DynNode;
 
-                #[call(deref_mut)]
-                pub fn as_dyn_mut(&mut self) -> &mut dyn DynNode;
+            #[call(deref_mut)]
+            pub fn as_dyn_mut(&mut self) -> &mut dyn DynNode;
 
-                #[call(deref)]
-                pub fn as_ui(&self) -> &dyn UiNode;
+            pub fn title(&self) -> &str;
 
-                #[call(deref_mut)]
-                pub fn as_ui_mut(&mut self) -> &mut dyn UiNode;
-
-                pub fn execute(&mut self, ctx: &RunContext, node_id: NodeId, inputs: Vec<Option<Value>>,) -> Result<Vec<Value>, WorkflowError>;
+            pub fn execute(&mut self, ctx: &RunContext, node_id: NodeId, inputs: Vec<Option<Value>>,) -> Result<Vec<Value>, WorkflowError>;
         }
     }
 
-    pub fn kind(&self) -> &str {
-        // type_name_of_val(self)
-        self.as_ui().title()
+    #[cfg(feature = "ui")]
+    delegate! {
+        to self.0 {
+            #[call(deref)]
+            pub fn as_ui(&self) -> &dyn UiNode;
+
+            #[call(deref_mut)]
+            pub fn as_ui_mut(&mut self) -> &mut dyn UiNode;
+        }
     }
 
     #[inline]
@@ -135,14 +141,22 @@ impl WorkNode {
         self.0.as_ref().downcast_ref::<Select>().is_some()
     }
 
+    #[cfg(not(feature = "ui"))]
+    pub fn weak_eq(&self, other: &Self) -> bool {
+        self.0.as_ref().eq(other.0.as_ref())
+    }
+
+    #[cfg(feature = "ui")]
     pub fn weak_eq(&self, other: &Self) -> bool {
         self.0.weak_eq(other.0.as_ref()) // inside a box
     }
 }
 
+#[cfg(feature = "ui")]
 pub struct GraphSubmenu(
     pub &'static str,
     pub fn(&mut Ui, &mut Snarl<WorkNode>, egui::Pos2),
 );
 
+#[cfg(feature = "ui")]
 inventory::collect!(GraphSubmenu);

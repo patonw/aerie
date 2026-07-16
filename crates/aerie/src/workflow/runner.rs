@@ -539,7 +539,7 @@ impl WorkflowRunner {
             if let Some(meta) = self.graph.nodes.get(&node_id) {
                 let node = &meta.value;
                 if node.is_finish() || node.is_output() || node.is_preview() {
-                    tracing::trace!("Resetting emitter node {node_id:?}: {}", node.kind());
+                    tracing::trace!("Resetting emitter node {node_id:?}: {}", node.title());
                     self.state_view.remove(node_id);
                 }
             }
@@ -654,7 +654,7 @@ impl WorkflowRunner {
         self.run_events.broadcast(json!({
             "msg": "executing node",
             "node": node_id,
-            "kind": snarl[node_id].kind(),
+            "title": snarl[node_id].title(),
             "priority": &ready_node.priority,
             "tags": ["workflow/step"]
         }));
@@ -663,7 +663,7 @@ impl WorkflowRunner {
 
         tracing::debug!(
             "Preparing to execute node {node_id:?}: {}",
-            snarl[node_id].kind(),
+            snarl[node_id].title(),
         );
 
         let single_out = snarl[node_id].as_dyn().outputs() == 1;
@@ -764,7 +764,7 @@ impl WorkflowRunner {
             }
         };
 
-        tracing::info!("** Executed {node_id:?}: {}", snarl[node_id].kind());
+        tracing::info!("** Executed {node_id:?}: {}", snarl[node_id].title());
 
         let successors = if let Some(successors) = self.successors.get(&node_id) {
             tracing::debug!(
@@ -827,7 +827,7 @@ impl WorkflowRunner {
 
                         tracing::info!(
                             "Node {successor:?} ({}) is now ready with priority {priority}",
-                            snarl[*successor].kind()
+                            snarl[*successor].title()
                         );
 
                         ExecState::Ready
@@ -878,7 +878,7 @@ impl WorkflowRunner {
                 } else {
                     tracing::warn!(
                         "Falling back on legacy input value for {:?} pin #{:?}",
-                        work_node.kind(),
+                        work_node.title(),
                         in_pin
                     );
 
@@ -926,7 +926,7 @@ impl WorkflowRunner {
         {
             tracing::info!(
                 "Setting failure node {:?} input on {}: {:?}",
-                snarl[node_id].kind(),
+                snarl[node_id].title(),
                 in_pin,
                 err
             );

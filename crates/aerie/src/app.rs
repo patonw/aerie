@@ -1,3 +1,4 @@
+#![cfg(feature = "ui")]
 use typed_builder::TypedBuilder;
 
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -22,9 +23,10 @@ use crate::{
     AgentFactory, LogChannelLayer, LogEntry, Preferences,
     chat::ChatSession,
     config::{Args, Command, ConfigExt, ConfigStateStore, SessionCommand},
+    events::{AppEvent, AppEvents},
     storage::CachedDirStore as _,
     toolbox::ToolStore,
-    ui::{AppEvent, AppEvents, AppState, Pane, shortcuts::SHORTCUT_QUIT, state::WorkflowState},
+    ui::{AppState, Pane, shortcuts::SHORTCUT_QUIT, state::WorkflowState},
     utils::{ErrorDistiller as _, ErrorList, MAX_IMAGE_DIM, prune_image_cache},
     workflow::store::WorkflowStoreDir,
 };

@@ -1,20 +1,30 @@
-use std::{borrow::Cow, convert::identity, sync::Arc};
+#[cfg(feature = "ui")]
+use std::sync::Arc;
+use std::{borrow::Cow, convert::identity};
 
+#[cfg(feature = "ui")]
 use egui::RichText;
+#[cfg(feature = "ui")]
 use egui_phosphor::regular::{ARROW_CIRCLE_DOWN, ARROW_CIRCLE_UP, TRASH};
-use egui_snarl::{InPinId, OutPinId};
+#[cfg(feature = "ui")]
+use egui_snarl::InPinId;
+use egui_snarl::OutPinId;
 use im::vector;
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ui::{AppEvent, shortcuts::squelch},
     utils::message_text,
-    workflow::{AnyPin, FlexNode, NodeTheme, ThemeCodex, WorkflowError},
+    workflow::{DynNode, EditContext, FlexNode, RunContext, Value, ValueKind, WorkflowError},
 };
 
-use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
+#[cfg(feature = "ui")]
+use crate::{
+    events::AppEvent,
+    ui::shortcuts::squelch,
+    workflow::{AnyPin, NodeTheme, ThemeCodex, UiNode},
+};
 
 fn root_start_fields() -> im::Vector<(String, ValueKind)> {
     vector![
@@ -59,6 +69,10 @@ impl std::hash::Hash for Start {
 }
 
 impl DynNode for Start {
+    fn title(&self) -> &str {
+        "Start"
+    }
+
     fn inputs(&self) -> usize {
         0
     }
@@ -90,11 +104,8 @@ impl DynNode for Start {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Start {
-    fn title(&self) -> &str {
-        "Start"
-    }
-
     fn show_output(
         &mut self,
         ui: &mut egui::Ui,
@@ -311,6 +322,10 @@ pub struct Finish {
 impl FlexNode for Finish {}
 
 impl DynNode for Finish {
+    fn title(&self) -> &str {
+        "Finish"
+    }
+
     fn priority(&self) -> usize {
         2000
     }
@@ -343,11 +358,8 @@ impl DynNode for Finish {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Finish {
-    fn title(&self) -> &str {
-        "Finish"
-    }
-
     fn tooltip(&self) -> &str {
         "Finish the run by injecting the input conversation into the session"
     }
@@ -549,6 +561,10 @@ pub struct LoopControl {
 #[typetag::serde]
 impl FlexNode for LoopControl {}
 impl DynNode for LoopControl {
+    fn title(&self) -> &str {
+        "Repeat"
+    }
+
     fn priority(&self) -> usize {
         2000
     }
@@ -587,11 +603,8 @@ impl DynNode for LoopControl {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for LoopControl {
-    fn title(&self) -> &str {
-        "Repeat"
-    }
-
     fn tooltip(&self) -> &str {
         "Controls looping.\n\
             If this node runs during an iteration,\n\
@@ -641,6 +654,10 @@ impl Default for Fallback {
 }
 
 impl DynNode for Fallback {
+    fn title(&self) -> &str {
+        "Fallback"
+    }
+
     fn inputs(&self) -> usize {
         self.kinds.len() + 1 // Slot for history plus empty to add new msg
     }
@@ -684,11 +701,8 @@ impl DynNode for Fallback {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Fallback {
-    fn title(&self) -> &str {
-        "Fallback"
-    }
-
     fn preview(&self, out_pin: usize) -> Value {
         Value::Placeholder(self.out_kind(out_pin))
     }
@@ -794,6 +808,10 @@ impl Default for Matcher {
 }
 
 impl DynNode for Matcher {
+    fn title(&self) -> &str {
+        "Match"
+    }
+
     fn inputs(&self) -> usize {
         2
     }
@@ -953,11 +971,8 @@ impl Matcher {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Matcher {
-    fn title(&self) -> &str {
-        "Match"
-    }
-
     fn tooltip(&self) -> &str {
         "Routes the data input to the output that matches the key"
     }
@@ -1144,6 +1159,10 @@ pub struct Select {
 impl FlexNode for Select {}
 
 impl DynNode for Select {
+    fn title(&self) -> &str {
+        "Select"
+    }
+
     fn inputs(&self) -> usize {
         self.count + 1 // Extra slot to add another document
     }
@@ -1189,11 +1208,8 @@ impl DynNode for Select {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Select {
-    fn title(&self) -> &str {
-        "Select"
-    }
-
     fn tooltip(&self) -> &str {
         "Emits the first input value that becomes ready.\n\
             Used for joining fallback branches to main control flow."
@@ -1278,6 +1294,10 @@ impl Default for Demote {
 }
 
 impl DynNode for Demote {
+    fn title(&self) -> &str {
+        "Demote"
+    }
+
     fn priority(&self) -> usize {
         self.priority
     }
@@ -1313,11 +1333,8 @@ impl DynNode for Demote {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Demote {
-    fn title(&self) -> &str {
-        "Demote"
-    }
-
     fn tooltip(&self) -> &str {
         "Blocks a path in the graph until there are no more\n\
             nodes with higher priority that are ready to run."
@@ -1371,6 +1388,10 @@ pub struct GateNode {
 impl FlexNode for GateNode {}
 
 impl DynNode for GateNode {
+    fn title(&self) -> &str {
+        "Gate"
+    }
+
     fn inputs(&self) -> usize {
         2
     }
@@ -1408,11 +1429,8 @@ impl DynNode for GateNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for GateNode {
-    fn title(&self) -> &str {
-        "Gate"
-    }
-
     fn tooltip(&self) -> &str {
         "Delays propagation of data until the control wire is ready."
     }

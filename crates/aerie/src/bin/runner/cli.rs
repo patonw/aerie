@@ -90,6 +90,7 @@ pub enum Command {
     Exec(ExecArgs),
 
     #[cfg(feature = "runner-http")]
+    #[command(visible_alias = "http")]
     Serve(HttpServerArgs),
 
     #[allow(clippy::upper_case_acronyms)]
