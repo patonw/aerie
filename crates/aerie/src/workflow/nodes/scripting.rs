@@ -1,5 +1,10 @@
 #![cfg(feature = "scripting")]
-use std::{borrow::Cow, collections::BTreeSet, sync::Arc, time::Instant};
+use std::{
+    borrow::Cow,
+    collections::BTreeSet,
+    sync::{Arc, atomic::Ordering},
+    time::Instant,
+};
 
 use decorum::E64;
 use egui::RichText;
@@ -82,12 +87,13 @@ impl super::DynNode for RhaiNode {
         self.validate(&inputs)?;
 
         let deadline = run_ctx.deadline;
+        let interrupt = run_ctx.interrupt.clone();
 
         let mut engine = Engine::new();
         engine.on_progress(move |_| {
-            if let Some(deadline) = deadline
-                && deadline < Instant::now()
-            {
+            let overdue = deadline.map(|d| d < Instant::now()).unwrap_or(false);
+            if overdue || interrupt.load(Ordering::Relaxed) {
+                tracing::info!("Interrupting script.");
                 Some(Dynamic::UNIT)
             } else {
                 None

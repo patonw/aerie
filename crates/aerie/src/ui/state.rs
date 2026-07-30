@@ -336,9 +336,9 @@ pub struct WorkflowState<W: WorkflowStore> {
 }
 
 impl<W: WorkflowStore> WorkflowState<W> {
-    pub fn new(store: W, current: Option<String>) -> Self {
+    pub fn new(mut store: W, current: Option<String>) -> Self {
         let (name, graph) = if let Some(name) = current.filter(|n| store.exists(n))
-            && let Some(baseline) = store.get(name.as_ref())
+            && let Ok(baseline) = store.load(name.as_ref())
         {
             (name, baseline)
         } else {

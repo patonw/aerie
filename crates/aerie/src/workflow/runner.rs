@@ -1,17 +1,20 @@
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Local};
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
+use glob::{MatchOptions, Pattern};
 use im::OrdSet;
 use itertools::{EitherOrBoth, Itertools};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use serde_json::json;
 use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap},
     hash::{DefaultHasher, Hash as _, Hasher as _},
     ops::Deref,
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
     time::Duration,
 };
 use typed_builder::TypedBuilder;
+use uuid::Uuid;
 
 use crate::{
     utils::ImmutableMapExt as _,
@@ -28,7 +31,8 @@ pub type RunOutput = Arc<ArcSwap<im::OrdMap<String, crate::workflow::Value>>>;
 // A deeply nested subgraph can be run multiple times if a parent iterates.
 // Each run must be independently tracked.
 // Furthermore, the execution subtrees for iterations must be entirely independent.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(into = "(uuid::Uuid, usize)")]
 pub struct ExecId(pub u64, pub u64, pub usize);
 
 impl Default for ExecId {
@@ -37,14 +41,36 @@ impl Default for ExecId {
     }
 }
 
-impl From<GraphId> for ExecId {
-    fn from(value: GraphId) -> Self {
-        let u64_pair = value.0.as_u64_pair();
+impl From<Uuid> for ExecId {
+    fn from(value: Uuid) -> Self {
+        let u64_pair = value.as_u64_pair();
         Self(u64_pair.0, u64_pair.1, 0)
     }
 }
 
+impl From<GraphId> for ExecId {
+    fn from(value: GraphId) -> Self {
+        value.0.into()
+    }
+}
+
+impl From<ExecId> for (uuid::Uuid, usize) {
+    fn from(value: ExecId) -> Self {
+        (value.into(), value.2)
+    }
+}
+
+impl From<ExecId> for uuid::Uuid {
+    fn from(value: ExecId) -> Self {
+        uuid::Uuid::from_u64_pair(value.0, value.1)
+    }
+}
+
 impl ExecId {
+    pub fn random() -> Self {
+        uuid::Uuid::new_v4().into()
+    }
+
     pub fn masked_eq(&self, other: &Self) -> bool {
         self.0 == other.0 && self.1 == other.1
     }
@@ -59,6 +85,10 @@ impl ExecId {
         that.1 = s.finish();
         that.2 = pass;
         that
+    }
+
+    pub fn with_pass(self, pass: usize) -> Self {
+        Self(self.0, self.1, pass)
     }
 }
 
@@ -280,6 +310,117 @@ impl<T: Ord> Ord for Prioritized<T> {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub enum RunEventData {
+    #[serde(untagged)]
+    Json(serde_json::Value),
+}
+
+fn dur_as_milis<S>(dur: &Duration, ser: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    ser.serialize_u128(dur.as_millis())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunEvent {
+    #[serde(default)]
+    pub tags: Vec<String>,
+
+    #[serde(flatten)]
+    pub data: RunEventData,
+
+    #[serde(
+        default,
+        rename = "#clk_ms",
+        serialize_with = "dur_as_milis",
+        skip_serializing_if = "Duration::is_zero"
+    )]
+    pub elapsed: Duration,
+}
+
+impl RunEvent {
+    pub fn with_elapsed(self, elapsed: Duration) -> Self {
+        Self { elapsed, ..self }
+    }
+
+    pub fn with_tags(self, tags: Vec<String>) -> Self {
+        Self { tags, ..self }
+    }
+
+    pub fn filter(&self, patterns: &[Pattern]) -> bool {
+        let opts = MatchOptions {
+            case_sensitive: false,
+            require_literal_separator: true,
+            require_literal_leading_dot: true,
+        };
+
+        self.tags
+            .iter()
+            .any(|t| patterns.iter().any(|f| f.matches_with(t, opts)))
+    }
+}
+
+impl<D: Into<RunEventData>> From<D> for RunEvent {
+    fn from(value: D) -> Self {
+        Self {
+            data: value.into(),
+            tags: Default::default(),
+            elapsed: Default::default(),
+        }
+    }
+}
+
+impl From<serde_json::Value> for RunEvent {
+    fn from(mut data: serde_json::Value) -> Self {
+        use serde_json::Value;
+        let tags = if let Some(event) = data.as_object_mut()
+            && let Some(tags) = event.remove("tags")
+            && let Value::Array(tags) = tags
+        {
+            let string_value = |it| match it {
+                Value::String(s) => Some(s),
+                _ => None,
+            };
+
+            tags.into_iter().filter_map(string_value).collect_vec()
+        } else {
+            Default::default()
+        };
+
+        // Self::from(RunEventData::Json(data)).with_tags(tags)
+        Self {
+            tags,
+            data: RunEventData::Json(data),
+            elapsed: Default::default(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct RunEventCast(pub async_broadcast::Sender<RunEvent>);
+
+impl Default for RunEventCast {
+    fn default() -> Self {
+        let (mut tx, _) = async_broadcast::broadcast(1);
+        tx.set_overflow(true);
+        Self(tx)
+    }
+}
+
+impl RunEventCast {
+    pub fn new() -> (Self, async_broadcast::Receiver<RunEvent>) {
+        let (mut tx, rx) = async_broadcast::broadcast(1);
+        tx.set_overflow(true);
+        (Self(tx), rx)
+    }
+
+    pub fn broadcast(&self, event: impl Into<RunEvent>) {
+        let _ = self.0.try_broadcast(event.into());
+    }
+}
+
 #[derive(TypedBuilder)]
 pub struct WorkflowRunner {
     #[builder(default)]
@@ -307,6 +448,9 @@ pub struct WorkflowRunner {
 
     #[builder(default)]
     pub outputs: Vec<Option<Value>>,
+
+    #[builder(default)]
+    pub run_events: RunEventCast,
 }
 
 // TODO methods to alter status when node controls or connections changed
@@ -472,6 +616,10 @@ impl WorkflowRunner {
 
     // TODO: fully convert this to shadow graph
     pub fn step(&mut self, snarl: &mut Snarl<WorkNode>) -> Result<bool, Arc<WorkflowError>> {
+        if self.run_ctx.interrupt.load(Ordering::Relaxed) {
+            return Err(Arc::new(WorkflowError::Interrupted));
+        }
+
         tracing::trace!("Priority queue: {:?}", &self.ready_nodes);
 
         let Some(ready_node) = self.ready_nodes.pop() else {
@@ -502,6 +650,14 @@ impl WorkflowRunner {
         };
 
         let node_id = ready_node.payload;
+
+        self.run_events.broadcast(json!({
+            "msg": "executing node",
+            "node": node_id,
+            "kind": snarl[node_id].kind(),
+            "priority": &ready_node.priority,
+            "tags": ["workflow/step"]
+        }));
 
         self.state_view.insert(node_id, ExecState::Running);
 

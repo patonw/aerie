@@ -17,6 +17,7 @@ use std::{
     iter::{self, once},
     path::{Path, PathBuf},
     sync::Arc,
+    time::SystemTime,
 };
 use tokio::process::Command;
 
@@ -97,11 +98,12 @@ fn prompt_schema() -> serde_json::Value {
                 },
                 "description": "image paths or URLs to pass to the next workflow",
             },
-        }
+        },
+        "required": [],
     })
 }
 
-fn parse_or_prompt_schema(schema: &str) -> serde_json::Value {
+pub fn parse_or_prompt_schema(schema: &str) -> serde_json::Value {
     Some(schema)
         .filter(|s| !s.is_empty())
         .and_then(|s| parse_schema(s.to_string()).ok())
@@ -417,7 +419,10 @@ impl ToolProvider {
         }
     }
 
-    pub async fn from_spec(spec: &ToolSpec) -> anyhow::Result<Self> {
+    pub async fn from_spec(
+        spec: &ToolSpec,
+        vars: &std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<Self> {
         let client = match spec {
             ToolSpec::Stdio {
                 dir,
@@ -429,6 +434,9 @@ impl ToolProvider {
                 let client = ()
                     .serve(TokioChildProcess::new(Command::new(command).configure(
                         |cmd| {
+                            // Don't propagate SIGTERM to subprocess
+                            cmd.process_group(0);
+
                             let cmd = args.iter().fold(cmd, |cmd, arg| cmd.arg(arg));
                             // cmd.stderr(Stdio::null());
                             if let Some(cwd) = dir {
@@ -436,7 +444,7 @@ impl ToolProvider {
                             }
 
                             for (k, v) in env.split("\n").filter_map(|s| s.split_once('=')) {
-                                let value = subst::substitute(v, &subst::Env)
+                                let value = subst::substitute(v, vars)
                                     .map(Cow::Owned)
                                     .unwrap_or(Cow::Borrowed(v));
 
@@ -457,10 +465,12 @@ impl ToolProvider {
                 let auth_var = auth_var.as_ref().filter(|s| !s.is_empty());
                 let config = if uri.contains(API_KEY) {
                     let Some(var_name) = auth_var else {
-                        anyhow::bail!("No enviroment for API KEY deifned")
+                        anyhow::bail!("No enviroment for API KEY defined")
                     };
 
-                    let token = std::env::var(var_name)?;
+                    let token = vars
+                        .get(var_name)
+                        .context(format!("Environment variable {var_name} not found"))?;
                     let uri = uri.replace(API_KEY, &token);
 
                     StreamableHttpClientTransportConfig::with_uri(uri.as_str())
@@ -469,7 +479,9 @@ impl ToolProvider {
 
                     // optional auth
                     if let Some(var_name) = auth_var {
-                        let token = std::env::var(var_name)?;
+                        let token = vars
+                            .get(var_name)
+                            .context(format!("Environment variable {var_name} not found"))?;
                         config = config.auth_header(token);
                     }
 
@@ -695,7 +707,7 @@ impl Toolbox {
 pub struct ToolStore {
     path: PathBuf,
 
-    cache: Arc<ArcSwap<im::OrdMap<String, ToolSpec>>>,
+    cache: Arc<ArcSwap<im::OrdMap<String, (SystemTime, ToolSpec)>>>,
 }
 
 impl ToolStore {
@@ -706,14 +718,19 @@ impl ToolStore {
         }
     }
 
-    pub async fn load_provider(&self, toolbox: Toolbox, name: &str) -> anyhow::Result<Toolbox> {
+    pub async fn load_provider(
+        &self,
+        toolbox: Toolbox,
+        name: &str,
+        vars: &std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<Toolbox> {
         use crate::storage::CachedDirStore as _;
         let Ok(spec) = self.load(name) else {
             anyhow::bail!("Could not load tool spec for {name}");
         };
 
         if spec.enabled() {
-            let provider = ToolProvider::from_spec(&spec)
+            let provider = ToolProvider::from_spec(&spec, vars)
                 .await
                 .context(format!("Could not load provider {name} with spec {spec:?}"))?;
 
@@ -731,13 +748,18 @@ impl crate::storage::CachedDirStore<ToolSpec> for ToolStore {
         &self.path
     }
 
-    fn view_cache<R>(&self, cb: impl FnOnce(&im::OrdMap<String, ToolSpec>) -> R) -> R {
+    fn view_cache<R>(
+        &self,
+        cb: impl FnOnce(&im::OrdMap<String, (SystemTime, ToolSpec)>) -> R,
+    ) -> R {
         cb(&self.cache.load())
     }
 
     fn update_cache(
         &self,
-        cb: impl Fn(&im::OrdMap<String, ToolSpec>) -> im::OrdMap<String, ToolSpec>,
+        cb: impl Fn(
+            &im::OrdMap<String, (SystemTime, ToolSpec)>,
+        ) -> im::OrdMap<String, (SystemTime, ToolSpec)>,
     ) {
         self.cache.rcu(|cache| cb(cache));
     }
