@@ -7,20 +7,24 @@ use std::{
 #[cfg(feature = "ui")]
 use crate::workflow::{NodeTheme, ThemeCodex};
 use crate::{
+    agent::AgentW,
     rig::{
         OneOrMany,
-        agent::PromptRequest,
-        completion::{Completion, CompletionError, CompletionResponse},
+        completion::CompletionError,
         message::{AssistantContent, Message, Reasoning, ToolCall, ToolFunction, UserContent},
     },
     utils::{ErrorDistiller, canonicalize_msg},
     workflow::with_deadline,
 };
 use arc_swap::ArcSwap;
+use futures_util::pin_mut;
 use itertools::Itertools;
-use rig_dynclient::completion::CompletionModelHandle;
+use rig_dynclient::rig::{
+    agent::{MultiTurnStreamItem, PromptResponse},
+    prelude::PromptError,
+    tool::ToolExecutionError,
+};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
@@ -249,10 +253,10 @@ impl ChatNode {
 
         let last_idx = messages.len();
 
-        let agent = agent_spec.agent(&run_ctx.agent_factory)?;
         let tools = agent_spec.tool_selection();
+        let agent_w = run_ctx.agent_factory.spec_to_agent(agent_spec)?;
 
-        let request = multi_turn_completion(run_ctx, &agent, tools, prompt, &mut messages);
+        let request = multi_turn_completion(run_ctx, &agent_w, tools, prompt, &mut messages);
         let prompt_request = request.await;
         match prompt_request {
             Ok(_) => {
@@ -558,7 +562,7 @@ impl StructuredChat {
             Arc::make_mut(&mut agent_spec).schema(schema.clone());
         }
 
-        let agent = agent_spec.agent(&run_ctx.agent_factory)?;
+        let agent_w = run_ctx.agent_factory.spec_to_agent(&agent_spec)?;
 
         let max_attempts = self.retries + 1;
         let mut attempts = 0;
@@ -603,14 +607,14 @@ impl StructuredChat {
             };
 
             let response =
-                one_shot_completion(run_ctx, &agent, current_prompt, history.clone()).await;
+                one_shot_completion(run_ctx, &agent_w, current_prompt, history.clone()).await;
 
             attempts += 1;
             match response {
                 Ok(resp) => {
                     let agent_msg = Message::Assistant {
                         id: None,
-                        content: resp.choice.clone(),
+                        content: resp.content.clone(),
                     };
 
                     if !run_ctx.streaming
@@ -620,7 +624,7 @@ impl StructuredChat {
                     }
 
                     let (tool_calls, texts): (Vec<_>, Vec<_>) = resp
-                        .choice
+                        .content
                         .iter()
                         .partition(|choice| matches!(choice, AssistantContent::ToolCall(_)));
 
@@ -763,47 +767,41 @@ impl StructuredChat {
 #[allow(deprecated)]
 async fn one_shot_completion(
     run_ctx: &RunContext,
-    agent: &rig::agent::Agent<CompletionModelHandle<'static>>,
+    agent: &AgentW,
     prompt: Message,
     history: Vec<Message>,
-) -> Result<CompletionResponse<()>, WorkflowError> {
-    use crate::rig::streaming::{StreamedAssistantContent, StreamingCompletion};
+) -> Result<PromptResponse, WorkflowError> {
+    use crate::rig::streaming::StreamedAssistantContent;
     use futures_util::stream::StreamExt as _;
 
     let prefs = run_ctx.agent_factory.prefs.load();
 
     if !run_ctx.streaming {
-        let mut request = agent
-            .completion(prompt.clone(), history)
-            .await
-            .map_err(|e| WorkflowError::Provider(e.into()))?;
+        let request = agent.exec_completion(prompt.clone(), history);
 
-        if let Some(seed) = &run_ctx.seed {
-            let value = seed.value.fetch_add(seed.increment, Ordering::Relaxed);
-            request = request.additional_params(json!({"seed": value}));
-        }
-
-        return match with_deadline(request.send(), None, run_ctx.deadline).await {
+        return match with_deadline(request, None, run_ctx.deadline).await {
             Ok(Ok(it)) => Ok(it),
+            Ok(Err(PromptError::PromptCancelled { chat_history, .. }))
+                if let Some(Message::Assistant { content, .. }) = chat_history.last().cloned() =>
+            {
+                Ok(PromptResponse::empty()
+                    .with_messages(chat_history)
+                    .with_content(content))
+            }
+            Ok(Err(PromptError::MaxTurnsError { chat_history, .. }))
+                if let Some(Message::Assistant { content, .. }) = chat_history.last().cloned() =>
+            {
+                Ok(PromptResponse::empty()
+                    .with_messages(*chat_history)
+                    .with_content(content))
+            }
+            Ok(Err(PromptError::MaxTurnsError { chat_history, .. })) => {
+                panic!("Could not deal with this max_turns: {:?}", chat_history);
+            }
             Ok(Err(err)) => Err(WorkflowError::Provider(err.into())),
             Err(err) => Err(err),
         };
     }
-
-    let mut request = agent
-        .stream_completion(prompt.clone(), history)
-        .await
-        .map_err(|e| WorkflowError::Provider(e.into()))?;
-
-    if let Some(seed) = &run_ctx.seed {
-        let value = seed.value.fetch_add(seed.increment, Ordering::Relaxed);
-        request = request.additional_params(json!({"seed": value}));
-    }
-
-    let mut stream = request
-        .stream()
-        .await
-        .map_err(|e| WorkflowError::Provider(e.into()))?;
 
     let mut texts = String::new();
     let mut reasonings = Vec::new();
@@ -815,6 +813,9 @@ async fn one_shot_completion(
     } else {
         None
     };
+
+    let stream = agent.stream_completion(&prompt, history);
+    pin_mut!(stream);
 
     while let Some(content) =
         with_deadline(stream.next(), prefs.stream_idle, run_ctx.deadline).await?
@@ -830,7 +831,7 @@ async fn one_shot_completion(
         }
 
         match content {
-            Ok(item) => match item {
+            Ok(MultiTurnStreamItem::StreamAssistantItem(item)) => match item {
                 StreamedAssistantContent::Text(text) => {
                     texts.push_str(&text.text);
                     let msg = Message::assistant(&texts);
@@ -859,8 +860,25 @@ async fn one_shot_completion(
 
                     reasonings.last_mut().unwrap().push_str(&reasoning);
                 }
+                StreamedAssistantContent::Unknown(unk) => {
+                    tracing::warn!(?unk, "Unknonwn content");
+                }
             },
+            Ok(MultiTurnStreamItem::CompletionCall(usage)) => {
+                tracing::info!(?usage, "Stream completed");
+            }
+            Ok(unk) => {
+                panic!("Don't know what to do with {unk:?}");
+            }
+            Err(rig::agent::StreamingError::Prompt(boxed))
+                if let PromptError::PromptCancelled { chat_history, .. } = boxed.as_ref()
+                    && let Some(Message::Assistant { content, .. }) =
+                        chat_history.last().cloned() =>
+            {
+                tracing::info!(?content, "Prompt cancelled during stream");
+            }
             Err(err) => {
+                let err: rig::agent::StreamingError = err;
                 Err(WorkflowError::Provider(err.into()))?;
             }
         }
@@ -873,12 +891,7 @@ async fn one_shot_completion(
     if let Some(Message::Assistant { id: _, content }) =
         contents_to_message(&texts, &reasonings, &tool_calls)
     {
-        Ok(CompletionResponse {
-            choice: content,
-            usage: Default::default(),
-            raw_response: (),
-            message_id: None,
-        })
+        Ok(PromptResponse::empty().with_content(content))
     } else {
         Err(WorkflowError::Unknown(
             "No response or error message from provider".into(),
@@ -899,37 +912,36 @@ enum StreamingError {
     #[error("PromptError: {0}")]
     Prompt(#[from] Box<rig::completion::PromptError>),
     #[error("ToolSetError: {0}")]
-    Tool(#[from] rig::tool::ToolSetError),
+    Tool(#[from] rig::tool::ToolExecutionError),
+}
+
+impl From<rig::agent::StreamingError> for StreamingError {
+    fn from(value: rig::agent::StreamingError) -> Self {
+        match value {
+            rig::agent::StreamingError::Completion(completion_error) => completion_error.into(),
+            rig::agent::StreamingError::Prompt(prompt_error) => prompt_error.into(),
+        }
+    }
 }
 
 #[allow(deprecated)]
 // Following the example multi_turn_streaming_gemini, but I'm pretty lost.
 async fn multi_turn_completion(
     run_ctx: &RunContext,
-    agent: &rig::agent::Agent<CompletionModelHandle<'static>>,
+    agent: &AgentW,
     toolset: Arc<ToolSelector>,
     prompt: Message,
     chat_history: &mut Vec<Message>,
 ) -> Result<(), StreamingError> {
-    use crate::rig::{
-        self,
-        streaming::{StreamedAssistantContent, StreamingCompletion},
-    };
+    use crate::rig::{self, streaming::StreamedAssistantContent};
     use futures_util::stream::StreamExt as _;
 
     let prefs = run_ctx.agent_factory.prefs.load();
     let max_turns = prefs.tool_turns.unwrap_or(5);
 
     if !run_ctx.streaming {
-        let resp = with_deadline(
-            PromptRequest::from_agent(agent, prompt)
-                .max_turns(max_turns)
-                .with_history(chat_history.clone())
-                .extended_details(),
-            None,
-            run_ctx.deadline,
-        )
-        .await??;
+        let prompt = agent.exec_chat(prompt, chat_history.clone(), Some(max_turns));
+        let resp = with_deadline(prompt, None, run_ctx.deadline).await??;
 
         if let Some(messages) = resp.messages {
             chat_history.extend(messages);
@@ -958,17 +970,6 @@ async fn multi_turn_completion(
             scratch.pop_back();
         }
 
-        let mut request = agent
-            .stream_completion(current_prompt.clone(), chat_history.clone())
-            .await?;
-
-        if let Some(seed) = &run_ctx.seed {
-            let value = seed.value.fetch_add(seed.increment, Ordering::Relaxed);
-            request = request.additional_params(json!({"seed": value}));
-        }
-
-        let mut stream = request.stream().await?;
-
         chat_history.push(current_prompt.clone());
         if let Some(scratch) = &run_ctx.scratch {
             scratch.push_back(Ok(current_prompt.clone()));
@@ -983,6 +984,9 @@ async fn multi_turn_completion(
         let mut texts = String::new();
         let mut tool_calls = vec![];
 
+        let stream = agent.stream_completion(&current_prompt, chat_history.clone());
+        pin_mut!(stream);
+
         while let Some(content) =
             with_deadline(stream.next(), prefs.stream_idle, run_ctx.deadline).await?
         {
@@ -991,22 +995,27 @@ async fn multi_turn_completion(
             }
 
             match content {
-                Ok(StreamedAssistantContent::Text(text)) => {
-                    texts.push_str(&text.text);
-                }
-                Ok(StreamedAssistantContent::ToolCall { tool_call, .. }) => {
-                    tool_calls.push(tool_call);
-                }
-                Ok(StreamedAssistantContent::Reasoning(reasoning)) => {
-                    reasonings.push(reasoning.display_text());
-                }
-                Ok(StreamedAssistantContent::ReasoningDelta { id: _, reasoning }) => {
-                    if reasonings.is_empty() {
-                        reasonings.push(Default::default());
+                Ok(MultiTurnStreamItem::StreamAssistantItem(item)) => match item {
+                    StreamedAssistantContent::Text(text) => {
+                        texts.push_str(&text.text);
                     }
+                    StreamedAssistantContent::ToolCall { tool_call, .. } => {
+                        tool_calls.push(tool_call);
+                    }
+                    StreamedAssistantContent::Reasoning(reasoning) => {
+                        reasonings.push(reasoning.display_text());
+                    }
+                    StreamedAssistantContent::ReasoningDelta { id: _, reasoning } => {
+                        if reasonings.is_empty() {
+                            reasonings.push(Default::default());
+                        }
 
-                    reasonings.last_mut().unwrap().push_str(&reasoning);
-                }
+                        reasonings.last_mut().unwrap().push_str(&reasoning);
+                    }
+                    unk => {
+                        tracing::warn!(?unk, "Unhandled content stream");
+                    }
+                },
                 Ok(_) => {
                     tracing::trace!("Unhandled streamed content {content:?}");
                 }
@@ -1048,9 +1057,7 @@ async fn multi_turn_completion(
                 &tool_call.function.name
             );
 
-            let call_tool = agent
-                .tool_server_handle
-                .call_tool(&tool_call.function.name, &tool_args);
+            let call_tool = agent.exec_tool(&tool_call.function.name, &tool_args);
             let tool_result = if let Some(timeout) = timeout {
                 tokio::time::timeout(Duration::from_secs(timeout), call_tool)
                     .await
@@ -1058,12 +1065,13 @@ async fn multi_turn_completion(
             } else {
                 call_tool.await
             };
-            let tool_result = tool_result.map_err(|x| {
-                StreamingError::Tool(rig::tool::ToolSetError::ToolCallError(
-                    rig::tool::ToolError::ToolCallError(x.into()),
-                ))
-            })?;
-            tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), tool_result));
+            if !tool_result.is_success() {
+                return Err(StreamingError::Tool(ToolExecutionError::other(format!(
+                    "{tool_result:?}"
+                ))));
+            }
+            let tool_output = tool_result.output().render();
+            tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), tool_output));
         }
 
         // Add tool results to chat history

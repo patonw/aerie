@@ -3,7 +3,7 @@ use crate::{
     rig::{
         self,
         message::Message,
-        tool::{ToolSetError, server::ToolServerError},
+        tool::{ToolExecutionError, server::ToolServerError},
     },
     utils::EPos2,
     workflow::nodes::LoopControl,
@@ -1384,7 +1384,7 @@ pub enum WorkflowError {
     MissingToolCall,
 
     #[error("Error while invoking tool")]
-    ToolCall(#[source] ToolSetError),
+    ToolCall(#[source] ToolExecutionError),
 
     #[error("Error while invoking tool")]
     ToolServerCall(#[source] ToolServerError),
@@ -1438,8 +1438,8 @@ impl PartialEq for WorkflowError {
     }
 }
 
-impl From<ToolSetError> for WorkflowError {
-    fn from(value: ToolSetError) -> Self {
+impl From<ToolExecutionError> for WorkflowError {
+    fn from(value: ToolExecutionError) -> Self {
         WorkflowError::ToolCall(value)
     }
 }

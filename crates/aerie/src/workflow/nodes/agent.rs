@@ -1150,8 +1150,8 @@ impl InvokeTool {
             _ => unreachable!(),
         };
 
-        let rig_tools = run_ctx.agent_factory.toolbox.get_tools(&toolset);
-        let tool_defs = rig_tools.get_tool_definitions().await.unwrap_or_default();
+        let rig_tools = run_ctx.agent_factory.toolbox.get_tools(&toolset).run();
+        let tool_defs = rig_tools.get_tool_defs(None).await.unwrap_or_default();
         tracing::debug!("Tool definitions {:?}", &tool_defs);
 
         let single_tool = if let [tool] = tool_defs.as_slice() {
@@ -1179,11 +1179,17 @@ impl InvokeTool {
             _ => unreachable!(),
         };
 
-        let future = rig_tools.call(tool_name, args.to_string());
+        let mut tool_ctx = Default::default();
+        let tool_args = serde_json::to_string(&args)
+            .map_err(|e| anyhow::anyhow!("Could not serialize args: {e:?}"))?;
+        let future = rig_tools.execute(tool_name, &tool_args, &mut tool_ctx);
         let timeout = run_ctx.agent_factory.toolbox.timeout(&toolset, tool_name);
-        let tool_output = with_deadline(future, timeout, run_ctx.deadline).await??;
+        let tool_result = with_deadline(future, timeout, run_ctx.deadline).await?;
 
-        let msg = Arc::new(Message::tool_result(tool_name, &tool_output));
+        let Some(tool_output) = tool_result.output().as_text() else {
+            return Err(WorkflowError::Unknown("Could not get tool output".into()));
+        };
+        let msg = Arc::new(Message::tool_result(tool_name, tool_output));
 
         let history = if let Some(chat) = chat {
             let chat = chat.extend(vec![Ok(msg.clone()).into()])?;
@@ -1195,7 +1201,7 @@ impl InvokeTool {
         Ok(vec![
             history,
             Value::Message(msg),
-            Value::Text(Arc::new(tool_output.clone())),
+            Value::Text(Arc::new(tool_output.to_string())),
             Value::Placeholder(ValueKind::Failure),
         ])
     }

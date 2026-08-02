@@ -198,7 +198,7 @@ impl ServerHandler for RunnerService {
             let content = outputs
                 .map_err(|err| McpError::internal_error(format!("{err:?}"), None))?
                 .into_iter()
-                .map(Content::json)
+                .map(ContentBlock::json)
                 .collect::<Result<Vec<_>, McpError>>()?;
 
             Ok(CallToolResult::success(content))
