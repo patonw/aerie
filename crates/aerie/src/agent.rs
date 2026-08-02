@@ -10,8 +10,6 @@ use crate::rig::{
 };
 use anyhow::anyhow;
 use arc_swap::{ArcSwap, ArcSwapOption};
-use decorum::E64;
-use derive_builder::Builder;
 use futures_util::{Stream, StreamExt as _};
 use itertools::Itertools;
 use rig_dynclient::{
@@ -22,7 +20,6 @@ use scopeguard::defer;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    hash::Hash,
     sync::{
         Arc,
         atomic::{AtomicU16, Ordering},
@@ -41,6 +38,7 @@ pub use super::config::{Preferences, ToolSelector, ToolSpec};
 pub use super::logging::{LogChannelLayer, LogEntry};
 pub use super::pipeline::{Pipeline, Workstep};
 pub use super::toolbox::{ToolProvider, Toolbox};
+pub use crate::config::AgentSpec;
 
 #[allow(deprecated)]
 pub type AgentBuilderT = AgentBuilder<CompletionModelHandle<'static>>;
@@ -352,32 +350,5 @@ impl AgentFactory {
         }
 
         joiner.join_all().await
-    }
-}
-
-#[derive(Builder)]
-#[builder(
-    name = "AgentSpec",
-    derive(Debug, Hash, PartialEq, Eq, Serialize),
-    field(public)
-)]
-// For use via the derived builder, not directly
-pub struct _AgentSpec_ {
-    pub model: String,
-
-    pub temperature: E64,
-
-    pub preamble: String,
-
-    pub context_doc: Arc<String>,
-
-    pub tools: Arc<ToolSelector>,
-
-    pub schema: Arc<serde_json::Value>,
-}
-
-impl AgentSpec {
-    pub fn tool_selection(&self) -> Arc<ToolSelector> {
-        self.tools.clone().unwrap_or_default()
     }
 }

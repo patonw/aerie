@@ -26,6 +26,9 @@ use crate::{
     workflow::{AnyPin, DynNode as _, EditContext, WorkNode, nodes::GraphSubmenu},
 };
 
+#[cfg(feature = "native")]
+use crate::workflow::RunContext;
+
 use crate::workflow::{Value, ValueKind, WorkflowError};
 
 #[skip_serializing_none]
@@ -90,9 +93,10 @@ impl super::DynNode for RhaiNode {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
-        run_ctx: &super::RunContext,
+        run_ctx: &RunContext,
         _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<super::Value>>,
     ) -> Result<Vec<super::Value>, crate::workflow::WorkflowError> {

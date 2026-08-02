@@ -63,6 +63,7 @@ impl ChatSession {
             .and_then(|p| p.file_stem().map(|s| s.display().to_string()))
     }
 
+    #[cfg(feature = "wip")]
     /// List all sessions in the session directory
     pub fn list(&self) -> Vec<String> {
         // self.path
@@ -128,6 +129,7 @@ impl ChatSession {
         Ok(())
     }
 
+    #[cfg(feature = "wip")]
     pub fn import(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
         let path = path.as_ref();
         if !path.is_file() {
@@ -218,6 +220,7 @@ impl ChatSession {
     }
 }
 
+#[cfg(feature = "wip")]
 #[cached(time = 5)]
 pub fn list_sessions(dir: PathBuf) -> Vec<String> {
     tracing::info!("listing sessions for {dir:?}");
@@ -370,7 +373,7 @@ impl ChatHistory {
                 result.head_branch()
             };
 
-            let id = Uuid::new_v4();
+            let id = Uuid::now_v7();
             let entry = ChatEntry {
                 id,
                 parent,
@@ -396,7 +399,7 @@ impl ChatHistory {
         let mut last: Option<Uuid> = None;
 
         for content in contents {
-            let id = Uuid::new_v4();
+            let id = Uuid::now_v7();
             let entry = ChatEntry {
                 id,
                 parent: last,

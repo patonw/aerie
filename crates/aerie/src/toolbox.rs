@@ -19,14 +19,18 @@ use std::{
     sync::Arc,
     time::SystemTime,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::process::Command;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::rmcp::transport::TokioChildProcess;
 use crate::rmcp::{
     Peer, RoleClient, ServiceExt as _,
     model::{ClientInfo, Implementation, InitializeRequestParams, Tool},
     service::RunningService,
     transport::{
-        ConfigureCommandExt, StreamableHttpClientTransport, TokioChildProcess,
+        ConfigureCommandExt, StreamableHttpClientTransport,
         streamable_http_client::StreamableHttpClientTransportConfig,
     },
 };

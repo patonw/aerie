@@ -33,12 +33,36 @@ pub use subgraph::*;
 pub const MIN_WIDTH: f32 = 128.0;
 pub const MIN_HEIGHT: f32 = 32.0;
 
+pub use crate::workflow::{DynNode, Value, ValueKind};
 use crate::workflow::{FlexNode, WorkflowError};
 
 #[cfg(feature = "ui")]
-pub use super::{EditContext, UiNode};
+pub use crate::workflow::UiNode;
 
-pub use super::{DynNode, RunContext, Value, ValueKind};
+#[cfg(feature = "ui")]
+pub use crate::workflow::EditContext;
+
+#[cfg(feature = "native")]
+pub use crate::workflow::RunContext;
+
+// "serializing nested enums in YAML is not supported yet"
+// So we'll embed the enum into the node struct instead
+/// Controls execution behavior
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, Deserialize, Serialize)]
+pub enum Flavor {
+    #[default]
+    Simple,
+
+    Looping,
+
+    Iterative,
+}
+
+impl Flavor {
+    pub fn multiplexing(&self) -> bool {
+        *self == Self::Iterative
+    }
+}
 
 #[derive(Debug, Clone, Eq, Serialize, Deserialize)]
 pub struct WorkNode(pub Box<dyn FlexNode>);
@@ -72,6 +96,7 @@ impl WorkNode {
 
             pub fn title(&self) -> &str;
 
+            #[cfg(feature = "native")]
             pub fn execute(&mut self, ctx: &RunContext, node_id: NodeId, inputs: Vec<Option<Value>>,) -> Result<Vec<Value>, WorkflowError>;
         }
     }
@@ -131,6 +156,7 @@ impl WorkNode {
     pub fn is_comment(&self) -> bool {
         self.0.as_ref().downcast_ref::<CommentNode>().is_some()
     }
+
     #[inline]
     pub fn is_protected(&self) -> bool {
         self.is_start() || self.is_finish() || self.is_repeat()

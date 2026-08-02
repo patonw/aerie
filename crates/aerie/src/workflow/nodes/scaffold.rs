@@ -14,16 +14,17 @@ use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    utils::message_text,
-    workflow::{DynNode, EditContext, FlexNode, RunContext, Value, ValueKind, WorkflowError},
-};
-
+#[cfg(feature = "native")]
+use crate::workflow::RunContext;
 #[cfg(feature = "ui")]
 use crate::{
     events::AppEvent,
     ui::shortcuts::squelch,
     workflow::{AnyPin, NodeTheme, ThemeCodex, UiNode},
+};
+use crate::{
+    utils::message_text,
+    workflow::{DynNode, EditContext, FlexNode, Value, ValueKind, WorkflowError},
 };
 
 fn root_start_fields() -> im::Vector<(String, ValueKind)> {
@@ -89,6 +90,7 @@ impl DynNode for Start {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -346,6 +348,7 @@ impl DynNode for Finish {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -585,6 +588,7 @@ impl DynNode for LoopControl {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -685,6 +689,7 @@ impl DynNode for Fallback {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -838,6 +843,7 @@ impl DynNode for Matcher {
         self.kind
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -1189,6 +1195,7 @@ impl DynNode for Select {
         8000
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -1314,6 +1321,7 @@ impl DynNode for Demote {
         self.kind
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -1414,6 +1422,7 @@ impl DynNode for GateNode {
         Ok(())
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,

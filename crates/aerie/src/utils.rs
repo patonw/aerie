@@ -19,7 +19,9 @@ use crate::rig::{
     message::{AssistantContent, Message, ToolResultContent, UserContent},
 };
 
+#[cfg(feature = "wip")]
 pub mod image;
+#[cfg(feature = "wip")]
 pub use image::*;
 
 #[derive(Debug, Clone, Copy, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -365,6 +367,7 @@ pub enum FormatOpts {
     Pre,
     Markdown,
     Reasoning,
+    #[cfg(feature = "wip")]
     Image,
     Unknown,
 }
@@ -398,6 +401,8 @@ pub fn canonicalize_msg(msg: Message) -> Result<Message, Vec<anyhow::Error>> {
         Message::User { content } => {
             let items = content.iter().map(|content| -> anyhow::Result<_> {
                 match &content {
+                    // TODO: client proxy
+                    #[cfg(feature = "wip")]
                     UserContent::Image(image) => {
                         let image = ImageResolver::default().preprocess(image)?;
                         Ok(Cow::Owned(UserContent::Image(image.into_owned())))
@@ -444,7 +449,8 @@ pub fn extract_user_content(content: &UserContent) -> Vec<(Cow<'_, str>, FormatO
                 _ => None,
             })
             .collect_vec(),
-        #[cfg(feature = "ui")]
+        // TODO: client proxy
+        #[cfg(feature = "wip")]
         UserContent::Image(img) => {
             let key = rig_image_to_egui(img);
 
@@ -465,13 +471,14 @@ pub fn extract_agent_content(content: &AssistantContent) -> Vec<(Cow<'_, str>, F
         AssistantContent::Reasoning(reasoning) => {
             vec![(Cow::Owned(reasoning.display_text()), FormatOpts::Reasoning)]
         }
-        #[cfg(feature = "ui")]
+        // TODO: client proxy
+        #[cfg(feature = "wip")]
         AssistantContent::Image(img) => {
             let key = rig_image_to_egui(img);
 
             vec![(Cow::Owned(key), FormatOpts::Image)]
         }
-        #[cfg(not(feature = "ui"))]
+        #[cfg(not(feature = "wip"))]
         other => vec![(Cow::Owned(format!("{other:?}")), FormatOpts::Unknown)],
     }
 }

@@ -6,7 +6,7 @@
   nixgl ? import sources.nixGL {},
   rust-toolchain ? fenix.combine [
     fenix.stable.toolchain
-    fenix.targets.wasm32-unknown-unknown.latest.rust-std
+    fenix.targets.wasm32-unknown-unknown.stable.rust-std
   ],
   naersk ? pkgs.callPackage sources.naersk {
     cargo = rust-toolchain;

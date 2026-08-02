@@ -4,15 +4,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
 
+#[cfg(feature = "native")]
+use crate::workflow::RunContext;
 #[cfg(feature = "ui")]
 use crate::{
     ui::{resizable_frame, shortcuts::squelch},
     workflow::{EditContext, NodeTheme, ThemeCodex, UiNode},
 };
-
 use crate::{
     utils::message_to_json,
-    workflow::{DynNode, FlexNode, RunContext, Value, WorkflowError},
+    workflow::{DynNode, FlexNode, Value, WorkflowError},
 };
 
 use super::ValueKind;
@@ -127,6 +128,7 @@ impl DynNode for TemplateNode {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -267,6 +269,7 @@ impl DynNode for EnvironmentNode {
         ValueKind::Json
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,

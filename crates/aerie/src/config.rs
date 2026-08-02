@@ -1,7 +1,10 @@
 use arc_swap::ArcSwap;
 use cached::proc_macro::cached;
+use decorum::E64;
 use delegate::delegate;
+use derive_builder::Builder;
 use glob::{Pattern, PatternError};
+use std::hash::Hash;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
@@ -14,6 +17,7 @@ use std::{
     time::Instant,
 };
 
+#[cfg(feature = "wip")]
 use crate::rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -612,6 +616,7 @@ impl ToolSelector {
         self.0.remove(selector);
     }
 
+    #[cfg(feature = "wip")]
     pub fn include(&mut self, provider: &str, tool: &Tool) {
         self.add(&format!("{provider}/{}", tool.name));
     }
@@ -651,4 +656,31 @@ impl ToolSelector {
 #[cached(result = true)]
 pub fn tool_glob(pattern: String) -> Result<Pattern, PatternError> {
     Pattern::new(&pattern)
+}
+
+#[derive(Builder)]
+#[builder(
+    name = "AgentSpec",
+    derive(Debug, Hash, PartialEq, Eq, Serialize),
+    field(public)
+)]
+// For use via the derived builder, not directly
+pub struct _AgentSpec_ {
+    pub model: String,
+
+    pub temperature: E64,
+
+    pub preamble: String,
+
+    pub context_doc: Arc<String>,
+
+    pub tools: Arc<ToolSelector>,
+
+    pub schema: Arc<serde_json::Value>,
+}
+
+impl AgentSpec {
+    pub fn tool_selection(&self) -> Arc<ToolSelector> {
+        self.tools.clone().unwrap_or_default()
+    }
 }

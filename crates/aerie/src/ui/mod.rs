@@ -1,14 +1,20 @@
 use eframe::egui;
 use egui::WidgetText;
 
+pub mod render;
+#[cfg(feature = "wip")]
 pub mod runner;
 pub mod shortcuts;
+#[cfg(feature = "wip")]
 pub mod state;
 pub mod tiles;
+#[cfg(feature = "wip")]
 pub mod workflow;
 
+#[cfg(feature = "wip")]
 pub use state::AppState;
 
+#[cfg(feature = "wip")]
 pub use crate::events::*;
 
 pub enum Pane {

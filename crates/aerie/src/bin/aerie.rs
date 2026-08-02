@@ -1,4 +1,4 @@
-#![cfg(feature = "ui")]
+#![cfg(feature = "desktop")]
 use clap::Parser as _;
 
 use aerie::config::Args;

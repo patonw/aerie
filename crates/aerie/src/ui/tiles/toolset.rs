@@ -10,8 +10,9 @@ use itertools::Itertools;
 use serde_yaml_ng as serde_yml;
 
 use crate::{
-    ToolProvider, ToolSpec,
+    config::ToolSpec,
     storage::CachedDirStore as _,
+    toolbox::ToolProvider,
     ui::{AppEvent, state::ToolEditorState, toggled_field},
     utils::ErrorDistiller as _,
 };

@@ -7,11 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
 
-use crate::{
-    utils::{extract_json, message_text, message_to_json},
-    workflow::{DynNode, FlexNode, RunContext, Value, ValueKind, WorkflowError},
-};
-
+#[cfg(feature = "native")]
+use crate::workflow::RunContext;
 #[cfg(feature = "ui")]
 use crate::{
     ui::{
@@ -19,6 +16,10 @@ use crate::{
         shortcuts::{Shortcut, squelch},
     },
     workflow::{EditContext, UiNode, WorkNode, nodes::GraphSubmenu},
+};
+use crate::{
+    utils::{extract_json, message_text, message_to_json},
+    workflow::{DynNode, FlexNode, Value, ValueKind, WorkflowError},
 };
 
 #[skip_serializing_none]
@@ -62,6 +63,7 @@ impl DynNode for ParseJson {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -268,6 +270,7 @@ impl DynNode for ValidateJson {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -418,6 +421,7 @@ impl DynNode for TransformJson {
         ValueKind::Json
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -548,6 +552,7 @@ impl DynNode for GatherJson {
         ValueKind::Json
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -656,6 +661,7 @@ impl DynNode for UnwrapJson {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,

@@ -1,13 +1,3 @@
-use crate::{
-    config::ModelRole,
-    rig::{
-        self,
-        message::Message,
-        tool::{ToolExecutionError, server::ToolServerError},
-    },
-    utils::EPos2,
-    workflow::nodes::LoopControl,
-};
 use arc_swap::ArcSwap;
 use decorum::{E32, E64};
 use downcast_rs::{Downcast, impl_downcast};
@@ -39,22 +29,35 @@ use thiserror::Error;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
+#[cfg(feature = "wip")]
 use crate::{
-    AgentFactory, ChatHistory, ToolSelector, Toolbox,
-    agent::AgentSpec,
-    config::SeedConfig,
-    events::{AppEvent, AppEvents},
-    rig::message::Image,
+    agent::AgentFactory,
+    config::{ModelRole, SeedConfig},
+    rig::{
+        self,
+        tool::{ToolExecutionError, server::ToolServerError},
+    },
+    toolbox::Toolbox,
     transmute::Transmuter,
-    utils::{AtomicBuffer, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
+    workflow::runner::{ExecState, NodeStateMap},
+};
+use crate::{
+    chat::ChatHistory,
+    config::{AgentSpec, ToolSelector},
+    events::{AppEvent, AppEvents},
+    rig::message::{Image, Message},
+    utils::{
+        AtomicBuffer, EPos2, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text,
+    },
     workflow::{
-        nodes::{Finish, Flavor, Start},
-        runner::{ExecId, ExecState, NodeStateMap},
+        nodes::{Finish, Flavor, LoopControl, Start},
+        runner::ExecId,
     },
 };
 
 pub mod nodes;
 pub mod runner;
+#[cfg(feature = "wip")]
 pub mod store;
 
 #[cfg(feature = "ui")]
@@ -234,6 +237,7 @@ impl AnyPin {
     }
 }
 
+#[cfg(feature = "wip")]
 #[derive(Clone, TypedBuilder)]
 pub struct CheckContext {
     pub toolbox: Toolbox,
@@ -243,6 +247,7 @@ pub struct CheckContext {
     pub node_id: NodeId,
 }
 
+#[cfg(feature = "wip")]
 impl CheckContext {
     pub fn with_node(&self, node_id: NodeId) -> Self {
         Self {
@@ -264,6 +269,7 @@ impl CheckContext {
 
 #[derive(Clone, TypedBuilder)]
 pub struct EditContext {
+    #[cfg(feature = "wip")]
     pub toolbox: Toolbox,
 
     pub events: Arc<AppEvents>,
@@ -333,6 +339,7 @@ impl OutputChannel {
     }
 }
 
+#[cfg(feature = "wip")]
 #[derive(Clone, TypedBuilder)]
 pub struct RunContext {
     pub runtime: tokio::runtime::Handle,
@@ -403,6 +410,7 @@ pub struct RunContext {
     pub run_events: runner::RunEventCast,
 }
 
+#[cfg(feature = "wip")]
 impl RunContext {
     #[inline]
     pub fn event(&self, event: AppEvent) {
@@ -444,6 +452,7 @@ impl RunContext {
     }
 }
 
+#[cfg(feature = "wip")]
 #[derive(TypedBuilder)]
 pub struct RootContext {
     /// A full copy of the current graph
@@ -468,6 +477,7 @@ pub struct RootContext {
     pub extra_content: Vec<rig::message::UserContent>,
 }
 
+#[cfg(feature = "wip")]
 impl RootContext {
     pub fn inputs(&self) -> Result<Vec<Option<Value>>, WorkflowError> {
         let schema: serde_json::Value = if !self.workflow.metadata.schema.is_empty() {
@@ -558,7 +568,7 @@ impl Display for GraphId {
 
 impl Default for GraphId {
     fn default() -> Self {
-        Self(Uuid::new_v4())
+        Self(Uuid::now_v7())
     }
 }
 
@@ -999,6 +1009,7 @@ impl ShadowGraph<WorkNode> {
             && self.nodes.keys().all(cmp_nodes)
     }
 
+    #[cfg(feature = "wip")]
     pub fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
         let mut alerts = im::OrdMap::new();
         for (id, subnode) in &self.nodes {
@@ -1010,6 +1021,7 @@ impl ShadowGraph<WorkNode> {
         alerts
     }
 
+    #[cfg(feature = "wip")]
     pub fn repair(&self) -> Self {
         let mut target = self.clone();
         if let Some(id) = self
@@ -1162,6 +1174,7 @@ impl Workflow {
         }
     }
 
+    #[cfg(feature = "wip")]
     pub fn repair(&self) -> Self {
         let graph = self.graph.repair();
         let meta = self.metadata.clone();
@@ -1260,11 +1273,13 @@ pub trait DynNode {
         }
     }
 
+    #[cfg(feature = "wip")]
     fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
         let _ = ctx;
         Default::default()
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -1383,9 +1398,11 @@ pub enum WorkflowError {
     )]
     MissingToolCall,
 
+    #[cfg(feature = "wip")]
     #[error("Error while invoking tool")]
     ToolCall(#[source] ToolExecutionError),
 
+    #[cfg(feature = "wip")]
     #[error("Error while invoking tool")]
     ToolServerCall(#[source] ToolServerError),
 
@@ -1400,6 +1417,7 @@ pub enum WorkflowError {
     #[error("timed out")]
     Timeout,
 
+    #[cfg(feature = "wip")]
     #[error("Graph execution halted before finishing: {0:?}")]
     Unfinished(ExecState),
 
@@ -1427,9 +1445,12 @@ impl PartialEq for WorkflowError {
             (Self::Required(l0), Self::Required(r0)) => l0 == r0,
             (Self::Conversion(l0), Self::Conversion(r0)) => l0 == r0,
             (Self::Provider(l0), Self::Provider(r0)) => std::ptr::eq(l0, r0),
+            #[cfg(feature = "wip")]
             (Self::ToolCall(l0), Self::ToolCall(r0)) => std::ptr::eq(l0, r0),
+            #[cfg(feature = "wip")]
             (Self::ToolServerCall(l0), Self::ToolServerCall(r0)) => std::ptr::eq(l0, r0),
             (Self::Validation(l0), Self::Validation(r0)) => std::ptr::eq(l0, r0),
+            #[cfg(feature = "wip")]
             (Self::Unfinished(l0), Self::Unfinished(r0)) => std::ptr::eq(l0, r0),
             (Self::Subgraph(l0), Self::Subgraph(r0)) => l0 == r0,
             (Self::Unknown(l0), Self::Unknown(r0)) => l0 == r0,
@@ -1438,18 +1459,21 @@ impl PartialEq for WorkflowError {
     }
 }
 
+#[cfg(feature = "wip")]
 impl From<ToolExecutionError> for WorkflowError {
     fn from(value: ToolExecutionError) -> Self {
         WorkflowError::ToolCall(value)
     }
 }
 
+#[cfg(feature = "wip")]
 impl From<ToolServerError> for WorkflowError {
     fn from(value: ToolServerError) -> Self {
         WorkflowError::ToolServerCall(value)
     }
 }
 
+#[cfg(feature = "wip")]
 #[cfg(feature = "scripting")]
 impl From<Box<rhai::EvalAltResult>> for WorkflowError {
     fn from(value: Box<rhai::EvalAltResult>) -> Self {
@@ -1457,12 +1481,14 @@ impl From<Box<rhai::EvalAltResult>> for WorkflowError {
     }
 }
 
+#[cfg(feature = "wip")]
 impl From<anyhow::Error> for WorkflowError {
     fn from(value: anyhow::Error) -> Self {
         WorkflowError::Unknown(format!("{value:?}"))
     }
 }
 
+#[cfg(feature = "wip")]
 pub fn fixup_workflow(mut snarl: Snarl<WorkNode>) -> Snarl<WorkNode> {
     tracing::debug!("Examining graph {snarl:?}");
 
@@ -1479,6 +1505,7 @@ pub fn fixup_workflow(mut snarl: Snarl<WorkNode>) -> Snarl<WorkNode> {
     snarl
 }
 
+#[cfg(feature = "wip")]
 pub fn write_value(mut fh: impl std::io::Write, value: &Value) -> Result<(), anyhow::Error> {
     match value {
         Value::Text(value) => {

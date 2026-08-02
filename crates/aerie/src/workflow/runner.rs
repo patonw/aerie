@@ -16,15 +16,15 @@ use std::{
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
+#[cfg(feature = "wip")]
+use crate::workflow::{
+    RunContext, ShadowGraph, ValueKind, Wire, WorkNode,
+    nodes::{Fallback, Flavor, Select},
+};
 use crate::{
     utils::ImmutableMapExt as _,
-    workflow::{
-        ShadowGraph, ValueKind, Wire, WorkflowError,
-        nodes::{Fallback, Flavor, Select},
-    },
+    workflow::{GraphId, Value, WorkflowError},
 };
-
-use super::{GraphId, RunContext, Value, WorkNode};
 
 pub type RunOutput = Arc<ArcSwap<im::OrdMap<String, crate::workflow::Value>>>;
 
@@ -68,7 +68,7 @@ impl From<ExecId> for uuid::Uuid {
 
 impl ExecId {
     pub fn random() -> Self {
-        uuid::Uuid::new_v4().into()
+        uuid::Uuid::now_v7().into()
     }
 
     pub fn masked_eq(&self, other: &Self) -> bool {
@@ -421,6 +421,7 @@ impl RunEventCast {
     }
 }
 
+#[cfg(feature = "wip")]
 #[derive(TypedBuilder)]
 pub struct WorkflowRunner {
     #[builder(default)]
@@ -453,6 +454,7 @@ pub struct WorkflowRunner {
     pub run_events: RunEventCast,
 }
 
+#[cfg(feature = "wip")]
 // TODO methods to alter status when node controls or connections changed
 impl WorkflowRunner {
     pub fn init(&mut self, graph: &ShadowGraph<WorkNode>) {

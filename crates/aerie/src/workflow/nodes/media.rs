@@ -6,16 +6,16 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
+#[cfg(feature = "wip")]
+#[cfg(feature = "ui")]
+use crate::utils::{IMAGE_CACHE, ImageResolver, rig_image_to_egui};
 #[cfg(feature = "ui")]
 use crate::{
-    utils::{ErrorDistiller as _, IMAGE_CACHE, rig_image_to_egui},
+    utils::ErrorDistiller as _,
     workflow::{UiNode, WorkNode, nodes::GraphSubmenu},
 };
 
-use crate::{
-    utils::ImageResolver,
-    workflow::{DynNode, FlexNode, Value, ValueKind, WorkflowError},
-};
+use crate::workflow::{DynNode, FlexNode, Value, ValueKind, WorkflowError};
 
 /// Stores images as data URIs in the graph
 #[skip_serializing_none]
@@ -41,6 +41,7 @@ impl DynNode for LoadImages {
         super::ValueKind::Images
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &super::RunContext,
@@ -68,6 +69,7 @@ impl UiNode for LoadImages {
         true
     }
 
+    #[cfg(feature = "wip")]
     // TODO: a square-ish 4xN gallery
     fn show_body(&mut self, ui: &mut egui::Ui, ctx: &super::EditContext) {
         ui.vertical(|ui| {
@@ -199,6 +201,7 @@ impl DynNode for FetchImages {
         ValueKind::Images
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         run_ctx: &super::RunContext,

@@ -4,10 +4,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "wip")]
+use crate::agent::AgentW;
 #[cfg(feature = "ui")]
 use crate::workflow::{NodeTheme, ThemeCodex};
 use crate::{
-    agent::AgentW,
     rig::{
         OneOrMany,
         completion::CompletionError,
@@ -28,7 +29,9 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
 use crate::{
-    ChatContent, ToolSelector, rig,
+    chat::ChatContent,
+    config::ToolSelector,
+    rig,
     utils::{CowExt as _, extract_json, message_text},
     workflow::{FlexNode, WorkflowError},
 };
@@ -36,9 +39,11 @@ use crate::{
 #[cfg(feature = "ui")]
 use crate::ui::{resizable_frame, shortcuts::squelch};
 
-use super::{DynNode, RunContext, Value, ValueKind};
+#[cfg(feature = "native")]
+use crate::workflow::RunContext;
+use crate::workflow::{DynNode, Value, ValueKind};
 #[cfg(feature = "ui")]
-use super::{EditContext, UiNode};
+use crate::workflow::{EditContext, UiNode};
 
 // TODO: Hash & eq by hand to ignore chat
 #[skip_serializing_none]
@@ -90,6 +95,7 @@ impl DynNode for ChatNode {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -197,6 +203,7 @@ impl UiNode for ChatNode {
     }
 }
 
+#[cfg(feature = "native")]
 impl ChatNode {
     pub async fn forward(
         &mut self,
@@ -352,6 +359,7 @@ impl DynNode for StructuredChat {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -488,6 +496,7 @@ impl UiNode for StructuredChat {
     }
 }
 
+#[cfg(feature = "native")]
 // TODO: investigate why errors in the MCP server cause a panic here
 impl StructuredChat {
     pub async fn forward(
@@ -764,6 +773,7 @@ impl StructuredChat {
     }
 }
 
+#[cfg(feature = "native")]
 #[allow(deprecated)]
 async fn one_shot_completion(
     run_ctx: &RunContext,
@@ -924,6 +934,7 @@ impl From<rig::agent::StreamingError> for StreamingError {
     }
 }
 
+#[cfg(feature = "native")]
 #[allow(deprecated)]
 // Following the example multi_turn_streaming_gemini, but I'm pretty lost.
 async fn multi_turn_completion(

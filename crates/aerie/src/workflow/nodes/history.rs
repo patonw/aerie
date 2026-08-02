@@ -4,16 +4,19 @@ use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
+#[cfg(feature = "wip")]
+use crate::utils::ImageResolver;
+#[cfg(feature = "native")]
+use crate::workflow::RunContext;
 use crate::{
-    ChatContent,
+    chat::ChatContent,
     rig::{
         self, OneOrMany,
         message::{AssistantContent, Message, ToolCall, ToolFunction},
     },
-    utils::{EVec2, ImageResolver},
-    workflow::{DynNode, FlexNode, RunContext, Value, ValueKind, WorkflowError},
+    utils::EVec2,
+    workflow::{DynNode, FlexNode, Value, ValueKind, WorkflowError},
 };
-
 #[cfg(feature = "ui")]
 use crate::{
     ui::{resizable_frame, shortcuts::squelch},
@@ -43,6 +46,7 @@ impl DynNode for GraftHistory {
         ValueKind::Chat
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -126,6 +130,7 @@ impl DynNode for MaskHistory {
         ValueKind::Chat
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -263,6 +268,7 @@ impl DynNode for CreateMessage {
         ValueKind::Message
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -479,6 +485,7 @@ impl DynNode for ExtendHistory {
         ValueKind::Chat
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,

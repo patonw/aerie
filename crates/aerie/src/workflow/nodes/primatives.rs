@@ -10,19 +10,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
 
+#[cfg(feature = "wip")]
+#[cfg(feature = "ui")]
+use crate::utils::{IMAGE_CACHE, rig_image_to_egui, show_image};
 #[cfg(feature = "ui")]
 use crate::{
-    ChatContent,
+    chat::ChatContent,
     events::AppEvent,
-    ui::{resizable_frame, shortcuts::squelch, tiles::chat::render_message_width},
-    utils::{IMAGE_CACHE, rig_image_to_egui, show_image},
+    ui::{render::render_message_width, resizable_frame, shortcuts::squelch},
     workflow::{EditContext, UiNode},
 };
 
 use crate::{
     utils::message_text,
-    workflow::{DynNode, FlexNode, GraphId, RunContext, Value, ValueKind, WorkflowError},
+    workflow::{DynNode, FlexNode, GraphId, Value, ValueKind, WorkflowError},
 };
+
+#[cfg(feature = "native")]
+use crate::workflow::RunContext;
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Number {
@@ -86,6 +91,7 @@ impl DynNode for Number {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -292,6 +298,7 @@ impl DynNode for Text {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -461,6 +468,7 @@ impl DynNode for Preview {
         0
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -570,6 +578,7 @@ impl UiNode for Preview {
                                     ui.add(egui::Label::new(format!("{:?}", value)).wrap());
                                 }
                             }
+                            #[cfg(feature = "wip")]
                             Value::Images(images) => {
                                 ui.vertical(|ui| {
                                     ui.set_width(200.0);
@@ -617,6 +626,7 @@ impl DynNode for OutputNode {
         0
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -695,6 +705,7 @@ impl DynNode for Panic {
         0
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,

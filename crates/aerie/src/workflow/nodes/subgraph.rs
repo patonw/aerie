@@ -20,34 +20,20 @@ use uuid::Uuid;
 #[cfg(feature = "ui")]
 use crate::workflow::{MetaNode, NodeTheme, ThemeCodex, UiNode, nodes::LoopControl};
 
+pub use super::Flavor;
 use crate::{
     events::AppEvent,
     utils::ImmutableMapExt,
     workflow::{
-        CheckContext, DynNode, FlexNode, GraphId, ShadowGraph, Value, ValueKind, WorkNode,
-        WorkflowError, min_instant,
-        runner::{ExecState, WorkflowRunner},
+        DynNode, FlexNode, GraphId, ShadowGraph, Value, ValueKind, WorkNode, WorkflowError,
+        min_instant,
     },
 };
 
-// "serializing nested enums in YAML is not supported yet"
-// So we'll embed the enum into the node struct instead
-/// Controls execution behavior
-#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, Deserialize, Serialize)]
-pub enum Flavor {
-    #[default]
-    Simple,
-
-    Looping,
-
-    Iterative,
-}
-
-impl Flavor {
-    pub fn multiplexing(&self) -> bool {
-        *self == Self::Iterative
-    }
-}
+#[cfg(feature = "wip")]
+use crate::workflow::CheckContext;
+#[cfg(feature = "wip")]
+use crate::workflow::runner::{ExecState, WorkflowRunner};
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize, Serialize)]
@@ -94,7 +80,10 @@ impl Subgraph {
     pub fn with_flavor(self, flavor: Flavor) -> Self {
         Self { flavor, ..self }
     }
+}
 
+#[cfg(feature = "native")]
+impl Subgraph {
     fn exec_simple(
         &mut self,
         ctx: &super::RunContext,
@@ -634,6 +623,7 @@ impl DynNode for Subgraph {
         }
     }
 
+    #[cfg(feature = "wip")]
     fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
         let sub_ctx = ctx.with_graph(self.graph.uuid);
 
@@ -646,6 +636,7 @@ impl DynNode for Subgraph {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &super::RunContext,
@@ -789,7 +780,7 @@ impl UiNode for Subgraph {
 
             if resp.response.double_clicked() || resp.inner {
                 ctx.events
-                    .insert(crate::ui::AppEvent::EnterSubgraph(ctx.current_node));
+                    .insert(AppEvent::EnterSubgraph(ctx.current_node));
             }
 
             if let Some(timeout) = &mut self.timeout {

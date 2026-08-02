@@ -1,6 +1,8 @@
+#[cfg(feature = "wip")]
+use crate::rmcp::model::Tool;
+#[cfg(feature = "wip")]
 use crate::{
     config::ConfigStateStore,
-    rmcp::model::Tool,
     workflow::{CheckContext, nodes::LoopControl},
 };
 use arc_swap::ArcSwap;
@@ -25,11 +27,16 @@ use std::{
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
+#[cfg(feature = "wip")]
 use super::{Pane, workflow::ViewStack};
+#[cfg(feature = "wip")]
 use crate::{
-    AgentFactory, LogEntry, Preferences, ToolSpec,
+    agent::AgentFactory,
     chat::ChatSession,
     config::ConfigExt as _,
+    config::Preferences,
+    config::ToolSpec,
+    logging::LogEntry,
     toolbox::ToolStore,
     transmute::Transmuter,
     ui::{
@@ -47,6 +54,7 @@ use crate::{
 
 const SOFT_LIMIT: usize = 128;
 
+#[cfg(feature = "wip")]
 pub enum ToolEditorState {
     EditProvider {
         original: Option<(String, ToolSpec)>,
@@ -57,6 +65,7 @@ pub enum ToolEditorState {
     },
 }
 
+#[cfg(feature = "wip")]
 #[derive(TypedBuilder)]
 pub struct AppState {
     pub rt: tokio::runtime::Handle,
@@ -128,6 +137,7 @@ pub struct AppState {
     pub transmuter: Transmuter,
 }
 
+#[cfg(feature = "wip")]
 impl AppState {
     pub fn workflow_viewer(&mut self) -> &mut WorkflowViewer {
         if self.workflows.viewer.is_none() {
@@ -228,6 +238,7 @@ impl AppState {
     }
 }
 
+#[cfg(feature = "wip")]
 impl egui_tiles::Behavior<Pane> for AppState {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> WidgetText {
         match pane {
@@ -298,6 +309,7 @@ pub enum MetaEdit {
     Chain,
 }
 
+#[cfg(feature = "wip")]
 /// Portion of the UI state dealing with workflows.
 pub struct WorkflowState<W: WorkflowStore> {
     pub view_stack: ViewStack,
@@ -335,6 +347,7 @@ pub struct WorkflowState<W: WorkflowStore> {
     pub alerts: im::OrdMap<(GraphId, NodeId), Cow<'static, str>>,
 }
 
+#[cfg(feature = "wip")]
 impl<W: WorkflowStore> WorkflowState<W> {
     pub fn new(store: W, current: Option<String>) -> Self {
         let (name, graph) = if let Some(name) = current.filter(|n| store.exists(n))

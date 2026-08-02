@@ -14,8 +14,8 @@ use typed_builder::TypedBuilder;
 
 use crate::cli;
 use aerie::{
-    AgentFactory, ChatSession, Preferences, config::ModelRole, storage::CachedDirStore as _,
-    toolbox::ToolStore, workflow::store::WorkflowStoreDir,
+    agent::AgentFactory, chat::ChatSession, config::ModelRole, config::Preferences,
+    storage::CachedDirStore as _, toolbox::ToolStore, workflow::store::WorkflowStoreDir,
 };
 
 #[derive(Debug, Default, Clone)]

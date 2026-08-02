@@ -12,7 +12,7 @@ use petgraph::{
 };
 use uuid::Uuid;
 
-use crate::{ChatEntry, ChatHistory};
+use crate::chat::{ChatEntry, ChatHistory};
 
 // TODO: show tags for branch heads
 
@@ -214,7 +214,7 @@ mod node {
     use petgraph::{EdgeType, stable_graph::IndexType};
 
     use crate::{
-        ChatContent,
+        chat::ChatContent,
         utils::{message_party, message_text},
     };
 

@@ -1,4 +1,4 @@
-#![cfg(feature = "ui")]
+#![cfg(feature = "desktop")]
 use typed_builder::TypedBuilder;
 
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -20,10 +20,13 @@ use tracing_subscriber::{
 };
 
 use crate::{
-    AgentFactory, LogChannelLayer, LogEntry, Preferences,
+    agent::AgentFactory,
     chat::ChatSession,
+    config::Preferences,
     config::{Args, Command, ConfigExt, ConfigStateStore, SessionCommand},
     events::{AppEvent, AppEvents},
+    logging::LogChannelLayer,
+    logging::LogEntry,
     storage::CachedDirStore as _,
     toolbox::ToolStore,
     ui::{AppState, Pane, shortcuts::SHORTCUT_QUIT, state::WorkflowState},

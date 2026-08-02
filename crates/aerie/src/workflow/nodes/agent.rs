@@ -11,21 +11,25 @@ use std::{borrow::Cow, str::FromStr as _, sync::Arc};
 #[cfg(feature = "ui")]
 use strum::IntoEnumIterator as _;
 
+#[cfg(feature = "wip")]
+#[cfg(feature = "ui")]
+use crate::toolbox::ToolProvider;
+#[cfg(feature = "native")]
+use crate::workflow::RunContext;
 use crate::{
-    ToolSelector,
+    config::ToolSelector,
     config::{ModelRole, Ternary},
     rig::message::Message,
-    toolbox::{ChainBreaker, ChainTool},
     utils::message_text,
-    workflow::{
-        CheckContext, DynNode, FlexNode, GraphId, RunContext, Value, ValueKind, WorkflowError,
-        with_deadline,
-    },
+    workflow::{DynNode, FlexNode, GraphId, Value, ValueKind, WorkflowError, with_deadline},
 };
-
+#[cfg(feature = "wip")]
+use crate::{
+    toolbox::{ChainBreaker, ChainTool},
+    workflow::CheckContext,
+};
 #[cfg(feature = "ui")]
 use crate::{
-    ToolProvider,
     ui::{resizable_frame, resizable_frame_opt, shortcuts::squelch},
     workflow::{EditContext, NodeTheme, ThemeCodex, UiNode},
 };
@@ -66,6 +70,7 @@ impl DynNode for Tools {
         Value::Tools(self.toolset.clone())
     }
 
+    #[cfg(feature = "wip")]
     fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
         let missing = ctx.toolbox.missing_tools(&self.toolset);
         if !missing.is_empty() {
@@ -75,6 +80,7 @@ impl DynNode for Tools {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -118,6 +124,7 @@ impl UiNode for Tools {
         true
     }
 
+    #[cfg(feature = "wip")]
     fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
         let dsize = Some(egui::vec2(250., 250.0));
         resizable_frame_opt(dsize, &mut self.size, ui, |ui| {
@@ -274,6 +281,7 @@ impl UiNode for Tools {
     }
 }
 
+#[cfg(feature = "native")]
 impl Tools {
     pub async fn forward(
         &mut self,
@@ -343,6 +351,7 @@ mod legacy {
             }
         }
 
+        #[cfg(feature = "native")]
         fn execute(
             &mut self,
             ctx: &RunContext,
@@ -609,6 +618,7 @@ impl DynNode for RoleAgent {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -868,6 +878,7 @@ impl DynNode for ChatContext {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -1037,6 +1048,7 @@ impl DynNode for InvokeTool {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -1130,6 +1142,7 @@ impl UiNode for InvokeTool {
     }
 }
 
+#[cfg(feature = "native")]
 impl InvokeTool {
     pub async fn forward(
         &mut self,
