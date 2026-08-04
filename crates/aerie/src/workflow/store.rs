@@ -20,7 +20,10 @@ pub trait WorkflowStore {
     fn load(&self, name: &str) -> anyhow::Result<Workflow>;
     fn save(&mut self, name: &str, value: Workflow) -> anyhow::Result<()>;
     fn names(&self) -> impl Iterator<Item = Cow<'_, str>>;
-    fn exists(&self, key: &str) -> bool;
+    fn exists(&self, key: &str) -> bool {
+        self.names().any(|n| n.as_ref() == key)
+    }
+
     fn description(&'_ self, key: &str) -> Cow<'_, str>;
     fn schema(&'_ self, key: &str) -> Cow<'_, str>;
 
@@ -345,7 +348,7 @@ impl WorkflowStore for WorkflowStoreDir {
 /// Client-side representation of the workflow store
 #[derive(Default, Debug, Clone)]
 pub struct WorkflowStoreStub {
-    metadata: BTreeMap<String, ShadowMeta>,
+    pub metadata: BTreeMap<String, ShadowMeta>,
 }
 
 impl WorkflowStoreStub {
@@ -367,5 +370,51 @@ impl WorkflowStoreStub {
         } else {
             Cow::Borrowed("")
         }
+    }
+}
+
+impl WorkflowStore for WorkflowStoreStub {
+    fn load(&self, name: &str) -> anyhow::Result<Workflow> {
+        todo!()
+    }
+
+    fn save(&mut self, name: &str, value: Workflow) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
+        self.names()
+    }
+
+    fn exists(&self, key: &str) -> bool {
+        self.names().any(|n| n.as_ref() == key)
+    }
+
+    fn description(&'_ self, key: &str) -> Cow<'_, str> {
+        self.description(key)
+    }
+
+    fn schema(&'_ self, key: &str) -> Cow<'_, str> {
+        self.schema(key)
+    }
+
+    fn remove(&mut self, key: &str) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    fn rename(&mut self, old_name: &str, new_name: &str) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    fn backup(&self, name: &str) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    fn get(&self, key: &str) -> Option<Workflow> {
+        todo!()
+    }
+
+    fn put(&mut self, key: &str, value: Workflow) {
+        todo!()
     }
 }

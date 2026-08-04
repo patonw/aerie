@@ -1,12 +1,16 @@
+use std::sync::Arc;
+
 use egui_snarl::{InPinId, NodeId, OutPinId};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
+    config::Preferences,
     utils::PriorityQueue,
     workflow::{AnyPin, GraphId, ValueKind},
 };
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum AppEvent {
     EnterSubgraph(NodeId),
     LeaveSubgraph(usize),
@@ -26,6 +30,7 @@ pub enum AppEvent {
     SwapInputs(GraphId, InPinId, InPinId),
     SwapOutputs(GraphId, OutPinId, OutPinId),
 
+    SwitchWorkflow(String),
     // User requested to run the current workflow
     UserRunWorkflow,
 
@@ -43,6 +48,14 @@ pub enum AppEvent {
     ProgressBegin(Uuid, usize),
     ProgressAdd(Uuid, usize),
     ProgressEnd(Uuid),
+
+    UpdatePreferences(Arc<Preferences>),
+    ClearModels,
+    TouchModel(String),
+
+    CreateSession,
+    SwitchSession(String),
+    RenameSession(String, String),
 }
 
 impl AppEvent {

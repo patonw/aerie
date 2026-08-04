@@ -2,7 +2,7 @@ use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular::{DOWNLOAD_SIMPLE, MAGIC_WAND, PENCIL, ROCKET, TRASH, UPLOAD_SIMPLE};
 use std::{collections::BTreeSet, sync::atomic::Ordering};
 
-use crate::utils::ErrorDistiller as _;
+use crate::{events::AppEvent, utils::ErrorDistiller as _};
 
 impl super::AppState {
     pub fn nav_ui(&mut self, ui: &mut egui::Ui) {
@@ -17,8 +17,10 @@ impl super::AppState {
                         let editor = ui.text_edit_singleline(renaming);
                         if editor.lost_focus() {
                             if !renaming.is_empty() {
-                                errors.distil(self.data.session.rename(renaming));
-                                self.state.set_session(self.data.session.name());
+                                self.events.insert(AppEvent::RenameSession(
+                                    self.data.session.name(),
+                                    renaming.clone(),
+                                ));
                             }
                             self.rename_session = None;
                         }
@@ -35,18 +37,17 @@ impl super::AppState {
 
                                 ui.selectable_value(&mut current, &blank, "");
 
-                                let names = session.list();
-                                for name in &names {
+                                for name in &self.data.session_names {
                                     ui.selectable_value(&mut current, name, name);
                                 }
 
                                 if current != &original {
-                                    errors.distil(self.data.session.switch(current));
-                                    self.state.set_session(self.data.session.name());
+                                    self.events.insert(AppEvent::SwitchSession(current.clone()));
                                 }
                             });
                     }
 
+                    #[cfg(feature = "wip")]
                     StripBuilder::new(ui)
                         .size(Size::exact(16.0))
                         .vertical(|mut strip| {
@@ -60,13 +61,7 @@ impl super::AppState {
                                                 .on_hover_text("Create")
                                                 .clicked()
                                             {
-                                                let datetime = chrono::offset::Local::now();
-                                                let timestamp = datetime
-                                                    .format("unnamed-%Y-%m-%dT%H:%M:%S")
-                                                    .to_string();
-                                                errors.distil(self.data.session.switch(&timestamp));
-                                                errors.distil(self.data.session.save());
-                                                self.state.set_session(self.data.session.name());
+                                                self.events.insert(AppEvent::CreateSession);
                                             }
                                         });
                                         strip.cell(|ui| {
@@ -75,6 +70,7 @@ impl super::AppState {
                                                     Some(self.data.session.name());
                                             }
                                         });
+                                        #[cfg(feature = "wip")]
                                         strip.cell(|ui| {
                                             if ui
                                                 .button(DOWNLOAD_SIMPLE)
@@ -88,6 +84,7 @@ impl super::AppState {
                                                 errors.distil(self.data.session.import(&path));
                                             }
                                         });
+                                        #[cfg(feature = "wip")]
                                         strip.cell(|ui| {
                                             if ui
                                                 .button(UPLOAD_SIMPLE)
@@ -105,6 +102,7 @@ impl super::AppState {
                                                 errors.distil(self.data.session.export(&path));
                                             }
                                         });
+                                        #[cfg(feature = "wip")]
                                         strip.cell(|ui| {
                                             ui.menu_button(TRASH, |ui| {
                                                 if ui.button("OK").clicked() {

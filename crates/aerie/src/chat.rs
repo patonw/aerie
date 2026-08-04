@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::utils::AtomicBuffer;
 
-#[derive(Clone, Builder)]
+#[derive(Clone, Serialize, Deserialize, Builder)]
 pub struct ChatSession {
     pub directory: PathBuf,
     pub path: Arc<Option<PathBuf>>,
@@ -235,7 +235,7 @@ impl ChatSession {
     }
 }
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 #[cached(time = 5)]
 pub fn list_sessions(dir: PathBuf) -> Vec<String> {
     tracing::info!("listing sessions for {dir:?}");

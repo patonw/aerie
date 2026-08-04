@@ -3,11 +3,9 @@ pub mod chat;
 pub mod logview;
 #[cfg(feature = "wip")]
 pub mod messages;
-#[cfg(feature = "wip")]
 pub mod navigator;
 #[cfg(feature = "wip")]
 pub mod outputs;
-#[cfg(feature = "wip")]
 pub mod settings;
 #[cfg(feature = "wip")]
 pub mod subgraph;

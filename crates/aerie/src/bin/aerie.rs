@@ -24,13 +24,21 @@ fn main() -> anyhow::Result<()> {
         };
     }
 
-    let app = aerie::app::App::builder()
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let _guard = rt.enter();
+    let app = aerie::app::AppFactory::builder()
         .name("aerie")
         .args(args)
+        .rt(rt.handle().clone())
         .settings_path(settings_path)
         .min_size(egui::vec2(800.0, 400.0))
         .build();
-    app.run_app()?;
+    app.run_ui()?;
 
     Ok(())
 }

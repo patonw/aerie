@@ -1,122 +1,168 @@
-use std::sync::Arc;
-
 use aerie::{
-    chat::{ChatHistory, ChatSession},
-    ui::{AppState, state::AppData},
+    client::{ActionData, ClientAction, ClientUpdate, UpdateData},
+    config::ConfigStateProxy,
+    ui::{
+        AppState,
+        state::{AppData, WorkflowState},
+    },
+    workflow::store::WorkflowStoreStub,
 };
-use arc_swap::ArcSwap;
 use eframe::egui;
 use egui::Visuals;
 use ewebsock::{WsEvent, WsReceiver, WsSender};
 
-pub struct ExampleApp {
-    name: String,
-    age: u32,
+// TODO: figure out how to manage different users
+// TODO: Save settings when changed
+// TODO: Ensure latest message is shown when autoscrolling
+
+pub struct WebApp {
     sock: Option<(WsSender, WsReceiver)>,
-    greeting: String,
     dirty: bool,
     state: AppState,
 }
 
-impl ExampleApp {
-    pub fn new() -> Self {
-        let data = include_str!("/home/patonw/.local/share/aerie/sessions/baseline.yml");
-        let history: ChatHistory = serde_yaml_ng::from_str(data).unwrap();
-        let preferences = Default::default();
-        let preferences = Arc::new(ArcSwap::from_pointee(preferences));
-        let session = ChatSession::transient()
-            .history(Arc::new(ArcSwap::from_pointee(history)))
-            .build()
-            .unwrap();
+impl WebApp {
+    pub fn new(ctx: &egui::Context) -> Self {
+        let content_rect = ctx.content_rect();
+        egui_extras::install_image_loaders(&ctx);
+        let mut fonts = egui::FontDefinitions::default();
+        egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+        ctx.set_fonts(fonts);
+
         let data = AppData::builder()
-            .prefs(preferences)
-            .session(session)
+            .prefs(Default::default())
+            .session(Default::default())
             .build();
-        let state = AppState::builder().data(data).build();
+
+        let workflows = WorkflowState::new(WorkflowStoreStub::default(), None);
+        let state = AppState::builder()
+            .data(data)
+            .workflows(workflows)
+            .state(ConfigStateProxy::default())
+            .build();
 
         Self {
-            name: "Arthur".into(),
-            age: 42,
             sock: None,
-            greeting: "".into(),
             dirty: false,
             state,
         }
     }
 }
 
-impl eframe::App for ExampleApp {
+impl eframe::App for WebApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.style_mut(|style| style.visuals = Visuals::dark());
+        let mut task_update = None;
         if let Some((tx, rx)) = &mut self.sock {
             while let Some(event) = rx.try_recv() {
                 log::info!("New event: {event:?}");
                 match event {
                     WsEvent::Opened => {
-                        tx.send(ewebsock::WsMessage::Binary(vec![4, 5, 6]));
+                        // let payload = serde_json::to_string(&ClientAction {
+                        //     action: ActionData::Noop("meh".into()),
+                        // })
+                        // .unwrap();
+                        // tx.send(ewebsock::WsMessage::Text(payload));
+
+                        // Expect backend to send initial dump
+                        ctx.request_repaint();
                     }
-                    WsEvent::Message(ewebsock::WsMessage::Text(txt)) => {
-                        self.greeting = txt;
+                    WsEvent::Message(ewebsock::WsMessage::Text(txt))
+                        if let Ok(payload) = serde_json::from_str::<ClientUpdate>(&txt) =>
+                    {
+                        log::info!("Got client update");
+                        match payload.update {
+                            UpdateData::Dump(dump) => {
+                                self.state.tools = dump.tools;
+                                self.state.data = dump.app_data;
+                                self.state.prompt = dump.prompt;
+                                self.state
+                                    .task_count
+                                    .store(dump.task_count, std::sync::atomic::Ordering::Relaxed);
+                                self.state.workflows.store.metadata = dump.workflows;
+                                log::info!("Updated state from server dump");
+                            }
+                            UpdateData::Patch(patch) => {
+                                task_update = patch.task_count;
+
+                                if let Some(tools) = patch.tools {
+                                    self.state.tools = tools;
+                                }
+
+                                if let Some(app_data) = patch.app_data {
+                                    self.state.data = app_data;
+                                }
+
+                                if let Some(prompt) = patch.prompt {
+                                    if prompt.is_empty() {
+                                        self.state.prompt.clear();
+                                    }
+                                    // Bad UX since delay in round trip
+                                    // self.state.prompt = prompt;
+                                }
+
+                                if let Some(config_state) = patch.config_state {
+                                    self.state.state.update(|state| *state = config_state);
+                                }
+
+                                if let Some(workflows) = patch.workflows {
+                                    self.state.workflows.store.metadata = workflows;
+                                }
+                            }
+                        }
+                        ctx.request_repaint();
+                    }
+                    WsEvent::Message(ewebsock::WsMessage::Binary(bytes)) => {
+                        let data = postcard::from_bytes::<ClientUpdate>(&bytes);
+                        log::info!("Got client update");
                     }
                     _ => {}
                 }
             }
         } else {
             log::info!("Trying to connect");
-            // self.sock = Some(
-            //     ewebsock::connect("ws://localhost:3000/ws", Default::default())
-            //         .expect("Could not connect"),
-            // );
+            self.sock = Some(
+                ewebsock::connect("ws://localhost:3000/ws", Default::default())
+                    .expect("Could not connect"),
+            );
 
             log::info!("Connected");
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("My egui Application");
-
-            // egui::SidePanel::left("media")
-            //     .default_width(32.0)
-            //     .show_inside(ui, |ui| {
-            //         ui.horizontal(|ui| {
-            //             let name_label = ui.label("You name: ");
-            //             self.dirty |= ui
-            //                 .text_edit_singleline(&mut self.name)
-            //                 .labelled_by(name_label.id)
-            //                 .changed();
-            //
-            //             if self.dirty
-            //                 && let Some((tx, _)) = &mut self.sock
-            //             {
-            //                 let payload = serde_json::json!({"name": &self.name});
-            //                 let text = serde_json::to_string(&payload).unwrap();
-            //                 tx.send(ewebsock::WsMessage::Text(text));
-            //                 self.dirty = false;
-            //             }
-            //         });
-            //         self.dirty |= ui
-            //             .add(egui::Slider::new(&mut self.age, 0..=120).text("age"))
-            //             .changed();
-            //         if ui.button("Increment").clicked() {
-            //             self.age += 1;
-            //             self.dirty = true;
-            //         }
-            //
-            //         if self.dirty
-            //             && let Some((tx, _)) = &mut self.sock
-            //         {
-            //             let payload = serde_json::json!({"age": &self.age});
-            //             let text = serde_json::to_string(&payload).unwrap();
-            //             tx.send(ewebsock::WsMessage::Text(text));
-            //             self.dirty = false;
-            //         }
-            //         // ui.label(format!("Hello '{}', age {}", self.name, self.age));
-            //         ui.label(&self.greeting);
-            //     });
+            egui::SidePanel::right("Settings Panel")
+                .resizable(true)
+                .show_inside(ui, |ui| {
+                    self.state.settings_ui(ui);
+                    ui.separator();
+                });
 
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 self.state.chat_ui(ui);
             });
         });
+
+        let mut events = Vec::new();
+        while let Some(event) = self.state.events.pop() {
+            events.push(event);
+        }
+
+        if !events.is_empty()
+            && let Some((tx, rx)) = &mut self.sock
+        {
+            let action = ActionData::Dispatch(events);
+
+            let payload = serde_json::to_string(&ClientAction { action }).unwrap();
+            tx.send(ewebsock::WsMessage::Text(payload));
+        }
+
+        if let Some(task_count) = task_update {
+            // Hmm, still doesn't help with autoscroll
+            self.state
+                .task_count
+                .store(task_count, std::sync::atomic::Ordering::Relaxed);
+            task_update = None;
+        }
     }
 }
 
@@ -132,7 +178,20 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         "MyApp",
         native_options,
-        Box::new(|_cc| Ok(Box::new(ExampleApp::new()))),
+        Box::new(|cc| {
+            let ctx = cc.egui_ctx.clone();
+            std::thread::spawn(move || {
+                // Periodic refresh even when not focused
+
+                use std::time::Duration;
+                loop {
+                    std::thread::sleep(Duration::from_secs(1));
+                    ctx.request_repaint();
+                }
+            });
+
+            Ok(Box::new(WebApp::new(&cc.egui_ctx)))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("Problem running app: {e:?}"))?;
 
@@ -144,13 +203,14 @@ fn main() -> anyhow::Result<()> {
 fn main() {
     use eframe::egui::{Style, Visuals};
     use eframe::wasm_bindgen::JsCast as _;
+    use wasm_bindgen_futures::spawn_local;
 
     // Redirect `log` message to `console.log` and friends:
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
     let web_options = eframe::WebOptions::default();
 
-    wasm_bindgen_futures::spawn_local(async {
+    spawn_local(async {
         let document = web_sys::window()
             .expect("No window")
             .document()
@@ -167,12 +227,22 @@ fn main() {
                 canvas,
                 web_options,
                 Box::new(|cc| {
+                    use gloo_timers::callback::Interval;
+
                     let style = Style {
                         visuals: Visuals::dark(),
                         ..Style::default()
                     };
                     cc.egui_ctx.set_style(style);
-                    Ok(Box::new(ExampleApp::new()))
+
+                    let ctx = cc.egui_ctx.clone();
+
+                    // We want to do stuff every second, indefinitely.
+                    Interval::new(1_000, move || {
+                        ctx.request_repaint();
+                    })
+                    .forget();
+                    Ok(Box::new(WebApp::new(&cc.egui_ctx)))
                 }),
             )
             .await;

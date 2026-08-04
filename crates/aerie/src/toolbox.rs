@@ -20,14 +20,14 @@ use std::{
     time::SystemTime,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "native")]
 use tokio::process::Command;
 
 use rmcp::{
     Peer, ServiceExt as _,
     model::{ClientInfo, Implementation, InitializeRequestParams, Tool},
 };
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "native")]
 use rmcp::{
     RoleClient,
     service::RunningService,
@@ -726,7 +726,7 @@ impl Toolbox {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ToolStore {
     path: PathBuf,
 

@@ -22,10 +22,11 @@ use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use crate::{
+    events::AppEvents,
     ui::shortcuts::{ShortcutHandler, squelch},
     utils::ErrorDistiller as _,
     workflow::{
-        EditContext, GraphId, MetaNode, ShadowGraph, StandardTheme, ThemeCodex, WorkNode, Workflow,
+        EditContext, GraphId, MetaNode, ShadowGraph, StandardTheme, WorkNode, Workflow,
         nodes::{
             ChatContext, ChatNode, CommentNode, Demote, EnvironmentNode, Fallback, Flavor,
             GateNode, GraphSubmenu, InvokeTool, Matcher, Number, OutputNode, Panic, Preview,
@@ -34,8 +35,6 @@ use crate::{
         runner::{ExecId, ExecState, NodeStateMap},
     },
 };
-
-use super::AppEvents;
 
 #[cached]
 pub fn get_snarl_style() -> SnarlStyle {
@@ -417,8 +416,8 @@ pub struct WorkflowViewer {
     #[builder(default)]
     pub alerts: im::OrdMap<(GraphId, NodeId), Cow<'static, str>>,
 
-    #[builder(default=Arc::new(StandardTheme))]
-    pub themes: Arc<dyn ThemeCodex>,
+    #[builder(default)]
+    pub theme: StandardTheme,
 }
 
 impl WorkflowViewer {
@@ -573,7 +572,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         }
 
         let node = &snarl[node_id];
-        let theme = node.as_ui().theme(self.themes.as_ref());
+        let theme = node.as_ui().theme(&self.theme);
         let frame = theme.apply_body(frame);
 
         theme.apply_overview(frame, self.transform.scaling)
@@ -588,7 +587,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         snarl: &Snarl<WorkNode>,
     ) -> egui::Frame {
         let node = &snarl[node_id];
-        let theme = node.as_ui().theme(self.themes.as_ref());
+        let theme = node.as_ui().theme(&self.theme);
         let node_info = snarl.get_node_info(node_id).unwrap();
 
         if node_info.open {

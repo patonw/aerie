@@ -6,6 +6,7 @@ use egui_snarl::{InPinId, NodeId};
 use egui_tiles::SimplificationOptions;
 use itertools::Itertools;
 use rmcp::model::Tool;
+use serde::{Deserialize, Serialize};
 use serde_yaml_ng as serde_yml;
 use std::{
     borrow::Cow,
@@ -16,37 +17,43 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicU16},
     },
-    time::{Duration, SystemTime},
 };
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
+use web_time::{Duration, SystemTime};
 
+#[cfg(not(feature = "native"))]
+use crate::config::ConfigStateProxy;
+#[cfg(feature = "native")]
+use crate::config::ConfigStateStore;
+use crate::ui::workflow::{ProgressEntry, ViewStack, WorkflowViewer};
+use crate::workflow::CheckContext;
+use crate::workflow::ShadowGraph;
+use crate::workflow::WorkNode;
+#[cfg(feature = "native")]
+use crate::workflow::store::{WorkflowStore, WorkflowStoreDir};
+#[cfg(not(feature = "native"))]
+use crate::workflow::store::{WorkflowStore, WorkflowStoreStub};
 #[cfg(feature = "wip")]
 use crate::{
     agent::AgentFactory,
-    config::ConfigStateStore,
-    ui::{
-        Pane,
-        tiles::messages::MessageGraph,
-        workflow::{ProgressEntry, ViewStack, WorkflowViewer},
-    },
-    workflow::{
-        CheckContext, EditContext, GraphId, PreviewData, ShadowGraph, WorkNode, Workflow,
-        nodes::LoopControl,
-        runner::{ExecId, NodeStateMap, WorkflowRun},
-        store::{WorkflowStore, WorkflowStoreDir},
-    },
+    ui::{Pane, tiles::messages::MessageGraph},
+    workflow::{EditContext, nodes::LoopControl},
 };
 
-use crate::toolbox::ToolStore;
 use crate::{
     chat::ChatSession,
     config::{ConfigExt as _, Preferences, ToolSpec},
     events::{AppEvent, AppEvents},
     logging::LogEntry,
+    toolbox::ToolStore,
     transmute::Transmuter,
     ui::ShowHelp,
     utils::{ErrorDistiller as _, ErrorList},
+    workflow::{
+        GraphId, PreviewData, Workflow,
+        runner::{ExecId, NodeStateMap, WorkflowRun},
+    },
 };
 
 const SOFT_LIMIT: usize = 128;
@@ -62,13 +69,16 @@ pub enum ToolEditorState {
 }
 
 /// Data synced between client and server
-#[derive(Default, TypedBuilder)]
+#[derive(Clone, Serialize, Deserialize, Default, TypedBuilder)]
 pub struct AppData {
     #[builder(default)]
     pub prefs: Arc<ArcSwap<Preferences>>,
 
     #[builder(default)]
     pub session: ChatSession,
+
+    #[builder(default)]
+    pub session_names: Vec<String>,
     // #[builder(default)]
     // pub show_help: Option<ShowHelp>,
     //
@@ -91,6 +101,7 @@ pub struct AppData {
     // pub run_count: usize,
 }
 
+// TODO: Lift business-logic classes to top-level and leave this as pure data
 // TODO: use AppActions to trigger server-side handlers which update state
 #[derive(TypedBuilder)]
 pub struct AppState {
@@ -98,7 +109,6 @@ pub struct AppState {
     pub data: AppData,
 
     #[cfg(feature = "native")]
-    #[cfg(feature = "wip")]
     pub rt: tokio::runtime::Handle,
 
     // TODO: migrate
@@ -114,8 +124,10 @@ pub struct AppState {
     pub errors: ErrorList<anyhow::Error>,
 
     #[cfg(feature = "native")]
-    #[cfg(feature = "wip")]
     pub state: ConfigStateStore,
+
+    #[cfg(not(feature = "native"))]
+    pub state: ConfigStateProxy,
 
     #[builder(default)]
     pub tools: ToolStore,
@@ -146,7 +158,6 @@ pub struct AppState {
     pub run_count: usize,
 
     #[cfg(feature = "native")]
-    #[cfg(feature = "wip")]
     pub agent_factory: AgentFactory,
 
     #[builder(default)]
@@ -168,8 +179,11 @@ pub struct AppState {
     #[builder(default)]
     pub tool_editor: Option<ToolEditorState>,
 
-    #[cfg(feature = "wip")]
+    #[cfg(feature = "native")]
     pub workflows: WorkflowState<WorkflowStoreDir>,
+
+    #[cfg(not(feature = "native"))]
+    pub workflows: WorkflowState<WorkflowStoreStub>,
 
     #[cfg(feature = "wip")]
     #[builder(default)]
@@ -227,6 +241,7 @@ impl AppState {
 
         // Only allow one run request per frame
         let mut executed = false;
+        let errors = self.errors.clone();
 
         while let Some(event) = self.events.pop() {
             let mut handled = false;
@@ -235,6 +250,10 @@ impl AppState {
 
             handled = handled
                 || match &event {
+                    SwitchWorkflow(name) => {
+                        self.workflows.switch(name);
+                        true
+                    }
                     UserRunWorkflow if !executed => {
                         self.run_count = 0;
                         self.workflows.node_state.clear();
@@ -267,6 +286,52 @@ impl AppState {
                         }
                         true
                     }
+                    UpdatePreferences(prefs) => {
+                        self.data.prefs.store(prefs.clone());
+                        true
+                    }
+                    ClearModels => {
+                        let _ = self.state.update(|state| {
+                            state.prev_models.clear();
+                        });
+
+                        true
+                    }
+                    TouchModel(name) => {
+                        let _ = self.state.update(|state| {
+                            state.prev_models.retain(|m| m != name);
+                            state.prev_models.push_front(name.clone());
+                            state.prev_models =
+                                state.prev_models.take(16.min(state.prev_models.len()));
+                            // if let Some(i) = state.prev_models.index_of(llm_model) {
+                            //     state.prev_models.remove(i);
+                            // }
+                            // state.prev_models.push_front(llm_model.clone());
+                        });
+
+                        true
+                    }
+                    CreateSession => {
+                        let datetime = chrono::offset::Local::now();
+                        let timestamp = datetime.format("unnamed-%Y-%m-%dT%H:%M:%S").to_string();
+                        errors.distil(self.data.session.switch(&timestamp));
+                        errors.distil(self.data.session.save());
+                        self.state.set_session(self.data.session.name());
+                        self.data.session_names = self.data.session.list();
+                        true
+                    }
+                    SwitchSession(session_name) => {
+                        errors.distil(self.data.session.switch(session_name));
+                        self.state.set_session(self.data.session.name());
+                        self.data.session_names = self.data.session.list();
+                        true
+                    }
+                    RenameSession(_old_name, new_name) => {
+                        errors.distil(self.data.session.rename(new_name));
+                        self.state.set_session(new_name);
+                        self.data.session_names = self.data.session.list();
+                        true
+                    }
                     _ => false,
                 };
 
@@ -287,7 +352,7 @@ impl egui_tiles::Behavior<Pane> for AppState {
             Pane::Settings => "Settings".into(),
             Pane::Navigator => "Session".into(),
             Pane::Chat => "Chat".into(),
-            Pane::Logs => "Logs".into(),
+            // Pane::Logs => "Logs".into(),
             Pane::Tools => "Tools".into(),
             Pane::Workflow => "Workflow".into(),
             Pane::Messages => "Lineage".into(),
@@ -311,9 +376,9 @@ impl egui_tiles::Behavior<Pane> for AppState {
             Pane::Chat => {
                 self.chat_ui(ui);
             }
-            Pane::Logs => {
-                self.logview_ui(ui);
-            }
+            // Pane::Logs => {
+            //     self.logview_ui(ui);
+            // }
             Pane::Tools => {
                 self.toolset_ui(ui);
             }
@@ -351,7 +416,6 @@ pub enum MetaEdit {
     Chain,
 }
 
-#[cfg(feature = "wip")]
 /// Portion of the UI state dealing with workflows.
 pub struct WorkflowState<W: WorkflowStore> {
     pub view_stack: ViewStack,
@@ -389,7 +453,6 @@ pub struct WorkflowState<W: WorkflowStore> {
     pub alerts: im::OrdMap<(GraphId, NodeId), Cow<'static, str>>,
 }
 
-#[cfg(feature = "wip")]
 impl<W: WorkflowStore> WorkflowState<W> {
     pub fn new(store: W, current: Option<String>) -> Self {
         let (name, graph) = if let Some(name) = current.filter(|n| store.exists(n))
@@ -445,6 +508,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         }
     }
 
+    #[cfg(feature = "wip")]
     pub fn switch(&mut self, workflow_name: &str) {
         if self.editing.as_str() == workflow_name {
             return;
@@ -489,6 +553,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         self.graph_checked = false;
     }
 
+    #[cfg(feature = "wip")]
     pub fn rename(&mut self) -> anyhow::Result<()> {
         let new_name = self.renaming.take();
 
@@ -530,10 +595,12 @@ impl<W: WorkflowStore> WorkflowState<W> {
         self.store.description(name)
     }
 
+    #[cfg(feature = "wip")]
     pub fn remove(&mut self) -> anyhow::Result<()> {
         self.store.remove(&self.editing)
     }
 
+    #[cfg(feature = "wip")]
     pub fn cast_shadow(&mut self, shadow: ShadowGraph<WorkNode>) {
         if self.frozen || self.shadow.graph.fast_eq(&shadow) {
             return;
@@ -625,6 +692,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         tracing::trace!("Updating shadow. stack {}", undo_stack.len());
     }
 
+    #[cfg(feature = "wip")]
     pub fn get_undo_count(&mut self) -> usize {
         self.undo_stack
             .get(&self.editing)
@@ -632,6 +700,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
             .unwrap_or_default()
     }
 
+    #[cfg(feature = "wip")]
     pub fn get_redo_count(&mut self) -> usize {
         self.redo_stack
             .get(&self.editing)
@@ -639,6 +708,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
             .unwrap_or_default()
     }
 
+    #[cfg(feature = "wip")]
     pub fn undo(&mut self) {
         let undo_stack = self.undo_stack.entry(self.editing.clone()).or_default();
         let redo_stack = self.redo_stack.entry(self.editing.clone()).or_default();
@@ -674,6 +744,8 @@ impl<W: WorkflowStore> WorkflowState<W> {
             &self.view_stack.path
         );
     }
+
+    #[cfg(feature = "wip")]
     pub fn redo(&mut self) {
         let redo_stack = self.redo_stack.entry(self.editing.clone()).or_default();
         let undo_stack = self.undo_stack.entry(self.editing.clone()).or_default();
@@ -699,6 +771,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         );
     }
 
+    #[cfg(feature = "wip")]
     pub fn export(&mut self, path: &Path) -> anyhow::Result<()> {
         let writer = OpenOptions::new()
             .write(true)
@@ -710,6 +783,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         Ok(())
     }
 
+    #[cfg(feature = "wip")]
     pub fn import(&mut self, path: &Path) -> anyhow::Result<()> {
         if !path.is_file() {
             anyhow::bail!("Invalid file: {path:?}");
@@ -743,6 +817,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         Ok(())
     }
 
+    #[cfg(feature = "wip")]
     pub fn save(&mut self) {
         tracing::info!(
             "Saving {} to workflows...changed? {}",
@@ -794,6 +869,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
     }
 
     // TODO: collect errors
+    #[cfg(feature = "wip")]
     pub fn handle_event(&mut self, event: &AppEvent) -> bool {
         use AppEvent::*;
         match event {

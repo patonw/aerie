@@ -14,15 +14,15 @@ use std::{
         Arc, RwLock,
         atomic::{AtomicU64, Ordering},
     },
-    time::Instant,
 };
+use web_time::{Instant, SystemTime};
 
 #[cfg(feature = "wip")]
 use crate::rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
 
 #[derive(Parser, Clone, Debug)]
 #[command(version, about, long_about = None)]
@@ -48,22 +48,6 @@ pub struct Args {
 
     #[arg(long)]
     pub backup_dir: Option<PathBuf>,
-
-    #[command(subcommand)]
-    pub command: Option<Command>,
-}
-
-#[derive(Subcommand, Clone, Debug)]
-pub enum Command {
-    Session {
-        #[command(subcommand)]
-        subcmd: SessionCommand,
-    },
-}
-
-#[derive(Subcommand, Clone, Debug)]
-pub enum SessionCommand {
-    List,
 }
 
 #[inline]
@@ -207,10 +191,55 @@ pub struct ConfigState {
     pub output_dir: PathBuf,
 }
 
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct ConfigStateProxy {
+    /// The live in-memory state
+    state: ConfigState,
+
+    modtime: SystemTime,
+}
+
+impl Default for ConfigStateProxy {
+    fn default() -> Self {
+        Self {
+            state: Default::default(),
+            modtime: SystemTime::now(),
+        }
+    }
+}
+
+impl Deref for ConfigStateProxy {
+    type Target = ConfigState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl ConfigStateProxy {
+    pub fn modtime(&self) -> SystemTime {
+        self.modtime
+    }
+
+    pub fn update<T>(&mut self, cb: impl FnOnce(&mut ConfigState) -> T) -> anyhow::Result<T> {
+        // TODO: dispatch actions to backend
+        Ok(cb(&mut self.state))
+    }
+}
+
+impl From<&ConfigStateStore> for ConfigStateProxy {
+    fn from(value: &ConfigStateStore) -> Self {
+        Self {
+            state: value.state.clone(),
+            modtime: value.modtime,
+        }
+    }
+}
+
 /// Manages synchronizing state between memory and disk
 pub struct ConfigStateStore {
     // Currently, facilitates UI repainting
-    modtime: Instant,
+    modtime: SystemTime,
 
     /// The backing disk store
     db: sled::Db,
@@ -230,7 +259,7 @@ impl Deref for ConfigStateStore {
 impl ConfigStateStore {
     pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let mut this = Self {
-            modtime: Instant::now(),
+            modtime: SystemTime::now(),
             db: sled::open(path)?,
             state: Default::default(),
         };
@@ -240,7 +269,7 @@ impl ConfigStateStore {
         Ok(this)
     }
 
-    pub fn modtime(&self) -> Instant {
+    pub fn modtime(&self) -> SystemTime {
         self.modtime
     }
 
@@ -266,7 +295,7 @@ impl ConfigStateStore {
             self.state.output_dir = postcard::from_bytes(&bytes)?;
         }
 
-        self.modtime = Instant::now();
+        self.modtime = SystemTime::now();
 
         Ok(&self.state)
     }
@@ -277,7 +306,7 @@ impl ConfigStateStore {
         let result = cb(&mut self.state);
 
         if baseline != self.state {
-            self.modtime = Instant::now();
+            self.modtime = SystemTime::now();
 
             if baseline.prev_models != self.state.prev_models {
                 let bytes = postcard::to_allocvec(&self.state.prev_models)?;
@@ -392,6 +421,8 @@ pub struct Preferences {
     pub _extra: im::OrdMap<String, serde_json::Value>,
 }
 
+impl Eq for Preferences {}
+
 impl Preferences {
     pub fn has_profile(&self, name: &str) -> bool {
         self.models.contains_key(name)
@@ -416,9 +447,12 @@ impl Preferences {
 }
 
 pub trait ConfigExt {
+    /// Reads a consistent copy of the contents and returns the callback result
     fn view<T>(&self, cb: impl FnMut(&Preferences) -> T) -> T;
 
-    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> T;
+    /// Stores the changes made by the callback. Returns a boolean indicating
+    /// whether the contents were changed along with the callback return value.
+    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> (bool, T);
 }
 
 impl ConfigExt for Arc<RwLock<Preferences>> {
@@ -428,9 +462,11 @@ impl ConfigExt for Arc<RwLock<Preferences>> {
     }
 
     // TODO: handle auto-save
-    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> T {
+    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> (bool, T) {
+        let before = self.read().unwrap().clone();
         let mut settings = self.write().unwrap();
-        cb(&mut settings)
+        let result = cb(&mut settings);
+        (*settings != before, result)
     }
 }
 
@@ -444,7 +480,7 @@ impl ConfigExt for Arc<ArcSwap<Preferences>> {
 
     // Clone to stack for working copy. Not sure which way is better
     // This compares every field
-    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> T {
+    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> (bool, T) {
         let mut settings = self.load().as_ref().clone();
 
         let result = cb(&mut settings);
@@ -452,9 +488,10 @@ impl ConfigExt for Arc<ArcSwap<Preferences>> {
         // Only move to stack if changed
         if settings != *self.load().as_ref() {
             self.store(Arc::new(settings));
+            (true, result)
+        } else {
+            (false, result)
         }
-
-        result
     }
 
     // This also clones the whole object (usually), but to the heap
@@ -482,12 +519,11 @@ pub struct ToolSettings {
 }
 
 /// Configuration to access a tool provider
-#[skip_serializing_none]
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(tag = "type")]
 pub enum ToolSpec {
     Stdio {
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[serde(default)]
         enabled: bool,
 
         #[serde(default)]
@@ -496,12 +532,12 @@ pub enum ToolSpec {
         #[serde(default)]
         dir: Option<PathBuf>,
 
-        #[serde(default, skip_serializing_if = "String::is_empty")]
+        #[serde(default)]
         env: String,
 
         command: String,
 
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[serde(default)]
         args: Vec<String>,
 
         /// Timeout in seconds
@@ -509,7 +545,7 @@ pub enum ToolSpec {
         timeout: Option<u64>,
     },
     HTTP {
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[serde(default)]
         enabled: bool,
 
         #[serde(default)]
@@ -524,6 +560,86 @@ pub enum ToolSpec {
         #[serde(default)]
         timeout: Option<u64>,
     },
+}
+
+/// Wrapped instead of tagged for binary serializers
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub enum ToolSpecW {
+    Stdio {
+        #[serde(default)]
+        enabled: bool,
+
+        #[serde(default)]
+        preface: Option<String>,
+
+        #[serde(default)]
+        dir: Option<PathBuf>,
+
+        #[serde(default)]
+        env: String,
+
+        command: String,
+
+        #[serde(default)]
+        args: Vec<String>,
+
+        /// Timeout in seconds
+        #[serde(default)]
+        timeout: Option<u64>,
+    },
+    HTTP {
+        #[serde(default)]
+        enabled: bool,
+
+        #[serde(default)]
+        preface: Option<String>,
+
+        uri: String,
+
+        /// : environment var for API key
+        auth_var: Option<String>,
+
+        /// Timeout in seconds
+        #[serde(default)]
+        timeout: Option<u64>,
+    },
+}
+
+impl From<ToolSpec> for ToolSpecW {
+    fn from(value: ToolSpec) -> Self {
+        match value {
+            ToolSpec::Stdio {
+                enabled,
+                preface,
+                dir,
+                env,
+                command,
+                args,
+                timeout,
+            } => ToolSpecW::Stdio {
+                enabled,
+                preface,
+                dir,
+                env,
+                command,
+                args,
+                timeout,
+            },
+            ToolSpec::HTTP {
+                enabled,
+                preface,
+                uri,
+                auth_var,
+                timeout,
+            } => ToolSpecW::HTTP {
+                enabled,
+                preface,
+                uri,
+                auth_var,
+                timeout,
+            },
+        }
+    }
 }
 
 impl Default for ToolSpec {

@@ -1,8 +1,9 @@
 #[cfg(feature = "native")]
 pub mod agent;
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 pub mod app;
 pub mod chat;
+pub mod client;
 pub mod config;
 pub mod events;
 pub mod logging;

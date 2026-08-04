@@ -5,7 +5,6 @@ use enum_iterator::Sequence;
 use itertools::Itertools as _;
 use typed_builder::TypedBuilder;
 
-#[cfg(feature = "wip")]
 use crate::ui::workflow::WorkflowViewer;
 use crate::{events::AppEvent, ui::ShowHelp, workflow::WorkNode};
 
@@ -115,14 +114,12 @@ pub const SHORTCUT_DISABLE_NODE: KeyboardShortcut = Shortcut::DisableNode.key();
 
 pub const SHORTCUT_REMOVE_NODE: KeyboardShortcut = Shortcut::RemoveNode.key();
 
-#[cfg(feature = "wip")]
 #[derive(TypedBuilder)]
 pub struct ShortcutHandler<'a> {
     pub snarl: &'a mut Snarl<WorkNode>,
     pub viewer: &'a mut WorkflowViewer,
 }
 
-#[cfg(feature = "wip")]
 impl<'a> ShortcutHandler<'a> {
     pub fn viewer_shortcuts(&mut self, ui: &mut egui::Ui, widget: SnarlWidget) {
         let snarl = &mut *self.snarl;

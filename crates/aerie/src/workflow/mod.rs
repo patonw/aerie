@@ -29,6 +29,7 @@ use thiserror::Error;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
+use crate::toolbox::Toolbox;
 #[cfg(feature = "wip")]
 use crate::{
     agent::AgentFactory,
@@ -37,7 +38,6 @@ use crate::{
         self,
         tool::{ToolExecutionError, server::ToolServerError},
     },
-    toolbox::Toolbox,
     transmute::Transmuter,
     workflow::runner::{ExecState, NodeStateMap},
 };
@@ -220,7 +220,7 @@ impl PreviewData {
 }
 
 // Copy-paste from egui_snarl::ui::pin
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AnyPin {
     Out(OutPinId),
     In(InPinId),
@@ -236,7 +236,6 @@ impl AnyPin {
     }
 }
 
-#[cfg(feature = "wip")]
 #[derive(Clone, TypedBuilder)]
 pub struct CheckContext {
     pub toolbox: Toolbox,
@@ -246,7 +245,6 @@ pub struct CheckContext {
     pub node_id: NodeId,
 }
 
-#[cfg(feature = "wip")]
 impl CheckContext {
     pub fn with_node(&self, node_id: NodeId) -> Self {
         Self {
@@ -268,7 +266,6 @@ impl CheckContext {
 
 #[derive(Clone, TypedBuilder)]
 pub struct EditContext {
-    #[cfg(feature = "wip")]
     pub toolbox: Toolbox,
 
     pub events: Arc<AppEvents>,
@@ -1008,7 +1005,6 @@ impl ShadowGraph<WorkNode> {
             && self.nodes.keys().all(cmp_nodes)
     }
 
-    #[cfg(feature = "wip")]
     pub fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
         let mut alerts = im::OrdMap::new();
         for (id, subnode) in &self.nodes {
@@ -1272,7 +1268,6 @@ pub trait DynNode {
         }
     }
 
-    #[cfg(feature = "wip")]
     fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
         let _ = ctx;
         Default::default()

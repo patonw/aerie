@@ -9,6 +9,10 @@ name = "aerie"
 required-features = ["desktop"]
 
 [[bin]]
+name = "backend"
+required-features = ["backend"]
+
+[[bin]]
 name = "web-client"
 required-features = ["web-ui"]
 
@@ -24,6 +28,9 @@ required-features = ["migration"]
 anyhow = "1.0.100"
 arc-swap = { version = "1.7.1", features = ["serde"] }
 axum = { version = "0.8.8", optional = true }
+axum-extra = { version = "0.12.6", features = [
+  "typed-header",
+], optional = true }
 base64 = "0.22.1"
 cached = { version = "0.59.0", default-features = false, features = [
   "proc_macro",
@@ -122,6 +129,9 @@ tokio-stream = "0.1.18"
 async-stream = "0.3.6"
 async-broadcast = "0.7.2"
 ewebsock = { version = "0.8.0", optional = true }
+rmp-serde = { version = "1.3.1", optional = true }
+web-time = { version = "1.1.0", features = ["serde"] }
+gloo-timers = { version = "0.4.0", optional = true }
 
 [features]
 native = [
@@ -145,8 +155,22 @@ migration = ["dep:saphyr"]
 scripting = ["dep:rhai"]
 fetch-image = ["dep:reqwest", "dep:url"]
 desktop = ["native", "ui", "dep:egui_graphs"]
-web-ui = ["ui", "dep:ewebsock", "cached/wasm", "uuid/js"]
-backend = ["native"]
+web-ui = [
+  "ui",
+  "dep:ewebsock",
+  "cached/wasm",
+  "uuid/js",
+  "dep:rmp-serde",
+  "dep:gloo-timers",
+]
+backend = [
+  "native",
+  "ui",
+  "dep:egui_graphs",
+  "axum/ws",
+  "dep:axum-extra",
+  "dep:rmp-serde",
+] # TODO: remove dep:egui_graphs
 ui = [
   "dep:colorous",
   "dep:eframe",
@@ -160,6 +184,8 @@ ui = [
   "egui-snarl/ui",
 ]
 wip = []
+rmp-serde = ["dep:rmp-serde"]
+gloo-timers = ["dep:gloo-timers"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.76"

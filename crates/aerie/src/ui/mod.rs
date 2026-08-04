@@ -7,7 +7,6 @@ pub mod runner;
 pub mod shortcuts;
 pub mod state;
 pub mod tiles;
-#[cfg(feature = "wip")]
 pub mod workflow;
 
 pub use state::AppState;
@@ -19,7 +18,7 @@ pub enum Pane {
     Settings,
     Navigator,
     Chat,
-    Logs,
+    // Logs,
     Tools,
     Workflow,
     Messages,

@@ -20,7 +20,6 @@ pub use crate::ui::render::render_message_width;
 impl super::AppState {
     pub fn chat_ui(&mut self, ui: &mut egui::Ui) {
         let errors = self.errors.clone();
-        #[cfg(feature = "wip")]
         let workflows = self.workflows.names().map(|s| s.to_string()).collect_vec();
 
         // TODO: top panel with helper actions
@@ -153,7 +152,6 @@ impl super::AppState {
 
                             ui.add_space(16.0);
 
-                            #[cfg(feature = "wip")]
                             self.errors.distil(self.state.update(|state| {
                                 egui::ComboBox::from_label("Workflow")
                                     .selected_text(&state.workflow)
@@ -185,18 +183,23 @@ impl super::AppState {
                         squelch(ui.add_sized(ui.available_size(), widget));
 
                         if let Cow::Owned(prompt) = prompt_w {
+                            // TODO: more sensible delineation of responsibility
+                            #[cfg(feature = "web-ui")]
+                            self.events.insert(AppEvent::SetPrompt(prompt.clone()));
+
                             self.prompt = prompt;
                         }
                     });
                 });
 
-                #[cfg(feature = "wip")]
                 if submitted {
                     let workflow = self.state.workflow.as_str();
 
                     if workflow.is_empty() || workflows.contains(&workflow.to_string()) {
                         // TODO: deal with this nuking any edits in progress
-                        self.workflows.switch(workflow);
+                        // TODO: implement as action dispatch
+                        self.events
+                            .insert(AppEvent::SwitchWorkflow(workflow.to_string()));
                         self.events.insert(AppEvent::UserRunWorkflow);
                         self.events.insert(AppEvent::SetPrompt(String::new()));
                     } else {

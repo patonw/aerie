@@ -49,7 +49,8 @@ impl From<EVec2> for NodePos {
         }
     }
 }
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct AtomicBuffer<T>(pub Arc<ArcSwap<im::Vector<Arc<ArcSwap<T>>>>>);
 
 impl<T> std::default::Default for AtomicBuffer<T> {
@@ -141,6 +142,7 @@ impl<T: Ord + std::fmt::Debug> PriorityQueue<T> {
         self.retain(|item| !f(item))
     }
 }
+
 pub trait CowExt<'a, T: Clone, E> {
     /// Flat map for cows.
     ///
