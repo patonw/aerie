@@ -13,7 +13,7 @@ use crate::{
 
 impl super::AppState {
     pub fn settings_ui(&mut self, ui: &mut egui::Ui) {
-        let settings = self.prefs.clone();
+        let settings = self.data.prefs.clone();
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {

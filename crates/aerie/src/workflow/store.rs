@@ -12,10 +12,9 @@ use arc_swap::ArcSwap;
 use itertools::Itertools;
 use serde_yaml_ng as serde_yml;
 
-use crate::{
-    storage::CachedDirStore,
-    workflow::{GraphId, Workflow},
-};
+#[cfg(feature = "native")]
+use crate::storage::CachedDirStore;
+use crate::workflow::{GraphId, ShadowMeta, Workflow};
 
 pub trait WorkflowStore {
     fn load(&self, name: &str) -> anyhow::Result<Workflow>;
@@ -50,6 +49,7 @@ pub struct WorkflowStoreFile {
     workflows: BTreeMap<String, Workflow>,
 }
 
+#[cfg(feature = "native")]
 impl WorkflowStoreFile {
     #[deprecated]
     /// Loads all workflows into memory
@@ -95,6 +95,7 @@ impl WorkflowStoreFile {
     }
 }
 
+#[cfg(feature = "native")]
 impl WorkflowStore for WorkflowStoreFile {
     // type Graph = WorkGraph;
 
@@ -195,6 +196,7 @@ pub struct WorkflowStoreDir {
     cache: Arc<ArcSwap<im::OrdMap<String, (SystemTime, Workflow)>>>,
 }
 
+#[cfg(feature = "native")]
 impl WorkflowStoreDir {
     pub fn init(dir: impl AsRef<Path>, tutorial: bool) -> anyhow::Result<Self> {
         let path = dir.as_ref().to_path_buf();
@@ -226,6 +228,7 @@ impl WorkflowStoreDir {
     }
 }
 
+#[cfg(feature = "native")]
 impl CachedDirStore<Workflow> for WorkflowStoreDir {
     const EXT: &'static str = "yml";
 
@@ -250,6 +253,7 @@ impl CachedDirStore<Workflow> for WorkflowStoreDir {
     }
 }
 
+#[cfg(feature = "native")]
 impl WorkflowStore for WorkflowStoreDir {
     // type Graph = WorkGraph;
 
@@ -334,5 +338,34 @@ impl WorkflowStore for WorkflowStoreDir {
         }
 
         Ok(())
+    }
+}
+
+// TODO: dispatch load/save calls to server via actions
+/// Client-side representation of the workflow store
+#[derive(Default, Debug, Clone)]
+pub struct WorkflowStoreStub {
+    metadata: BTreeMap<String, ShadowMeta>,
+}
+
+impl WorkflowStoreStub {
+    pub fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
+        self.metadata.keys().map(|s| Cow::Borrowed(s.as_str()))
+    }
+
+    pub fn description(&'_ self, key: &str) -> Cow<'_, str> {
+        if let Some(item) = self.metadata.get(key) {
+            Cow::Borrowed(&item.description)
+        } else {
+            Cow::Borrowed("")
+        }
+    }
+
+    pub fn schema(&'_ self, key: &str) -> Cow<'_, str> {
+        if let Some(item) = self.metadata.get(key) {
+            Cow::Borrowed(&item.schema)
+        } else {
+            Cow::Borrowed("")
+        }
     }
 }

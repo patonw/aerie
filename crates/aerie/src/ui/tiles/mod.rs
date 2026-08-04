@@ -1,4 +1,3 @@
-#[cfg(feature = "wip")]
 pub mod chat;
 #[cfg(feature = "wip")]
 pub mod logview;
@@ -17,5 +16,4 @@ pub mod toolset;
 #[cfg(feature = "wip")]
 pub mod workflow;
 
-#[cfg(feature = "wip")]
 use super::AppState;

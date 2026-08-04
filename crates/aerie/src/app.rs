@@ -22,14 +22,16 @@ use tracing_subscriber::{
 use crate::{
     agent::AgentFactory,
     chat::ChatSession,
-    config::Preferences,
-    config::{Args, Command, ConfigExt, ConfigStateStore, SessionCommand},
+    config::{Args, Command, ConfigExt, ConfigStateStore, Preferences, SessionCommand},
     events::{AppEvent, AppEvents},
-    logging::LogChannelLayer,
-    logging::LogEntry,
+    logging::{LogChannelLayer, LogEntry},
     storage::CachedDirStore as _,
     toolbox::ToolStore,
-    ui::{AppState, Pane, shortcuts::SHORTCUT_QUIT, state::WorkflowState},
+    ui::{
+        AppState, Pane,
+        shortcuts::SHORTCUT_QUIT,
+        state::{AppData, WorkflowState},
+    },
     utils::{ErrorDistiller as _, ErrorList, MAX_IMAGE_DIM, prune_image_cache},
     workflow::store::WorkflowStoreDir,
 };
@@ -292,16 +294,19 @@ impl App {
             }
         });
 
+        let data = AppData::builder()
+            .prefs(preferences.clone())
+            .session(session)
+            .build();
         let mut behavior = (self.appstate_fn)(
             AppState::builder()
-                .prefs(preferences.clone())
+                .data(data)
                 .state(config_state)
                 .tools(tool_store)
                 .log_history(log_history.clone())
                 .task_count(task_count.clone())
                 .events(events.clone())
                 .errors(errors.clone())
-                .session(session)
                 .cache(cache)
                 .rt(rt.handle().clone())
                 .agent_factory(agent_factory)

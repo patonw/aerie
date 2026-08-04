@@ -23,25 +23,27 @@ use std::{
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::process::Command;
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::rmcp::transport::TokioChildProcess;
-use crate::rmcp::{
-    Peer, RoleClient, ServiceExt as _,
+use rmcp::{
+    Peer, ServiceExt as _,
     model::{ClientInfo, Implementation, InitializeRequestParams, Tool},
+};
+#[cfg(not(target_arch = "wasm32"))]
+use rmcp::{
+    RoleClient,
     service::RunningService,
     transport::{
-        ConfigureCommandExt, StreamableHttpClientTransport,
+        ConfigureCommandExt, StreamableHttpClientTransport, TokioChildProcess,
         streamable_http_client::StreamableHttpClientTransportConfig,
     },
 };
 
-use crate::{
-    config::Ternary,
-    workflow::{
-        WorkflowError,
-        store::{WorkflowStore as _, WorkflowStoreDir},
-    },
-};
+use crate::{config::Ternary, workflow::WorkflowError};
+
+#[cfg(feature = "native")]
+use crate::workflow::store::{WorkflowStore as _, WorkflowStoreDir};
+
+#[cfg(not(feature = "native"))]
+use crate::workflow::store::WorkflowStoreStub;
 
 pub type AgentMaybeTooled<M> =
     Either<AgentBuilder<M>, AgentBuilder<M, rig::agent::WithBuilderTools>>;
@@ -197,25 +199,33 @@ impl RigTool for ChainTool {
 #[derive(Clone)]
 pub enum ToolProvider {
     Chainer {
+        // TODO: A client-side proxy
+        #[cfg(feature = "native")]
         workflows: WorkflowStoreDir,
+
+        #[cfg(not(feature = "native"))]
+        workflows: WorkflowStoreStub,
 
         next_workflow: Arc<ArcSwapOption<String>>,
         next_prompt: Arc<ArcSwapOption<String>>,
         next_images: Arc<ArcSwap<Vec<String>>>,
     },
     MCP {
+        #[cfg(feature = "native")]
         client: McpClient,
         tools: Vec<Tool>,
         timeout: Option<u64>,
     },
 }
 
+#[cfg(feature = "native")]
 #[derive(Clone)]
 pub enum McpClient {
     Stdio(Arc<RunningService<RoleClient, ()>>),
     HTTP(Arc<RunningService<RoleClient, InitializeRequestParams>>),
 }
 
+#[cfg(feature = "native")]
 impl McpClient {
     pub fn peer(&self) -> &Peer<RoleClient> {
         match self {
@@ -307,13 +317,18 @@ impl ToolProvider {
                 }
             }
             ToolProvider::Chainer { workflows, .. } => {
-                return workflows.names().any(|name| selector(&name));
+                for name in workflows.names() {
+                    if selector(name.as_ref()) {
+                        return true;
+                    }
+                }
             }
         }
 
         false
     }
 
+    #[cfg(feature = "native")]
     pub fn add_tools(&self, mut server: ToolServer, selector: impl Fn(&str) -> bool) -> ToolServer {
         match self {
             ToolProvider::MCP { client, tools, .. } => {
@@ -357,6 +372,7 @@ impl ToolProvider {
         server
     }
 
+    #[cfg(feature = "native")]
     pub fn select_tools<M: CompletionModel>(
         &self,
         mut agent: AgentMaybeTooled<M>,
@@ -419,6 +435,7 @@ impl ToolProvider {
         }
     }
 
+    #[cfg(feature = "native")]
     pub async fn from_spec(
         spec: &ToolSpec,
         vars: &std::collections::HashMap<String, String>,
@@ -531,12 +548,14 @@ pub struct Toolbox {
 }
 
 impl Toolbox {
+    #[cfg(feature = "native")]
     pub fn with_provider(&self, name: &str, provider: ToolProvider) -> &Self {
         self.providers
             .rcu(|providers| providers.update(name.into(), provider.clone()));
         self
     }
 
+    #[cfg(feature = "native")]
     pub fn without_provider(&self, name: &str) -> &Self {
         self.providers.rcu(|providers| {
             if let Some(provider) = providers.get(name) {
@@ -552,6 +571,7 @@ impl Toolbox {
         self
     }
 
+    #[cfg(feature = "native")]
     pub fn get_tools(&self, toolset: &ToolSelector) -> ToolServer {
         let mut server = ToolServer::new();
 
@@ -581,7 +601,7 @@ impl Toolbox {
                             .map(|tool| (name.as_str(), tool)),
                     ),
                 })
-                .any(|(name, tool)| ts.apply(name, &tool));
+                .any(|(name, tool)| ts.apply(name, tool.as_ref()));
 
             if !has_matches {
                 missing.push(entry.to_string());
@@ -591,6 +611,7 @@ impl Toolbox {
         missing
     }
 
+    #[cfg(feature = "native")]
     pub fn select_tools<M: CompletionModel>(
         &self,
         agent: AgentBuilder<M>,
@@ -604,6 +625,7 @@ impl Toolbox {
             })
     }
 
+    #[cfg(feature = "native")]
     pub fn apply<M: CompletionModel>(
         &self,
         agent: AgentBuilder<M>,
@@ -704,7 +726,7 @@ impl Toolbox {
     }
 }
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct ToolStore {
     path: PathBuf,
 
@@ -719,6 +741,7 @@ impl ToolStore {
         }
     }
 
+    #[cfg(feature = "native")]
     pub async fn load_provider(
         &self,
         toolbox: Toolbox,
@@ -742,6 +765,7 @@ impl ToolStore {
     }
 }
 
+#[cfg(feature = "native")]
 impl crate::storage::CachedDirStore<ToolSpec> for ToolStore {
     const EXT: &'static str = "mcp";
 

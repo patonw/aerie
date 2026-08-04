@@ -32,9 +32,9 @@ impl super::AppState {
             .state
             .update(|state| state.workflow = self.workflows.editing.clone());
 
-        self.session.scratch.clear();
+        self.data.session.scratch.clear();
 
-        let model_map = self.prefs.view(|s| s.get_model_map());
+        let model_map = self.data.prefs.view(|s| s.get_model_map());
 
         let exec_id = self.workflows.shadow.graph.uuid.into();
         let mut exec = {
@@ -48,11 +48,11 @@ impl super::AppState {
                 .previews(self.workflows.previews.clone())
                 .transmuter(self.transmuter.clone())
                 .interrupt(self.workflows.interrupt.clone())
-                .history(self.session.history.clone())
-                .seed(self.prefs.view(|s| s.seed.clone()))
+                .history(self.data.session.history.clone())
+                .seed(self.data.prefs.view(|s| s.seed.clone()))
                 .errors(self.errors.clone())
-                .scratch(Some(self.session.scratch.clone()))
-                .streaming(self.prefs.view(|s| s.streaming))
+                .scratch(Some(self.data.session.scratch.clone()))
+                .streaming(self.data.prefs.view(|s| s.streaming))
                 .models(Arc::new(model_map))
                 .build();
 
@@ -79,12 +79,12 @@ impl super::AppState {
                 .collect_vec();
 
             let inputs = RootContext::builder()
-                .history(self.session.history.clone())
+                .history(self.data.session.history.clone())
                 .workflow(self.workflows.shadow.clone())
                 .user_prompt(prompt)
                 .extra_content(extra_content)
                 .model("default".into())
-                .temperature(self.prefs.view(|s| s.temperature))
+                .temperature(self.data.prefs.view(|s| s.temperature))
                 .build()
                 .inputs()
                 .unwrap();
@@ -102,7 +102,7 @@ impl super::AppState {
             exec
         };
 
-        let session = self.session.clone();
+        let session = self.data.session.clone();
         let running = self.workflows.running.clone();
         let errors = self.errors.clone();
         let interrupt = self.workflows.interrupt.clone();

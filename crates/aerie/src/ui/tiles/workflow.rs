@@ -219,7 +219,7 @@ impl super::AppState {
     }
 
     pub fn workflow_controls(&mut self, ui: &mut egui::Ui) {
-        let settings = self.prefs.clone();
+        let settings = self.data.prefs.clone();
         let errors = self.errors.clone();
         let running = self
             .workflows

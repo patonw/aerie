@@ -9,7 +9,6 @@ pub mod logging;
 pub mod pipeline;
 #[cfg(feature = "native")]
 pub mod storage;
-#[cfg(feature = "wip")]
 pub mod toolbox;
 pub mod transmute;
 #[cfg(feature = "ui")]

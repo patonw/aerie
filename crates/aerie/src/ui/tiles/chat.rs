@@ -7,8 +7,9 @@ use std::{borrow::Cow, sync::atomic::Ordering};
 use crate::{
     chat::ChatContent,
     config::ConfigExt,
+    events::AppEvent,
     rig::message::{Message, UserContent},
-    ui::{AppEvent, error_bubble, shortcuts::squelch},
+    ui::{error_bubble, shortcuts::squelch},
     utils::ErrorDistiller as _,
 };
 
@@ -19,6 +20,7 @@ pub use crate::ui::render::render_message_width;
 impl super::AppState {
     pub fn chat_ui(&mut self, ui: &mut egui::Ui) {
         let errors = self.errors.clone();
+        #[cfg(feature = "wip")]
         let workflows = self.workflows.names().map(|s| s.to_string()).collect_vec();
 
         // TODO: top panel with helper actions
@@ -106,6 +108,7 @@ impl super::AppState {
                                                         self.image_input = Some(Default::default());
                                                     }
                                                 });
+                                                #[cfg(feature = "wip")]
                                                 strip.cell(|ui| {
                                                     if ui
                                                         .button(IMAGES)
@@ -150,6 +153,7 @@ impl super::AppState {
 
                             ui.add_space(16.0);
 
+                            #[cfg(feature = "wip")]
                             self.errors.distil(self.state.update(|state| {
                                 egui::ComboBox::from_label("Workflow")
                                     .selected_text(&state.workflow)
@@ -186,6 +190,7 @@ impl super::AppState {
                     });
                 });
 
+                #[cfg(feature = "wip")]
                 if submitted {
                     let workflow = self.state.workflow.as_str();
 
@@ -223,11 +228,11 @@ impl super::AppState {
                 ui.set_width(ui.available_width());
 
                 let scroll_bottom = self.task_count.load(Ordering::Relaxed) > 0
-                    && (self.prefs.view(|s| s.autoscroll)
+                    && (self.data.prefs.view(|s| s.autoscroll)
                         || ui.button("Scroll to bottom.").clicked());
 
                 let md_cache = &mut self.cache;
-                self.session.view(|history| {
+                self.data.session.view(|history| {
                     for msg in history.iter() {
                         ui.push_id(msg.id, |ui| {
                             let aside = history.iter_aside(msg).collect_vec();
@@ -295,7 +300,7 @@ impl super::AppState {
                     }
                 });
 
-                let chat_r = self.session.scratch.load();
+                let chat_r = self.data.session.scratch.load();
                 if !chat_r.is_empty() {
                     ui.separator();
                 }
@@ -330,12 +335,13 @@ impl super::AppState {
         if let Some(branch_point) = self.branch_point {
             let mut submit = false;
             let unique_name = !self.new_branch.is_empty() && {
-                self.session
+                self.data
+                    .session
                     .view(|session_r| !session_r.has_branch(&self.new_branch))
             };
 
             // Copy prompt from branch point into chat input
-            self.session.view(|hist| {
+            self.data.session.view(|hist| {
                 if self.prompt.is_empty()
                     && let Some(entry) = hist.store.get(&branch_point)
                     && let ChatContent::Message(msg) = &entry.content
@@ -381,7 +387,7 @@ impl super::AppState {
                 }
 
                 if submit {
-                    errors.distil(self.session.transform(|history| {
+                    errors.distil(self.data.session.transform(|history| {
                         let parent = history.find_parent(branch_point);
 
                         let name = std::mem::take(&mut self.new_branch);

@@ -30,7 +30,22 @@ pub struct ChatSession {
     pub scratch: AtomicBuffer<Result<Message, String>>,
 }
 
+impl Default for ChatSession {
+    fn default() -> Self {
+        Self::transient().build().unwrap()
+    }
+}
+
 impl ChatSession {
+    pub fn transient() -> ChatSessionBuilder {
+        let mut builder = ChatSessionBuilder::default();
+        builder
+            .directory(Default::default())
+            .path(Arc::new(None))
+            .history(Arc::new(ArcSwap::from_pointee(Default::default())));
+        builder
+    }
+
     pub fn from_dir_name(dir: impl AsRef<Path>, name: Option<&str>) -> ChatSessionBuilder {
         let dir = dir.as_ref().to_path_buf();
         let session_path = name.map(|s| dir.join(s).with_extension("yml"));

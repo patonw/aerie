@@ -1,10 +1,3 @@
-#[cfg(feature = "wip")]
-use crate::rmcp::model::Tool;
-#[cfg(feature = "wip")]
-use crate::{
-    config::ConfigStateStore,
-    workflow::{CheckContext, nodes::LoopControl},
-};
 use arc_swap::ArcSwap;
 use eframe::egui;
 use egui::WidgetText;
@@ -12,6 +5,7 @@ use egui_commonmark::*;
 use egui_snarl::{InPinId, NodeId};
 use egui_tiles::SimplificationOptions;
 use itertools::Itertools;
+use rmcp::model::Tool;
 use serde_yaml_ng as serde_yml;
 use std::{
     borrow::Cow,
@@ -28,33 +22,35 @@ use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 #[cfg(feature = "wip")]
-use super::{Pane, workflow::ViewStack};
-#[cfg(feature = "wip")]
 use crate::{
     agent::AgentFactory,
-    chat::ChatSession,
-    config::ConfigExt as _,
-    config::Preferences,
-    config::ToolSpec,
-    logging::LogEntry,
-    toolbox::ToolStore,
-    transmute::Transmuter,
+    config::ConfigStateStore,
     ui::{
-        AppEvent, ShowHelp,
+        Pane,
         tiles::messages::MessageGraph,
-        workflow::{ProgressEntry, WorkflowViewer},
+        workflow::{ProgressEntry, ViewStack, WorkflowViewer},
     },
-    utils::{ErrorDistiller as _, ErrorList},
     workflow::{
-        EditContext, GraphId, PreviewData, ShadowGraph, WorkNode, Workflow,
+        CheckContext, EditContext, GraphId, PreviewData, ShadowGraph, WorkNode, Workflow,
+        nodes::LoopControl,
         runner::{ExecId, NodeStateMap, WorkflowRun},
         store::{WorkflowStore, WorkflowStoreDir},
     },
 };
 
+use crate::toolbox::ToolStore;
+use crate::{
+    chat::ChatSession,
+    config::{ConfigExt as _, Preferences, ToolSpec},
+    events::{AppEvent, AppEvents},
+    logging::LogEntry,
+    transmute::Transmuter,
+    ui::ShowHelp,
+    utils::{ErrorDistiller as _, ErrorList},
+};
+
 const SOFT_LIMIT: usize = 128;
 
-#[cfg(feature = "wip")]
 pub enum ToolEditorState {
     EditProvider {
         original: Option<(String, ToolSpec)>,
@@ -65,24 +61,63 @@ pub enum ToolEditorState {
     },
 }
 
-#[cfg(feature = "wip")]
+/// Data synced between client and server
+#[derive(Default, TypedBuilder)]
+pub struct AppData {
+    #[builder(default)]
+    pub prefs: Arc<ArcSwap<Preferences>>,
+
+    #[builder(default)]
+    pub session: ChatSession,
+    // #[builder(default)]
+    // pub show_help: Option<ShowHelp>,
+    //
+    // #[builder(default)]
+    // pub events: Arc<AppEvents>,
+    //
+    // #[builder(default)]
+    // pub errors: ErrorList<anyhow::Error>,
+    //
+    // #[builder(default)]
+    // pub prompt: String,
+    //
+    // #[builder(default)]
+    // pub images: Vec<String>,
+    //
+    // #[builder(default)]
+    // pub image_input: Option<String>,
+    //
+    // #[builder(default)]
+    // pub run_count: usize,
+}
+
+// TODO: use AppActions to trigger server-side handlers which update state
 #[derive(TypedBuilder)]
 pub struct AppState {
+    #[builder(default)]
+    pub data: AppData,
+
+    #[cfg(feature = "native")]
+    #[cfg(feature = "wip")]
     pub rt: tokio::runtime::Handle,
 
+    // TODO: migrate
     #[builder(default)]
     pub show_help: Option<ShowHelp>,
 
+    // TODO: migrate
     #[builder(default)]
-    pub events: Arc<super::AppEvents>,
+    pub events: Arc<AppEvents>,
 
+    // TODO: migrate
     #[builder(default)]
     pub errors: ErrorList<anyhow::Error>,
 
-    pub prefs: Arc<ArcSwap<Preferences>>,
-
+    #[cfg(feature = "native")]
+    #[cfg(feature = "wip")]
     pub state: ConfigStateStore,
 
+    #[builder(default)]
     pub tools: ToolStore,
 
     #[builder(default)]
@@ -91,22 +126,27 @@ pub struct AppState {
     #[builder(default)]
     pub log_history: Arc<arc_swap::ArcSwapAny<Arc<im::Vector<LogEntry>>>>,
 
-    pub session: ChatSession,
-
+    #[builder(default)]
     pub cache: CommonMarkCache,
 
+    // TODO: migrate
     #[builder(default)]
     pub prompt: String,
 
+    // TODO: migrate
     #[builder(default)]
     pub images: Vec<String>,
 
+    // TODO: migrate
     #[builder(default)]
     pub image_input: Option<String>,
 
+    // TODO: migrate
     #[builder(default)]
     pub run_count: usize,
 
+    #[cfg(feature = "native")]
+    #[cfg(feature = "wip")]
     pub agent_factory: AgentFactory,
 
     #[builder(default)]
@@ -128,8 +168,10 @@ pub struct AppState {
     #[builder(default)]
     pub tool_editor: Option<ToolEditorState>,
 
+    #[cfg(feature = "wip")]
     pub workflows: WorkflowState<WorkflowStoreDir>,
 
+    #[cfg(feature = "wip")]
     #[builder(default)]
     pub message_graph: MessageGraph,
 
@@ -204,7 +246,7 @@ impl AppState {
                         self.workflows.reset_nodes(
                             *graph_id,
                             nodes.clone(),
-                            self.prefs.view(|s| s.cascade),
+                            self.data.prefs.view(|s| s.cascade),
                         );
                         true
                     }
@@ -212,7 +254,7 @@ impl AppState {
                         self.workflows.reset_nodes(
                             *graph_id,
                             nodes.into(),
-                            self.prefs.view(|s| s.cascade),
+                            self.data.prefs.view(|s| s.cascade),
                         );
                         self.exec_workflow();
                         executed = true;

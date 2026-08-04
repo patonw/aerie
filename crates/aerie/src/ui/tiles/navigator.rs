@@ -6,7 +6,7 @@ use crate::utils::ErrorDistiller as _;
 
 impl super::AppState {
     pub fn nav_ui(&mut self, ui: &mut egui::Ui) {
-        let session = self.session.clone();
+        let session = self.data.session.clone();
         let errors = self.errors.clone();
 
         let running = self.task_count.load(Ordering::Relaxed) > 0;
@@ -17,8 +17,8 @@ impl super::AppState {
                         let editor = ui.text_edit_singleline(renaming);
                         if editor.lost_focus() {
                             if !renaming.is_empty() {
-                                errors.distil(self.session.rename(renaming));
-                                self.state.set_session(self.session.name());
+                                errors.distil(self.data.session.rename(renaming));
+                                self.state.set_session(self.data.session.name());
                             }
                             self.rename_session = None;
                         }
@@ -41,8 +41,8 @@ impl super::AppState {
                                 }
 
                                 if current != &original {
-                                    errors.distil(self.session.switch(current));
-                                    self.state.set_session(self.session.name());
+                                    errors.distil(self.data.session.switch(current));
+                                    self.state.set_session(self.data.session.name());
                                 }
                             });
                     }
@@ -64,14 +64,15 @@ impl super::AppState {
                                                 let timestamp = datetime
                                                     .format("unnamed-%Y-%m-%dT%H:%M:%S")
                                                     .to_string();
-                                                errors.distil(self.session.switch(&timestamp));
-                                                errors.distil(self.session.save());
-                                                self.state.set_session(self.session.name());
+                                                errors.distil(self.data.session.switch(&timestamp));
+                                                errors.distil(self.data.session.save());
+                                                self.state.set_session(self.data.session.name());
                                             }
                                         });
                                         strip.cell(|ui| {
                                             if ui.button(PENCIL).on_hover_text("Rename").clicked() {
-                                                self.rename_session = Some(self.session.name());
+                                                self.rename_session =
+                                                    Some(self.data.session.name());
                                             }
                                         });
                                         strip.cell(|ui| {
@@ -84,7 +85,7 @@ impl super::AppState {
                                                     .pick_file()
                                             {
                                                 self.state.set_export_dir(path.parent());
-                                                errors.distil(self.session.import(&path));
+                                                errors.distil(self.data.session.import(&path));
                                             }
                                         });
                                         strip.cell(|ui| {
@@ -101,16 +102,19 @@ impl super::AppState {
                                                     .save_file()
                                             {
                                                 self.state.set_export_dir(path.parent());
-                                                errors.distil(self.session.export(&path));
+                                                errors.distil(self.data.session.export(&path));
                                             }
                                         });
                                         strip.cell(|ui| {
                                             ui.menu_button(TRASH, |ui| {
                                                 if ui.button("OK").clicked() {
                                                     let old_name = session.name();
-                                                    errors.distil(self.session.switch(""));
-                                                    errors.distil(self.session.delete(&old_name));
-                                                    self.state.set_session(self.session.name());
+                                                    errors.distil(self.data.session.switch(""));
+                                                    errors.distil(
+                                                        self.data.session.delete(&old_name),
+                                                    );
+                                                    self.state
+                                                        .set_session(self.data.session.name());
                                                     ui.close();
                                                 }
                                             })
@@ -126,7 +130,7 @@ impl super::AppState {
             ui.separator();
             ui.vertical_centered(|ui| ui.monospace("Branches"));
             egui::ScrollArea::vertical().show(ui, |ui| {
-                let lineage = self.session.view(|history| history.lineage());
+                let lineage = self.data.session.view(|history| history.lineage());
 
                 if let Some(children) = lineage.get("") {
                     for child in children {
@@ -153,7 +157,7 @@ impl super::AppState {
                     egui::Sides::new().show(
                         ui,
                         |ui| {
-                            errors.distil(self.session.transform(|history| {
+                            errors.distil(self.data.session.transform(|history| {
                                 let mut head = history.head.as_str();
                                 ui.selectable_value(&mut head, cursor, cursor);
                                 Ok(history.switch(head))
@@ -165,7 +169,8 @@ impl super::AppState {
                             }
                             if ui.button(ROCKET).on_hover_text("Promote").clicked() {
                                 errors.distil(
-                                    self.session
+                                    self.data
+                                        .session
                                         .transform(|history| history.promote_branch(cursor)),
                                 );
                             }
@@ -181,7 +186,7 @@ impl super::AppState {
             egui::Sides::new().show(
                 ui,
                 |ui| {
-                    errors.distil(self.session.transform(|history| {
+                    errors.distil(self.data.session.transform(|history| {
                         let mut head = history.head.as_str();
                         ui.selectable_value(&mut head, cursor, cursor);
                         Ok(history.switch(head))
@@ -193,21 +198,26 @@ impl super::AppState {
                     }
                     if ui.button(ROCKET).on_hover_text("Promote").clicked() {
                         errors.distil(
-                            self.session
+                            self.data
+                                .session
                                 .transform(|history| history.promote_branch(cursor)),
                         );
                     }
 
-                    ui.add_enabled_ui(self.session.view(|history| history.head == cursor), |ui| {
-                        if ui.button(TRASH).on_hover_text("Prune").clicked() {
-                            errors.distil(
-                                self.session
-                                    .transform(|history| history.prune_branch(cursor)),
-                            );
+                    ui.add_enabled_ui(
+                        self.data.session.view(|history| history.head == cursor),
+                        |ui| {
+                            if ui.button(TRASH).on_hover_text("Prune").clicked() {
+                                errors.distil(
+                                    self.data
+                                        .session
+                                        .transform(|history| history.prune_branch(cursor)),
+                                );
 
-                            self.session.scratch.clear();
-                        }
-                    });
+                                self.data.session.scratch.clear();
+                            }
+                        },
+                    );
                 },
             );
         }
@@ -223,6 +233,7 @@ impl super::AppState {
         let mut submit = false;
         let unique_name = !self.new_branch.is_empty()
             && self
+                .data
                 .session
                 .view(|history| !history.has_branch(&self.new_branch));
 
@@ -263,7 +274,8 @@ impl super::AppState {
             if submit {
                 let new_name = std::mem::take(&mut self.new_branch);
                 errors.distil(
-                    self.session
+                    self.data
+                        .session
                         .transform(|history| history.rename_branch(old_name, &new_name)),
                 );
                 ui.close();
