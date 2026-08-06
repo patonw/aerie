@@ -26,7 +26,6 @@ use web_time::{Duration, SystemTime};
 use crate::config::ConfigStateProxy;
 #[cfg(feature = "native")]
 use crate::config::ConfigStateStore;
-use crate::ui::workflow::{ProgressEntry, ViewStack, WorkflowViewer};
 use crate::workflow::CheckContext;
 use crate::workflow::ShadowGraph;
 use crate::workflow::WorkNode;
@@ -35,12 +34,16 @@ use crate::workflow::store::{WorkflowStore, WorkflowStoreDir};
 #[cfg(not(feature = "native"))]
 use crate::workflow::store::{WorkflowStore, WorkflowStoreStub};
 #[cfg(feature = "wip")]
+use crate::{agent::AgentFactory, ui::tiles::messages::MessageGraph};
 use crate::{
-    agent::AgentFactory,
-    ui::{Pane, tiles::messages::MessageGraph},
-    workflow::{EditContext, nodes::LoopControl},
+    toolbox::Toolbox,
+    ui::{
+        Pane,
+        workflow::{ProgressEntry, ViewStack, WorkflowViewer},
+    },
 };
 
+use crate::workflow::{EditContext, nodes::LoopControl};
 use crate::{
     chat::ChatSession,
     config::{ConfigExt as _, Preferences, ToolSpec},
@@ -193,15 +196,23 @@ pub struct AppState {
     pub transmuter: Transmuter,
 }
 
-#[cfg(feature = "wip")]
 impl AppState {
+    #[cfg(feature = "native")]
+    fn get_toolbox(&self) -> Toolbox {
+        self.agent_factory.toolbox.clone()
+    }
+    #[cfg(not(feature = "native"))]
+    fn get_toolbox(&self) -> Toolbox {
+        Default::default()
+    }
+
     pub fn workflow_viewer(&mut self) -> &mut WorkflowViewer {
         if self.workflows.viewer.is_none() {
             let stack = &self.workflows.view_stack;
             let shadow = stack.leaf().clone();
 
             let edit_ctx = EditContext::builder()
-                .toolbox(self.agent_factory.toolbox.clone())
+                .toolbox(self.get_toolbox())
                 .events(self.events.clone())
                 .current_graph(shadow.uuid)
                 .metadata(self.workflows.shadow.metadata.clone())
@@ -236,12 +247,14 @@ impl AppState {
         viewer
     }
 
+    #[cfg(feature = "native")]
     pub fn handle_events(&mut self) {
         use AppEvent::*;
 
         // Only allow one run request per frame
         let mut executed = false;
         let errors = self.errors.clone();
+        let settings = self.data.prefs.clone();
 
         while let Some(event) = self.events.pop() {
             let mut handled = false;
@@ -250,8 +263,37 @@ impl AppState {
 
             handled = handled
                 || match &event {
+                    CreateWorkflow => {
+                        let datetime = chrono::offset::Local::now();
+                        let timestamp = datetime.format("unnamed-%Y-%m-%dT%H:%M:%S").to_string();
+                        self.workflows.store.put(&timestamp, Default::default());
+                        self.workflows.switch(&timestamp);
+                        true
+                    }
+                    DeleteWorkflow(name) => {
+                        self.workflows.editing = name.clone();
+                        errors.distil(self.workflows.remove());
+                        let next_name = self
+                            .workflows
+                            .names()
+                            .next()
+                            .map(|s| s.to_string())
+                            .unwrap_or("default".to_string());
+                        self.workflows.switch(&next_name);
+                        true
+                    }
                     SwitchWorkflow(name) => {
+                        if settings.view(|s| s.autosave) {
+                            // TODO:
+                            // self.workflows.save();
+                        }
                         self.workflows.switch(name);
+                        true
+                    }
+                    RenameWorkflow(old_name, new_name) => {
+                        self.workflows.editing = old_name.clone();
+                        self.workflows.renaming = Some(new_name.clone());
+                        errors.distil(self.workflows.rename());
                         true
                     }
                     UserRunWorkflow if !executed => {
@@ -345,14 +387,13 @@ impl AppState {
     }
 }
 
-#[cfg(feature = "wip")]
 impl egui_tiles::Behavior<Pane> for AppState {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> WidgetText {
         match pane {
             Pane::Settings => "Settings".into(),
             Pane::Navigator => "Session".into(),
             Pane::Chat => "Chat".into(),
-            // Pane::Logs => "Logs".into(),
+            Pane::Logs => "Logs".into(),
             Pane::Tools => "Tools".into(),
             Pane::Workflow => "Workflow".into(),
             Pane::Messages => "Lineage".into(),
@@ -376,9 +417,11 @@ impl egui_tiles::Behavior<Pane> for AppState {
             Pane::Chat => {
                 self.chat_ui(ui);
             }
-            // Pane::Logs => {
-            //     self.logview_ui(ui);
-            // }
+            #[cfg(feature = "wip")]
+            Pane::Logs => {
+                self.logview_ui(ui);
+            }
+            #[cfg(feature = "wip")]
             Pane::Tools => {
                 self.toolset_ui(ui);
             }
@@ -389,12 +432,15 @@ impl egui_tiles::Behavior<Pane> for AppState {
                     self.subgraph_ui(ui);
                 }
             }
+            #[cfg(feature = "wip")]
             Pane::Messages => {
                 self.message_graph(ui);
             }
             Pane::Outputs => {
                 self.outputs_ui(ui);
             }
+            #[cfg(not(feature = "wip"))]
+            _ => {}
         };
 
         Default::default()
@@ -455,13 +501,24 @@ pub struct WorkflowState<W: WorkflowStore> {
 
 impl<W: WorkflowStore> WorkflowState<W> {
     pub fn new(store: W, current: Option<String>) -> Self {
-        let (name, graph) = if let Some(name) = current.filter(|n| store.exists(n))
-            && let Ok(baseline) = store.load(name.as_ref())
-        {
-            (name, baseline)
+        let (name, graph) = if let Some(name) = current.as_ref() {
+            if !store.exists(name) {
+                tracing::warn!("No such workflow {name}");
+                Default::default()
+            } else {
+                match store.load(name.as_ref()) {
+                    Ok(baseline) => (name.clone(), baseline),
+                    Err(e) => {
+                        tracing::error!("Could not load workflow {name}: {e:}");
+                        Default::default()
+                    }
+                }
+            }
         } else {
             Default::default()
         };
+
+        tracing::info!("Workflow requested: {:?}, resolved: {}", &current, &name);
 
         let view_stack = ViewStack::from_root(&name, graph.clone());
 
@@ -490,7 +547,15 @@ impl<W: WorkflowStore> WorkflowState<W> {
     }
 
     pub fn has_changes(&self) -> bool {
+        // if cfg!(any(feature = "web-ui", feature = "backend")) {
+        //     if self.shadow.fast_eq(&self.baseline) {
+        //         false
+        //     } else {
+        //         !self.shadow.eq(&self.baseline)
+        //     }
+        // } else {
         !self.shadow.fast_eq(&self.baseline)
+        // }
     }
 
     /// Runs recursive checks on workflow graphs after changes
@@ -508,7 +573,34 @@ impl<W: WorkflowStore> WorkflowState<W> {
         }
     }
 
-    #[cfg(feature = "wip")]
+    pub fn patch(&mut self, patch: crate::client::EditorPatch) {
+        if self.baseline != patch.baseline {
+            if self.shadow == patch.baseline {
+                self.baseline = self.shadow.clone();
+            } else {
+                self.baseline = patch.baseline.clone();
+            }
+        }
+
+        // if let Some(shadow) = patch.shadow {
+        //     if self.shadow != shadow {
+        //         self.shadow = shadow;
+        //     }
+        // } else {
+        //     self.shadow = self.baseline.clone();
+        // }
+
+        if self.editing != patch.name {
+            log::info!(
+                "Patch changed name from {} to {}",
+                &self.editing,
+                &patch.name
+            );
+
+            self.switch_workflow(&patch.name, patch.baseline);
+        }
+    }
+
     pub fn switch(&mut self, workflow_name: &str) {
         if self.editing.as_str() == workflow_name {
             return;
@@ -526,6 +618,10 @@ impl<W: WorkflowStore> WorkflowState<W> {
             return;
         };
 
+        self.switch_workflow(workflow_name, target);
+    }
+
+    pub fn switch_workflow(&mut self, workflow_name: &str, target: Workflow) {
         // Stash current editee to preserve unsaved changes
         self.undo_stack
             .entry(self.editing.clone())
@@ -600,7 +696,6 @@ impl<W: WorkflowStore> WorkflowState<W> {
         self.store.remove(&self.editing)
     }
 
-    #[cfg(feature = "wip")]
     pub fn cast_shadow(&mut self, shadow: ShadowGraph<WorkNode>) {
         if self.frozen || self.shadow.graph.fast_eq(&shadow) {
             return;
@@ -677,6 +772,9 @@ impl<W: WorkflowStore> WorkflowState<W> {
                 .map(|w| w.in_pin.node)
                 .collect::<im::OrdSet<NodeId>>();
 
+            viewer
+                .events
+                .insert(AppEvent::GraphSnapshot(shadow.clone()));
             viewer.events.insert(AppEvent::NodesChanged(
                 self.shadow.graph.uuid,
                 edited.union(connected),
@@ -692,7 +790,6 @@ impl<W: WorkflowStore> WorkflowState<W> {
         tracing::trace!("Updating shadow. stack {}", undo_stack.len());
     }
 
-    #[cfg(feature = "wip")]
     pub fn get_undo_count(&mut self) -> usize {
         self.undo_stack
             .get(&self.editing)
@@ -700,7 +797,6 @@ impl<W: WorkflowStore> WorkflowState<W> {
             .unwrap_or_default()
     }
 
-    #[cfg(feature = "wip")]
     pub fn get_redo_count(&mut self) -> usize {
         self.redo_stack
             .get(&self.editing)
@@ -708,7 +804,6 @@ impl<W: WorkflowStore> WorkflowState<W> {
             .unwrap_or_default()
     }
 
-    #[cfg(feature = "wip")]
     pub fn undo(&mut self) {
         let undo_stack = self.undo_stack.entry(self.editing.clone()).or_default();
         let redo_stack = self.redo_stack.entry(self.editing.clone()).or_default();
@@ -745,7 +840,6 @@ impl<W: WorkflowStore> WorkflowState<W> {
         );
     }
 
-    #[cfg(feature = "wip")]
     pub fn redo(&mut self) {
         let redo_stack = self.redo_stack.entry(self.editing.clone()).or_default();
         let undo_stack = self.undo_stack.entry(self.editing.clone()).or_default();
@@ -873,6 +967,18 @@ impl<W: WorkflowStore> WorkflowState<W> {
     pub fn handle_event(&mut self, event: &AppEvent) -> bool {
         use AppEvent::*;
         match event {
+            GraphSnapshot(graph) => {
+                self.view_stack.switch_graph(graph);
+                true
+            }
+            WorkflowSnapshot(data) => {
+                self.shadow = data.clone();
+                true
+            }
+            SaveWorkflow => {
+                self.save();
+                true
+            }
             Freeze(Some(value)) => {
                 self.frozen = *value;
                 true

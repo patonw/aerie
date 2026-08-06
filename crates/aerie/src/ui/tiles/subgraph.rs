@@ -10,7 +10,7 @@ use std::time::Duration;
 use egui_extras::{Size, StripBuilder};
 
 use crate::config::ConfigExt;
-use crate::ui::AppEvent;
+use crate::events::AppEvent;
 use crate::ui::ShowHelp;
 use crate::ui::runner::play_button;
 use crate::ui::runner::stop_button;
@@ -229,8 +229,7 @@ impl super::AppState {
                 };
 
                 if info.depth > 0 && resp.double_clicked() {
-                    self.events
-                        .insert(crate::ui::AppEvent::LeaveSubgraph(info.depth));
+                    self.events.insert(AppEvent::LeaveSubgraph(info.depth));
                     resp.surrender_focus();
                 }
             }
@@ -252,8 +251,7 @@ impl super::AppState {
                                             .on_hover_text(format!("{stack}"))
                                             .clicked()
                                         {
-                                            // TODO: stay in this view when undoing
-                                            self.workflows.undo();
+                                            self.events.insert(AppEvent::Undo);
                                         }
                                     });
                                 });
@@ -265,7 +263,7 @@ impl super::AppState {
                                             .on_hover_text(format!("{stack}"))
                                             .clicked()
                                         {
-                                            self.workflows.redo();
+                                            self.events.insert(AppEvent::Redo);
                                         }
                                     });
                                 });
@@ -276,7 +274,9 @@ impl super::AppState {
             if !settings.view(|s| s.autosave) {
                 ui.add_enabled_ui(self.workflows.has_changes(), |ui| {
                     if ui.button("Save").clicked() {
-                        self.workflows.save();
+                        self.events
+                            .insert(AppEvent::WorkflowSnapshot(self.workflows.shadow.clone()));
+                        self.events.insert(AppEvent::SaveWorkflow);
                     }
                 });
             } else if !self.workflows.frozen
@@ -284,7 +284,9 @@ impl super::AppState {
                 && self.workflows.modtime.elapsed().unwrap_or(Duration::ZERO)
                     > Duration::from_secs(2)
             {
-                self.workflows.save();
+                self.events
+                    .insert(AppEvent::WorkflowSnapshot(self.workflows.shadow.clone()));
+                self.events.insert(AppEvent::SaveWorkflow);
             }
 
             ui.separator();

@@ -14,14 +14,14 @@ use im::Vector;
 use itertools::Itertools;
 use jsonschema::ValidationError;
 use kinded::Kinded;
-use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
+use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
 use serde_yaml_ng as serde_yml;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
     fmt::{Debug, Display},
     hash::Hash,
+    marker::PhantomData,
     sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},
 };
@@ -581,16 +581,15 @@ impl AsRef<Uuid> for GraphId {
     }
 }
 
-#[skip_serializing_none]
 #[derive(Debug, Default, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowMeta {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(default)]
     pub description: Arc<String>,
 
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(default)]
     pub schema: Arc<String>,
 
-    #[serde(default, skip_serializing_if = "im::OrdSet::is_empty")]
+    #[serde(default)]
     pub chain: im::OrdSet<String>,
 }
 
@@ -653,6 +652,57 @@ impl ArcMeta for Arc<ShadowMeta> {
     }
 }
 
+#[derive(Default)]
+struct NodeMapVisitor<T> {
+    _marker: PhantomData<T>,
+}
+
+impl<T> NodeMapVisitor<T> {
+    fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'de, V: Deserialize<'de> + Clone> Visitor<'de> for NodeMapVisitor<V> {
+    type Value = im::OrdMap<NodeId, V>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("A node map")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut data = im::OrdMap::new();
+        while let Some((k, v)) = map.next_entry::<serde_json::Value, V>()? {
+            let id = match k {
+                serde_json::Value::Number(num) if let Some(id) = num.as_u64() => id as usize,
+                serde_json::Value::String(s) if let Ok(id) = s.parse::<usize>() => id,
+                unk => {
+                    let unx = serde::de::Unexpected::Other("Not an id");
+
+                    return Err(serde::de::Error::invalid_value(unx, &self));
+                }
+            };
+
+            let id = NodeId(id);
+            data.insert(id, v);
+        }
+        Ok(data)
+    }
+}
+
+fn deserialize_node_map<'de, D, T>(d: D) -> Result<im::OrdMap<NodeId, T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Clone + Hash + PartialEq + Debug + Deserialize<'de>,
+{
+    d.deserialize_map(NodeMapVisitor::new())
+}
+
 pub type GraphNodeId = (GraphId, NodeId);
 
 /// The shadow graph is incrementally updated when edits are made through the viewer.
@@ -660,7 +710,6 @@ pub type GraphNodeId = (GraphId, NodeId);
 /// to make cloning-on-write cheap. This allows shadow graphs to be quickly compared using
 /// top-level pointer comparison. We could also use this to support undo/redo operations,
 /// though the shadow doesn't currently track positions.
-#[skip_serializing_none]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowGraph<T>
 where
@@ -669,10 +718,14 @@ where
     #[serde(default)]
     pub uuid: GraphId,
 
+    // TODO: Custom serialization
+    #[serde(bound(deserialize = "T: Deserialize<'de>"))]
+    #[serde(deserialize_with = "deserialize_node_map")]
     pub nodes: im::OrdMap<NodeId, MetaNode<T>>,
+
     pub wires: im::OrdSet<Wire>,
 
-    #[serde(default, skip_serializing_if = "im::OrdSet::is_empty")]
+    #[serde(default)]
     pub disabled: im::OrdSet<NodeId>,
 
     pub start: Option<NodeId>,
@@ -1499,7 +1552,6 @@ pub fn fixup_workflow(mut snarl: Snarl<WorkNode>) -> Snarl<WorkNode> {
     snarl
 }
 
-#[cfg(feature = "wip")]
 pub fn write_value(mut fh: impl std::io::Write, value: &Value) -> Result<(), anyhow::Error> {
     match value {
         Value::Text(value) => {
@@ -1593,4 +1645,29 @@ pub async fn with_deadline<T>(
     deadline: Option<Instant>,
 ) -> Result<T, WorkflowError> {
     with_timeout(fut, merge_deadline(timeout, deadline)).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    pub fn test_workflow_json() -> anyhow::Result<()> {
+        let workflow = Workflow::default();
+        let json = serde_json::to_string(&workflow)?;
+        let round: Workflow = serde_json::from_str(&json)?;
+
+        assert_eq!(workflow, round);
+        Ok(())
+    }
+
+    #[test]
+    pub fn test_workflow_yaml() -> anyhow::Result<()> {
+        let workflow = Workflow::default();
+        let json = serde_yaml_ng::to_string(&workflow)?;
+        let round: Workflow = serde_yaml_ng::from_str(&json)?;
+
+        assert_eq!(workflow, round);
+        Ok(())
+    }
 }

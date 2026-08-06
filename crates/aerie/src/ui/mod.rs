@@ -2,23 +2,22 @@ use eframe::egui;
 use egui::WidgetText;
 
 pub mod render;
-#[cfg(feature = "wip")]
 pub mod runner;
 pub mod shortcuts;
 pub mod state;
 pub mod tiles;
 pub mod workflow;
 
-pub use state::AppState;
+use state::AppState;
 
 #[cfg(feature = "wip")]
-pub use crate::events::*;
+use crate::events::*;
 
 pub enum Pane {
     Settings,
     Navigator,
     Chat,
-    // Logs,
+    Logs,
     Tools,
     Workflow,
     Messages,

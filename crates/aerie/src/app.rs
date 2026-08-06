@@ -27,9 +27,9 @@ use crate::{
     storage::CachedDirStore as _,
     toolbox::ToolStore,
     ui::{
-        AppState, Pane,
+        Pane,
         shortcuts::SHORTCUT_QUIT,
-        state::{AppData, WorkflowState},
+        state::{AppData, AppState, WorkflowState},
     },
     utils::{ErrorDistiller as _, ErrorList, MAX_IMAGE_DIM, prune_image_cache},
     workflow::store::WorkflowStoreDir,
@@ -157,10 +157,6 @@ impl eframe::App for App {
         let settings_ = self.app_state.data.prefs.clone();
 
         let content_rect = ctx.content_rect();
-        egui_extras::install_image_loaders(ctx);
-        let mut fonts = egui::FontDefinitions::default();
-        egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-        ctx.set_fonts(fonts);
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(size) = self.min_size {
@@ -296,7 +292,15 @@ impl AppFactory {
         eframe::run_native(
             "aerie",
             self.ui_options(),
-            Box::new(move |_| Ok(Box::new(app))),
+            Box::new(move |cc| {
+                let ctx = &cc.egui_ctx;
+                egui_extras::install_image_loaders(ctx);
+                let mut fonts = egui::FontDefinitions::default();
+                egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+                ctx.set_fonts(fonts);
+
+                Ok(Box::new(app))
+            }),
         )
         .unwrap();
 
@@ -355,6 +359,7 @@ impl AppFactory {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn build_state(&self) -> Result<AppState, anyhow::Error> {
         let next_workflow: Arc<ArcSwapOption<String>> = Default::default();
         let next_prompt: Arc<ArcSwapOption<String>> = Default::default();

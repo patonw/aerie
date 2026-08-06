@@ -312,11 +312,12 @@ impl WorkflowStore for WorkflowStoreDir {
         CachedDirStore::rename(self, old_name, new_name)
     }
 
+    #[tracing::instrument]
     fn backup(&self, name: &str) -> anyhow::Result<()> {
         use std::hash::{Hash, Hasher};
 
         tracing::info!("Creating backup for {name}");
-        if let Some(graph) = self.cache.load().get(name)
+        if let Some((_, graph)) = self.cache.load().get(name)
             && let Some(dir) = self.path.parent()
         {
             let dir = dir.join("backups");
@@ -374,11 +375,11 @@ impl WorkflowStoreStub {
 }
 
 impl WorkflowStore for WorkflowStoreStub {
-    fn load(&self, name: &str) -> anyhow::Result<Workflow> {
+    fn load(&self, _name: &str) -> anyhow::Result<Workflow> {
         todo!()
     }
 
-    fn save(&mut self, name: &str, value: Workflow) -> anyhow::Result<()> {
+    fn save(&mut self, _name: &str, _value: Workflow) -> anyhow::Result<()> {
         todo!()
     }
 
@@ -398,23 +399,24 @@ impl WorkflowStore for WorkflowStoreStub {
         self.schema(key)
     }
 
-    fn remove(&mut self, key: &str) -> anyhow::Result<()> {
+    fn remove(&mut self, _key: &str) -> anyhow::Result<()> {
         todo!()
     }
 
-    fn rename(&mut self, old_name: &str, new_name: &str) -> anyhow::Result<()> {
+    fn rename(&mut self, _old_name: &str, _new_name: &str) -> anyhow::Result<()> {
         todo!()
     }
 
-    fn backup(&self, name: &str) -> anyhow::Result<()> {
+    fn backup(&self, _name: &str) -> anyhow::Result<()> {
+        // TODO: send event
+        Ok(())
+    }
+
+    fn get(&self, _key: &str) -> Option<Workflow> {
         todo!()
     }
 
-    fn get(&self, key: &str) -> Option<Workflow> {
-        todo!()
-    }
-
-    fn put(&mut self, key: &str, value: Workflow) {
+    fn put(&mut self, _key: &str, _value: Workflow) {
         todo!()
     }
 }

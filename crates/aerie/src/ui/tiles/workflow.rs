@@ -1,3 +1,5 @@
+use std::hash::{DefaultHasher, Hash as _, Hasher as _};
+use std::sync::Arc;
 use std::{borrow::Cow, convert::identity, sync::atomic::Ordering, time::Duration};
 
 use egui::{Align2, Color32, ComboBox, Label, RichText};
@@ -9,10 +11,11 @@ use egui_phosphor::regular::{
 use egui_snarl::ui::SnarlWidget;
 use itertools::Itertools;
 
+use crate::events::AppEvent;
 use crate::{
     config::ConfigExt as _,
     ui::{
-        AppEvent, ShowHelp,
+        ShowHelp,
         runner::{play_button, stop_button},
         shortcuts::{SHORTCUT_HELP, SHORTCUT_RUN, ShortcutHandler, show_shortcuts, squelch},
         state::MetaEdit,
@@ -43,6 +46,8 @@ impl super::AppState {
             // Forces new widget state in children after switching or undos so that
             // Snarl will draw our persisted positions and sizes.
             let mut snarl = self.workflows.view_stack.root_snarl().unwrap();
+            let previous = self.workflows.shadow.graph.clone();
+            let baseline = self.workflows.baseline.graph.clone();
 
             let (shadow, widget) = {
                 let meta = self.workflows.shadow.metadata.clone();
@@ -65,11 +70,22 @@ impl super::AppState {
                 viewer.cast_positions(&snarl);
 
                 if cfg!(feature = "debug-ui") {
+                    let scaling = viewer.transform.scaling;
                     let egui::Pos2 { x, y } = ui.max_rect().right_top();
                     let over_rect =
-                        egui::Rect::from_two_pos(egui::pos2(x - 64.0, y), egui::pos2(x, y + 20.0));
+                        egui::Rect::from_two_pos(egui::pos2(x - 128.0, y), egui::pos2(x, y + 20.0));
+                    let mut s = DefaultHasher::new();
+                    viewer.shadow.hash(&mut s);
+                    let hs = s.finish();
+                    let mut s = DefaultHasher::new();
+                    baseline.hash(&mut s);
+                    let hb = s.finish();
+                    let mut s = DefaultHasher::new();
+                    previous.hash(&mut s);
+                    let hp = s.finish();
+
                     let scale_debug =
-                        egui::Label::new(format!("Scale: {:.02}", viewer.transform.scaling));
+                        egui::Label::new(format!("Scale: {scaling:.02}\n{hb:x}\n{hp:x}\n{hs:x}",));
                     ui.place(over_rect, scale_debug);
                 }
 
@@ -246,18 +262,18 @@ impl super::AppState {
                         ui.selectable_value(&mut current, name, name);
                     }
                     if current != &original {
-                        if settings.view(|s| s.autosave) {
-                            self.workflows.save();
-                        }
-
-                        self.workflows.switch(current);
+                        self.events
+                            .insert(AppEvent::SwitchWorkflow(current.to_string()));
                     }
                 });
 
             if let Some(renaming) = self.workflows.renaming.as_mut() {
                 let editor = squelch(ui.text_edit_singleline(renaming));
                 if editor.lost_focus() {
-                    errors.distil(self.workflows.rename());
+                    self.events.insert(AppEvent::RenameWorkflow(
+                        self.workflows.editing.clone(),
+                        renaming.clone(),
+                    ));
                 }
 
                 editor.request_focus();
@@ -272,12 +288,7 @@ impl super::AppState {
                             .horizontal(|mut strip| {
                                 strip.cell(|ui| {
                                     if ui.button(MAGIC_WAND).on_hover_text("Create").clicked() {
-                                        let datetime = chrono::offset::Local::now();
-                                        let timestamp = datetime
-                                            .format("unnamed-%Y-%m-%dT%H:%M:%S")
-                                            .to_string();
-                                        self.workflows.store.put(&timestamp, Default::default());
-                                        self.workflows.switch(&timestamp);
+                                        self.events.insert(AppEvent::CreateWorkflow);
                                     }
                                 });
                                 strip.cell(|ui| {
@@ -289,14 +300,9 @@ impl super::AppState {
                                 strip.cell(|ui| {
                                     ui.menu_button(TRASH, |ui| {
                                         if ui.button("OK").clicked() {
-                                            errors.distil(self.workflows.remove());
-                                            let next_name = self
-                                                .workflows
-                                                .names()
-                                                .next()
-                                                .map(|s| s.to_string())
-                                                .unwrap_or("default".to_string());
-                                            self.workflows.switch(&next_name);
+                                            self.events.insert(AppEvent::DeleteWorkflow(
+                                                self.workflows.editing.clone(),
+                                            ));
                                             ui.close();
                                         }
                                     })
@@ -306,6 +312,7 @@ impl super::AppState {
                             });
                     });
                     strip.cell(|ui| {
+                        #[cfg(feature = "wip")]
                         StripBuilder::new(ui)
                             .sizes(Size::remainder(), 2)
                             .horizontal(|mut strip| {
@@ -366,7 +373,7 @@ impl super::AppState {
                                             .on_hover_text(format!("{stack}"))
                                             .clicked()
                                         {
-                                            self.workflows.undo();
+                                            self.events.insert(AppEvent::Undo);
                                         }
                                     });
                                 });
@@ -378,7 +385,7 @@ impl super::AppState {
                                             .on_hover_text(format!("{stack}"))
                                             .clicked()
                                         {
-                                            self.workflows.redo();
+                                            self.events.insert(AppEvent::Redo);
                                         }
                                     });
                                 });
@@ -389,7 +396,9 @@ impl super::AppState {
             if !settings.view(|s| s.autosave) {
                 ui.add_enabled_ui(self.workflows.has_changes(), |ui| {
                     if ui.button("Save").clicked() {
-                        self.workflows.save();
+                        self.events
+                            .insert(AppEvent::WorkflowSnapshot(self.workflows.shadow.clone()));
+                        self.events.insert(AppEvent::SaveWorkflow);
                     }
                 });
             } else if !self.workflows.frozen
@@ -397,7 +406,11 @@ impl super::AppState {
                 && self.workflows.modtime.elapsed().unwrap_or(Duration::ZERO)
                     > Duration::from_secs(2)
             {
-                self.workflows.save();
+                // TODO: incremental workflow patching
+                // wip: this needs custom deserialization
+                self.events
+                    .insert(AppEvent::WorkflowSnapshot(self.workflows.shadow.clone()));
+                self.events.insert(AppEvent::SaveWorkflow);
             }
 
             ui.separator();

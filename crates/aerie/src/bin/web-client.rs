@@ -2,13 +2,15 @@ use aerie::{
     client::{ActionData, ClientAction, ClientUpdate, UpdateData},
     config::ConfigStateProxy,
     ui::{
-        AppState,
-        state::{AppData, WorkflowState},
+        Pane,
+        state::{AppData, AppState, WorkflowState},
+        workflow::ViewStack,
     },
     workflow::store::WorkflowStoreStub,
 };
 use eframe::egui;
 use egui::Visuals;
+use egui_tiles::{LinearDir, TileId, Tree};
 use ewebsock::{WsEvent, WsReceiver, WsSender};
 
 // TODO: figure out how to manage different users
@@ -17,8 +19,10 @@ use ewebsock::{WsEvent, WsReceiver, WsSender};
 
 pub struct WebApp {
     sock: Option<(WsSender, WsReceiver)>,
+    connected: bool,
     dirty: bool,
     state: AppState,
+    tile_tree: Tree<Pane>,
 }
 
 impl WebApp {
@@ -43,8 +47,10 @@ impl WebApp {
 
         Self {
             sock: None,
+            connected: false,
             dirty: false,
             state,
+            tile_tree: make_tile_tree(),
         }
     }
 }
@@ -55,7 +61,7 @@ impl eframe::App for WebApp {
         let mut task_update = None;
         if let Some((tx, rx)) = &mut self.sock {
             while let Some(event) = rx.try_recv() {
-                log::info!("New event: {event:?}");
+                // log::info!("New event: {event:?}");
                 match event {
                     WsEvent::Opened => {
                         // let payload = serde_json::to_string(&ClientAction {
@@ -65,7 +71,11 @@ impl eframe::App for WebApp {
                         // tx.send(ewebsock::WsMessage::Text(payload));
 
                         // Expect backend to send initial dump
+                        self.connected = true;
                         ctx.request_repaint();
+                    }
+                    WsEvent::Closed => {
+                        self.connected = false;
                     }
                     WsEvent::Message(ewebsock::WsMessage::Text(txt))
                         if let Ok(payload) = serde_json::from_str::<ClientUpdate>(&txt) =>
@@ -105,18 +115,43 @@ impl eframe::App for WebApp {
                                     self.state.state.update(|state| *state = config_state);
                                 }
 
+                                // log::info!("Editor patch? {:?}", &patch.editor);
+                                if let Some(editor) = patch.editor {
+                                    // log::info!(
+                                    //     "Patch stack is empty? {:?}",
+                                    //     editor.stack.as_ref().map(|s| s.is_empty()),
+                                    // );
+                                    self.state.workflows.patch(editor);
+                                    log::info!(
+                                        "View stack is empty? {}",
+                                        self.state.workflows.view_stack.is_empty()
+                                    );
+                                }
+
                                 if let Some(workflows) = patch.workflows {
                                     self.state.workflows.store.metadata = workflows;
                                 }
                             }
+                            UpdateData::Switch(data) => {
+                                self.state
+                                    .workflows
+                                    .switch_workflow(&data.name, data.baseline);
+                            }
                         }
-                        ctx.request_repaint();
+                        // ctx.request_repaint();
+                    }
+                    WsEvent::Message(ewebsock::WsMessage::Text(txt)) => {
+                        if let Err(err) = serde_json::from_str::<ClientUpdate>(&txt) {
+                            log::warn!("This did not parse: {err:?}",);
+                        }
                     }
                     WsEvent::Message(ewebsock::WsMessage::Binary(bytes)) => {
                         let data = postcard::from_bytes::<ClientUpdate>(&bytes);
                         log::info!("Got client update");
                     }
-                    _ => {}
+                    unk => {
+                        log::warn!("Got unknonwn message: {unk:?}");
+                    }
                 }
             }
         } else {
@@ -130,24 +165,44 @@ impl eframe::App for WebApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::SidePanel::right("Settings Panel")
-                .resizable(true)
-                .show_inside(ui, |ui| {
-                    self.state.settings_ui(ui);
-                    ui.separator();
-                });
+            self.tile_tree.ui(&mut self.state, ui);
 
-            egui::CentralPanel::default().show_inside(ui, |ui| {
-                self.state.chat_ui(ui);
-            });
+            let shadow = self.state.workflows.view_stack.root();
+            self.state.workflows.cast_shadow(shadow);
         });
 
+        // TODO: debounce events
         let mut events = Vec::new();
         while let Some(event) = self.state.events.pop() {
-            events.push(event);
+            use aerie::events::AppEvent::*;
+            match event {
+                // TODO: Nope, need to patch view stack from server
+                ev @ EnterSubgraph(node_id) => {
+                    self.state.workflows.view_stack.enter(node_id).unwrap();
+                    self.state.workflows.viewer = None;
+                    events.push(ev);
+                }
+                ev @ LeaveSubgraph(levels) => {
+                    if !self.state.workflows.view_stack.is_empty() {
+                        self.state.workflows.view_stack.exit(levels).unwrap();
+                        self.state.workflows.viewer = None;
+                        events.push(ev);
+                    }
+                }
+                // NodesChanged(id, nodes) => {
+                //     log::info!("Detected change");
+                // }
+                // GraphSnapshot(_) => {
+                //     log::info!("Blocking graph snapshot");
+                // }
+                ev => {
+                    events.push(ev);
+                }
+            }
         }
 
         if !events.is_empty()
+            && self.connected
             && let Some((tx, rx)) = &mut self.sock
         {
             let action = ActionData::Dispatch(events);
@@ -168,7 +223,6 @@ impl eframe::App for WebApp {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> anyhow::Result<()> {
-    println!("Hello, world!");
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
     let native_options = eframe::NativeOptions {
@@ -262,4 +316,33 @@ fn main() {
             }
         }
     });
+}
+
+fn make_tile_tree() -> Tree<Pane> {
+    let mut tiles = egui_tiles::Tiles::default();
+    let tabs: Vec<TileId> = vec![
+        tiles.insert_pane(Pane::Workflow),
+        tiles.insert_pane(Pane::Chat),
+        // tiles.insert_pane(Pane::Logs),
+        // tiles.insert_pane(Pane::Messages),
+    ];
+
+    let content_tabs: TileId = tiles.insert_tab_tile(tabs);
+    let tabs = vec![
+        // tiles.insert_pane(Pane::Tools),
+        tiles.insert_pane(Pane::Navigator),
+        tiles.insert_pane(Pane::Settings),
+    ];
+
+    let setter_tabs = tiles.insert_tab_tile(tabs);
+    let tabs = vec![tiles.insert_pane(Pane::Outputs)];
+    let inspector_tabs = tiles.insert_tab_tile(tabs);
+    let vsplit =
+        egui_tiles::Linear::new_binary(LinearDir::Vertical, [setter_tabs, inspector_tabs], 0.5);
+    let sidebar = tiles.insert_container(vsplit);
+    let hsplit =
+        egui_tiles::Linear::new_binary(LinearDir::Horizontal, [content_tabs, sidebar], 0.75);
+    let root = tiles.insert_container(hsplit);
+
+    egui_tiles::Tree::new("my_tree", root, tiles)
 }

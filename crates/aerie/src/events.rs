@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::{
     config::Preferences,
     utils::PriorityQueue,
-    workflow::{AnyPin, GraphId, ValueKind},
+    workflow::{AnyPin, GraphId, ShadowGraph, ValueKind, WorkNode, Workflow},
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -30,7 +30,14 @@ pub enum AppEvent {
     SwapInputs(GraphId, InPinId, InPinId),
     SwapOutputs(GraphId, OutPinId, OutPinId),
 
+    GraphSnapshot(ShadowGraph<WorkNode>),
+
+    CreateWorkflow,
+    DeleteWorkflow(String),
+    SaveWorkflow,
+    WorkflowSnapshot(Workflow),
     SwitchWorkflow(String),
+    RenameWorkflow(String, String),
     // User requested to run the current workflow
     UserRunWorkflow,
 

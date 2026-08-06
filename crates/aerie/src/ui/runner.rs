@@ -10,16 +10,18 @@ use egui_phosphor::regular::{PLAY, STOP};
 use itertools::Itertools as _;
 use scopeguard::defer;
 
+use crate::{config::ConfigExt as _, rig, utils::ErrorDistiller as _};
+
+#[cfg(feature = "wip")]
 use crate::{
-    config::ConfigExt as _,
-    rig,
-    utils::{ErrorDistiller as _, ImageResolver},
+    utils::ImageResolver,
     workflow::{
         RootContext, RunContext,
         runner::{WorkflowRun, WorkflowRunner},
     },
 };
 
+#[cfg(feature = "wip")]
 impl super::AppState {
     /// Runs the workflow currently being edited and updates nodes in the viewer with results.
     pub fn exec_workflow(&mut self) {

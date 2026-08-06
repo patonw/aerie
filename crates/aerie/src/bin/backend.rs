@@ -7,11 +7,15 @@ use std::{
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
+use tracing::instrument;
 
 use aerie::{
-    client::{ClientAction, ClientUpdate, StateDump, StatePatch, UpdateData},
+    client::{
+        ClientAction, ClientUpdate, EditorPatch, StateDump, StatePatch, SwitchData, UpdateData,
+    },
     config::Args,
     storage::CachedDirStore as _,
+    ui::state::WorkflowState,
 };
 use axum::{
     extract::{
@@ -144,6 +148,7 @@ async fn ws_handler(
 // Must not use enum tags. Must not omit default fields.
 async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: SocketAddr) {
     let dump_result = send_dump(&app, &mut socket).await;
+    // let _ = send_switch(&app.app_state.workflows, &mut socket).await;
 
     let mut waiting = true;
     let mut interval = tokio::time::interval(Duration::from_millis(1000));
@@ -182,24 +187,40 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
                             {
                                 use aerie::client::ActionData::*;
                                 tracing::info!("Got json action {payload:?}");
+                                let mut need_patch = false;
+
                                 match payload.action {
                                     Dispatch(app_events) => {
                                         for event in app_events {
-                                            app.app_state.events.insert(event);
+                                            use aerie::events::AppEvent::*;
+                                            match event {
+                                                SwitchWorkflow(name) => {
+                                                    app.app_state.workflows.switch(&name);
+
+                                                    let _ = send_switch(&app.app_state.workflows, &mut socket).await;
+                                                },
+                                                ev @ (EnterSubgraph(_) | LeaveSubgraph(_) | NodesChanged(_, _) | GraphSnapshot(_) | WorkflowSnapshot(_)) => {
+                                                    app.app_state.events.insert(ev);
+                                                }
+                                                ev => {
+                                                    app.app_state.events.insert(ev);
+                                                    need_patch = true;
+                                                }
+                                            }
                                         }
+
                                         app.app_state.handle_events();
-                                        waiting = true;
-                                        let _ = patch_all(&app, &mut socket).await;
+
+                                        if need_patch {
+                                            waiting = task_count.load(Ordering::Relaxed) > 0;
+                                            let _ = patch_all(&app, &mut socket).await;
+                                        }
                                     }
                                 }
                             }
                             Ok(Message::Close(_)) => {}
                             unk => {
                                 tracing::info!("Not sure what to do with {unk:?}");
-                                socket
-                                    .send(Message::text("Sounds great!"))
-                                    .await
-                                    .expect("ok");
                             }
                         }
                     }
@@ -209,6 +230,27 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
         }
     }
     // while let Some(msg) = socket.recv().await {}
+}
+
+async fn send_switch<W: aerie::workflow::store::WorkflowStore>(
+    work_state: &WorkflowState<W>,
+    socket: &mut WebSocket,
+) -> Result<(), axum::Error> {
+    let payload = SwitchData::builder()
+        .name(work_state.editing.clone())
+        .baseline(work_state.baseline.clone())
+        .build();
+
+    let update = ClientUpdate {
+        update: UpdateData::Switch(payload),
+    };
+
+    let _ = socket
+        .send(Message::Text(
+            serde_json::to_string(&update).unwrap().into(),
+        ))
+        .await;
+    Ok(())
 }
 
 async fn send_dump(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), axum::Error> {
@@ -242,6 +284,8 @@ async fn send_dump(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
         ))
         .await
 }
+
+#[instrument(skip_all)]
 async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), axum::Error> {
     let tool_store = app.app_state.tools.clone();
 
@@ -256,6 +300,31 @@ async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
         })
         .collect();
 
+    // TODO: Only set this on change
+    let baseline = app.app_state.workflows.baseline.clone();
+    let shadow = if app.app_state.workflows.has_changes() {
+        Some(app.app_state.workflows.shadow.clone())
+    } else {
+        None
+    };
+
+    tracing::info!("Initial workflow name {}", app.app_state.workflows.editing);
+
+    let editor = EditorPatch::builder()
+        .name(app.app_state.workflows.editing.clone())
+        .shadow(shadow)
+        .baseline(baseline)
+        .build();
+
+    // tracing::info!("Sending editor patch {editor:?}");
+    // {
+    //     let txt = serde_json::to_string_pretty(&editor).unwrap();
+    //     tracing::info!("Editor patch txt: {txt}");
+    //     let patch: EditorPatch = serde_json::from_str(&txt).unwrap();
+    //
+    //     tracing::info!("round trip editor patch {patch:?}");
+    // }
+
     let state = StatePatch::builder()
         .app_data(app.app_state.data.clone())
         .tools(tool_store)
@@ -263,6 +332,7 @@ async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
         .prompt(app.app_state.prompt.clone())
         .task_count(app.app_state.task_count.load(Ordering::Relaxed))
         .config_state(app.app_state.state.clone())
+        .editor(editor)
         .build();
 
     let update = ClientUpdate {

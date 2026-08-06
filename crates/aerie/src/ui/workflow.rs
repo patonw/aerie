@@ -74,7 +74,7 @@ pub fn get_subgraph_style() -> SnarlStyle {
     }
 }
 
-#[derive(Clone, TypedBuilder)]
+#[derive(TypedBuilder, Debug, Clone, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ViewStack {
     pub root_id: egui::Id,
 
@@ -111,6 +111,28 @@ impl ViewStack {
         me
     }
 
+    pub fn from_graph(
+        name: &str,
+        graph: &ShadowGraph<WorkNode>,
+        path: impl Iterator<Item = NodeId>,
+    ) -> Self {
+        let mut me = Self::builder()
+            .root_id(egui::Id::new(graph.uuid))
+            .root_name(name.into())
+            .flavor(vector![Flavor::Simple])
+            .levels(vector![graph.clone()])
+            .passes(vector![0])
+            .build();
+
+        for id in path {
+            if me.enter(id).is_err() {
+                break;
+            }
+        }
+
+        me
+    }
+
     pub fn from_root(name: &str, workflow: Workflow) -> Self {
         Self::new(name, workflow, iter::empty())
     }
@@ -122,6 +144,11 @@ impl ViewStack {
     pub fn switch(&mut self, name: &str, workflow: Workflow) {
         let path = self.path.clone();
         *self = Self::new(name, workflow, path.into_iter());
+    }
+
+    pub fn switch_graph(&mut self, graph: &ShadowGraph<WorkNode>) {
+        let path = self.path.clone();
+        *self = Self::from_graph(&self.root_name, graph, path.into_iter());
     }
 
     pub fn is_empty(&self) -> bool {

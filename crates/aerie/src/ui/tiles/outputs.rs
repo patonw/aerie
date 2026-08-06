@@ -68,6 +68,7 @@ impl super::AppState {
                                     ui,
                                     |ui| ui.label(k),
                                     |ui| {
+                                        #[cfg(feature = "wip")]
                                         if ui.button(FLOPPY_DISK).on_hover_text("Save").clicked()
                                             && let Some(path) = rfd::FileDialog::new()
                                                 .set_directory(&self.state.output_dir)
