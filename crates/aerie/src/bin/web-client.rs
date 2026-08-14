@@ -1,3 +1,5 @@
+use std::hash::{DefaultHasher, Hash as _, Hasher as _};
+
 use aerie::{
     client::{ActionData, ClientAction, ClientUpdate, UpdateData},
     config::ConfigStateProxy,
@@ -6,12 +8,16 @@ use aerie::{
         state::{AppData, AppState, WorkflowState},
         workflow::ViewStack,
     },
-    workflow::store::WorkflowStoreStub,
+    workflow::{
+        runner::{ExecId, NodeStateMap},
+        store::WorkflowStoreStub,
+    },
 };
 use eframe::egui;
 use egui::Visuals;
 use egui_tiles::{LinearDir, TileId, Tree};
 use ewebsock::{WsEvent, WsReceiver, WsSender};
+use itertools::Itertools as _;
 
 // TODO: figure out how to manage different users
 // TODO: Save settings when changed
@@ -22,11 +28,12 @@ pub struct WebApp {
     connected: bool,
     dirty: bool,
     state: AppState,
+    node_states: NodeStateMap,
     tile_tree: Tree<Pane>,
 }
 
 impl WebApp {
-    pub fn new(ctx: &egui::Context) -> Self {
+    pub fn new(ctx: &egui::Context, node_states: NodeStateMap) -> Self {
         let content_rect = ctx.content_rect();
         egui_extras::install_image_loaders(&ctx);
         let mut fonts = egui::FontDefinitions::default();
@@ -38,7 +45,8 @@ impl WebApp {
             .session(Default::default())
             .build();
 
-        let workflows = WorkflowState::new(WorkflowStoreStub::default(), None);
+        let workflows = WorkflowState::new(WorkflowStoreStub::default(), None)
+            .with_node_state(node_states.clone());
         let state = AppState::builder()
             .data(data)
             .workflows(workflows)
@@ -50,6 +58,7 @@ impl WebApp {
             connected: false,
             dirty: false,
             state,
+            node_states,
             tile_tree: make_tile_tree(),
         }
     }
@@ -128,6 +137,10 @@ impl eframe::App for WebApp {
                                     );
                                 }
 
+                                if let Some(previews) = patch.previews {
+                                    self.state.workflows.previews.replace(previews);
+                                }
+
                                 if let Some(workflows) = patch.workflows {
                                     self.state.workflows.store.metadata = workflows;
                                 }
@@ -137,11 +150,18 @@ impl eframe::App for WebApp {
                                     .workflows
                                     .switch_workflow(&data.name, data.baseline);
                             }
+                            UpdateData::NodeState(events) => {
+                                for event in events {
+                                    self.node_states.handle_event(event);
+                                }
+                            }
                         }
                         // ctx.request_repaint();
                     }
                     WsEvent::Message(ewebsock::WsMessage::Text(txt)) => {
-                        if let Err(err) = serde_json::from_str::<ClientUpdate>(&txt) {
+                        let jd = &mut serde_json::Deserializer::from_str(&txt);
+                        let result: Result<ClientUpdate, _> = serde_path_to_error::deserialize(jd);
+                        if let Err(err) = result {
                             log::warn!("This did not parse: {err:?}",);
                         }
                     }
@@ -180,12 +200,16 @@ impl eframe::App for WebApp {
                 ev @ EnterSubgraph(node_id) => {
                     self.state.workflows.view_stack.enter(node_id).unwrap();
                     self.state.workflows.viewer = None;
+
                     events.push(ev);
                 }
                 ev @ LeaveSubgraph(levels) => {
                     if !self.state.workflows.view_stack.is_empty() {
                         self.state.workflows.view_stack.exit(levels).unwrap();
                         self.state.workflows.viewer = None;
+
+                        log::info!("root id: {:?}", self.state.workflows.view_stack.exec_ids());
+
                         events.push(ev);
                     }
                 }
@@ -243,8 +267,9 @@ fn main() -> anyhow::Result<()> {
                     ctx.request_repaint();
                 }
             });
+            let node_states = NodeStateMap::from_capacity(64);
 
-            Ok(Box::new(WebApp::new(&cc.egui_ctx)))
+            Ok(Box::new(WebApp::new(&cc.egui_ctx, node_states)))
         }),
     )
     .map_err(|e| anyhow::anyhow!("Problem running app: {e:?}"))?;
@@ -263,6 +288,8 @@ fn main() {
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
     let web_options = eframe::WebOptions::default();
+
+    let node_states = NodeStateMap::from_capacity(64);
 
     spawn_local(async {
         let document = web_sys::window()
@@ -296,7 +323,7 @@ fn main() {
                         ctx.request_repaint();
                     })
                     .forget();
-                    Ok(Box::new(WebApp::new(&cc.egui_ctx)))
+                    Ok(Box::new(WebApp::new(&cc.egui_ctx, node_states)))
                 }),
             )
             .await;

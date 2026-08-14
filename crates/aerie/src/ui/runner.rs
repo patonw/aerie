@@ -27,6 +27,7 @@ impl super::AppState {
     pub fn exec_workflow(&mut self) {
         let mut target = self.workflows.view_stack.root_snarl().unwrap();
         let task_count_ = self.task_count.clone();
+        task_count_.fetch_add(1, Ordering::Relaxed);
 
         let prompt = self.prompt.clone();
 
@@ -127,7 +128,6 @@ impl super::AppState {
 
         thread::spawn(move || {
             let started = SystemTime::now();
-            task_count_.fetch_add(1, Ordering::Relaxed);
             running.store(true, std::sync::atomic::Ordering::Relaxed);
             defer! {
                 task_count_.fetch_sub(1, Ordering::Relaxed);

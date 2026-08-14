@@ -4,15 +4,15 @@ use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use glob::{MatchOptions, Pattern};
 use im::OrdSet;
 use itertools::{EitherOrBoth, Itertools};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap},
-    hash::{DefaultHasher, Hash as _, Hasher as _},
     ops::Deref,
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
+use tokio::sync::broadcast;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -22,6 +22,7 @@ use crate::workflow::{
     nodes::{Fallback, Flavor, Select},
 };
 use crate::{
+    events::NodeStateEvent,
     utils::ImmutableMapExt as _,
     workflow::{GraphId, Value, WorkflowError},
 };
@@ -31,9 +32,59 @@ pub type RunOutput = Arc<ArcSwap<im::OrdMap<String, crate::workflow::Value>>>;
 // A deeply nested subgraph can be run multiple times if a parent iterates.
 // Each run must be independently tracked.
 // Furthermore, the execution subtrees for iterations must be entirely independent.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-#[serde(into = "(uuid::Uuid, usize)")]
-pub struct ExecId(pub u64, pub u64, pub usize);
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(from = "(uuid::Uuid, usize)", into = "(uuid::Uuid, usize)")]
+pub struct ExecId(pub u64, pub u64, pub usize); // TODO: usize -> u64
+
+impl std::fmt::Display for ExecId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ExecId({}.{})", uuid::Uuid::from(*self), self.2)
+    }
+}
+
+// impl Serialize for ExecId {
+//     fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         let first = Uuid::from_u64_pair(self.0, self.1);
+//
+//         let mut t = ser.serialize_tuple(2)?;
+//         t.serialize_element(&first)?;
+//         t.serialize_element(&self.2)?;
+//
+//         t.end()
+//     }
+// }
+//
+// struct ExecIdVisitor;
+//
+// impl<'de> Visitor<'de> for ExecIdVisitor {
+//     type Value = ExecId;
+//
+//     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+//         formatter.write_str("An Execid")
+//     }
+//
+//     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+//     where
+//         A: serde::de::SeqAccess<'de>,
+//     {
+//         let first: Uuid = seq.next_element()?.unwrap();
+//         let second: usize = seq.next_element()?.unwrap();
+//         let u64_pair = first.as_u64_pair();
+//         Ok(ExecId(u64_pair.0, u64_pair.1, second))
+//     }
+// }
+//
+// impl<'de> Deserialize<'de> for ExecId {
+//     fn deserialize<D>(des: D) -> Result<Self, D::Error>
+//     where
+//         D: serde::Deserializer<'de>,
+//     {
+//         des.deserialize_tuple(2, ExecIdVisitor)
+//     }
+// }
 
 impl Default for ExecId {
     fn default() -> Self {
@@ -60,6 +111,14 @@ impl From<ExecId> for (uuid::Uuid, usize) {
     }
 }
 
+impl From<(uuid::Uuid, usize)> for ExecId {
+    fn from(value: (uuid::Uuid, usize)) -> Self {
+        let mut this = Self::from(value.0);
+        this.2 = value.1;
+        this
+    }
+}
+
 impl From<ExecId> for uuid::Uuid {
     fn from(value: ExecId) -> Self {
         uuid::Uuid::from_u64_pair(value.0, value.1)
@@ -76,13 +135,18 @@ impl ExecId {
     }
 
     pub fn scope(&self, graph_id: GraphId, pass: usize) -> Self {
-        let mut s = DefaultHasher::new();
-        self.hash(&mut s);
-        graph_id.hash(&mut s);
-        // pass.hash(&mut s);
+        use sha3::{Digest, Sha3_256};
+
+        let mut hasher = Sha3_256::new();
+        hasher.update(Uuid::from(*self).as_bytes());
+        hasher.update((self.2 as u64).to_be_bytes());
+        hasher.update(graph_id.0.as_bytes());
+        let hash = hasher.finalize();
+        let lower = u64::from_be_bytes(hash[..size_of::<u64>()].try_into().unwrap());
+
         let mut that = *self;
 
-        that.1 = s.finish();
+        that.1 = lower;
         that.2 = pass;
         that
     }
@@ -100,7 +164,7 @@ pub struct WorkflowRun {
     pub outputs: RunOutput,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum ExecState {
     Waiting(im::OrdSet<NodeId>),
     Ready,
@@ -134,17 +198,71 @@ impl std::fmt::Debug for ExecState {
     }
 }
 
-type GraphNodePass = (ExecId, NodeId);
+pub type GraphNodePass = (ExecId, NodeId);
 
 /// A global cache of node execution states across all graphs and subgraphs
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct NodeStateMap {
+    // TODO: This needs to be a more active object with change notifications
     pub states: Arc<ArcSwap<im::OrdMap<GraphNodePass, ExecState>>>,
     pub limits: Arc<ArcSwap<im::OrdMap<ExecId, usize>>>,
+
+    pub tx: broadcast::Sender<NodeStateEvent>,
+}
+
+impl Default for NodeStateMap {
+    fn default() -> Self {
+        Self::from_capacity(8)
+    }
 }
 
 impl NodeStateMap {
+    pub fn from_capacity(cap: usize) -> Self {
+        let (tx, _rx) = broadcast::channel(cap);
+        Self::new(tx)
+    }
+
+    pub fn new(tx: broadcast::Sender<NodeStateEvent>) -> Self {
+        Self {
+            states: Default::default(),
+            limits: Default::default(),
+            tx,
+        }
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<NodeStateEvent> {
+        self.tx.subscribe()
+    }
+
+    pub fn handle_event(&self, event: NodeStateEvent) -> anyhow::Result<()> {
+        match event {
+            NodeStateEvent::Clear => {
+                self.clear();
+            }
+            NodeStateEvent::Reset(exec_id) => {
+                self.reset(exec_id);
+            }
+            NodeStateEvent::Remove(exec_id, node_id) => {
+                self.view(exec_id).remove(node_id);
+            }
+            NodeStateEvent::Update(exec_id, node_id, exec_state) => {
+                self.view(exec_id).insert(node_id, exec_state);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn event_loop(&self) -> anyhow::Result<()> {
+        let mut rx = self.subscribe();
+        loop {
+            let event = rx.recv().await?;
+            self.handle_event(event)?;
+        }
+    }
+
     pub fn clear(&self) {
+        let _ = self.tx.send(NodeStateEvent::Clear);
         self.states.store(Default::default());
         self.limits.store(Default::default());
     }
@@ -161,6 +279,7 @@ impl NodeStateMap {
     }
 
     pub fn reset(&self, exec_id: ExecId) {
+        let _ = self.tx.send(NodeStateEvent::Reset(exec_id));
         self.states.rcu(|states| {
             im::OrdMap::from_iter(
                 states
@@ -178,6 +297,32 @@ impl NodeStateMap {
                     .map(|(id, limit)| (*id, *limit)),
             )
         });
+    }
+
+    pub fn extend(&mut self, other: impl IntoIterator<Item = (GraphNodePass, ExecState)>) {
+        let other = other.into_iter().collect_vec();
+        let mut limits = self.limits.load_full().deref().clone();
+
+        self.states.rcu(|states| {
+            let mut data = Arc::deref(states).clone();
+            for ((exec_id, node_id), node_state) in other.iter() {
+                let limit_id = ExecId(exec_id.0, exec_id.1, 0);
+                let current_pass = exec_id.2;
+
+                // TODO: reset limit depending on state
+                limits
+                    .entry(limit_id)
+                    .and_modify(|v: &mut usize| *v = current_pass.max(*v))
+                    .or_insert(current_pass);
+
+                data.insert((*exec_id, *node_id), node_state.clone());
+            }
+
+            data
+        });
+
+        // This is problematic for atomicity. Need to switch to a single ArcSwap containing both.
+        self.limits.store(Arc::new(limits));
     }
 }
 
@@ -222,6 +367,10 @@ impl NodeStateView {
     }
 
     pub fn remove(&self, node: NodeId) {
+        let _ = self
+            .data
+            .tx
+            .send(NodeStateEvent::Remove(self.exec_id, node));
         self.data.states.rcu(|states| {
             // nodes.iter().fold(states.as_ref().clone(), |s, n| {
             //     s.without(&(self.graph_id, *n, self.pass))
@@ -231,6 +380,11 @@ impl NodeStateView {
     }
 
     pub fn insert(&self, node: NodeId, value: ExecState) {
+        let _ = self
+            .data
+            .tx
+            .send(NodeStateEvent::Update(self.exec_id, node, value.clone()));
+
         // TODO: Less logging
         if matches!(value, ExecState::Done(_)) {
             tracing::trace!(

@@ -440,6 +440,7 @@ impl AppFactory {
                 });
             }
         });
+
         let flow_store = (self.workstore_fn)(WorkflowStoreDir::init(workflow_dir, true)?);
         let flow_state =
             WorkflowState::new(flow_store.clone(), Some(config_state.workflow.clone()));

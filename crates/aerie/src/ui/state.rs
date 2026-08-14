@@ -546,6 +546,11 @@ impl<W: WorkflowStore> WorkflowState<W> {
         }
     }
 
+    pub fn with_node_state(mut self, node_state: NodeStateMap) -> Self {
+        self.node_state = node_state;
+        self
+    }
+
     pub fn has_changes(&self) -> bool {
         // if cfg!(any(feature = "web-ui", feature = "backend")) {
         //     if self.shadow.fast_eq(&self.baseline) {

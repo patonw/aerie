@@ -1028,7 +1028,7 @@ async fn multi_turn_completion(
                     }
                 },
                 Ok(_) => {
-                    tracing::trace!("Unhandled streamed content {content:?}");
+                    tracing::trace!(?content, "Unhandled streamed content");
                 }
                 err => {
                     err?;
@@ -1041,6 +1041,13 @@ async fn multi_turn_completion(
         }
 
         let done = tool_calls.is_empty();
+
+        tracing::trace!(
+            ?texts,
+            ?reasonings,
+            ?tool_calls,
+            "Finished streaming completion"
+        );
 
         if let Some(msg) = contents_to_message(&texts, &reasonings, &tool_calls) {
             chat_history.push(msg.clone());

@@ -1,8 +1,9 @@
 #[cfg(feature = "native")]
 pub mod agent;
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", feature = "ui"))]
 pub mod app;
 pub mod chat;
+#[cfg(feature = "ui")]
 pub mod client;
 pub mod config;
 pub mod events;

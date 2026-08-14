@@ -1,5 +1,4 @@
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
-use std::sync::Arc;
 use std::{borrow::Cow, convert::identity, sync::atomic::Ordering, time::Duration};
 
 use egui::{Align2, Color32, ComboBox, Label, RichText};

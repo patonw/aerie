@@ -3,13 +3,14 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use typed_builder::TypedBuilder;
+use uuid::Uuid;
 
 use crate::{
     config::ConfigState,
-    events::AppEvent,
+    events::{AppEvent, NodeStateEvent},
     toolbox::ToolStore,
     ui::{state::AppData, workflow::ViewStack},
-    workflow::{ShadowMeta, Workflow},
+    workflow::{ShadowMeta, Value, Workflow, runner::ExecId},
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -76,6 +77,9 @@ pub struct StatePatch {
 
     #[builder(default, setter(strip_option))]
     pub editor: Option<EditorPatch>,
+
+    #[builder(default)]
+    pub previews: Option<Vec<((ExecId, Uuid), Value)>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, TypedBuilder)]
@@ -86,13 +90,14 @@ pub struct SwitchData {
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize, Clone)]
-// #[serde(tag = "type")]
 pub enum UpdateData {
     Dump(StateDump),
     Patch(StatePatch),
     Switch(SwitchData),
+    NodeState(Vec<NodeStateEvent>),
 }
 
+/// Some serialization formats need a top-level object to wrap the enum
 #[derive(Serialize, Deserialize, Clone)]
 #[skip_serializing_none]
 pub struct ClientUpdate {

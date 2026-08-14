@@ -26,7 +26,7 @@ use crate::{
     ui::shortcuts::{ShortcutHandler, squelch},
     utils::ErrorDistiller as _,
     workflow::{
-        EditContext, GraphId, MetaNode, ShadowGraph, StandardTheme, WorkNode, Workflow,
+        DynNode, EditContext, GraphId, MetaNode, ShadowGraph, StandardTheme, WorkNode, Workflow,
         nodes::{
             ChatContext, ChatNode, CommentNode, Demote, EnvironmentNode, Fallback, Flavor,
             GateNode, GraphSubmenu, InvokeTool, Matcher, Number, OutputNode, Panic, Preview,
@@ -125,7 +125,8 @@ impl ViewStack {
             .build();
 
         for id in path {
-            if me.enter(id).is_err() {
+            if let Err(err) = me.enter(id) {
+                tracing::error!(?err, "Could not restore view stack");
                 break;
             }
         }
@@ -148,7 +149,7 @@ impl ViewStack {
 
     pub fn switch_graph(&mut self, graph: &ShadowGraph<WorkNode>) {
         let path = self.path.clone();
-        *self = Self::from_graph(&self.root_name, graph, path.into_iter());
+        *self = Self::from_graph(&self.root_name, graph, path.into_iter().rev());
     }
 
     pub fn is_empty(&self) -> bool {
@@ -242,22 +243,28 @@ impl ViewStack {
     }
 
     pub fn enter(&mut self, node: NodeId) -> anyhow::Result<()> {
-        let meta = self
-            .leaf()
-            .nodes
-            .get(&node)
-            .cloned()
-            .context("No such node in parent graph")?;
+        let meta = self.leaf().nodes.get(&node).cloned().context(format!(
+            "No such node {node:?} in graph {:?}",
+            self.leaf().uuid,
+        ))?;
 
         let container = meta.value;
         if !container.is_subgraph() {
-            anyhow::bail!("Not a subgraph");
+            anyhow::bail!(
+                "Node {node:?} {container:?} is not a subgraph of {:?}",
+                self.leaf().uuid
+            );
         }
 
         let Some(subgraph) = container.0.downcast_ref::<Subgraph>() else {
             anyhow::bail!("Could not extract subgraph");
         };
 
+        tracing::info!(
+            "Entering subgraph {:?} from {:?} node {node:?}",
+            subgraph.uuid(),
+            self.leaf().uuid
+        );
         self.path.push_front(node);
         self.flavor.push_front(subgraph.flavor);
         self.passes.push_front(0);

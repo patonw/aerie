@@ -7,7 +7,10 @@ use uuid::Uuid;
 use crate::{
     config::Preferences,
     utils::PriorityQueue,
-    workflow::{AnyPin, GraphId, ShadowGraph, ValueKind, WorkNode, Workflow},
+    workflow::{
+        AnyPin, GraphId, ShadowGraph, ValueKind, WorkNode, Workflow,
+        runner::{ExecId, ExecState},
+    },
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -89,3 +92,18 @@ impl Ord for AppEvent {
 }
 
 pub type AppEvents = PriorityQueue<AppEvent>;
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum NodeStateEvent {
+    /// Drops all execution data
+    Clear,
+
+    /// Drops node states for a specific execution
+    Reset(ExecId),
+
+    /// Drop a single node from a specific execution
+    Remove(ExecId, NodeId),
+
+    /// Update the state of a node within an execution
+    Update(ExecId, NodeId, ExecState),
+}

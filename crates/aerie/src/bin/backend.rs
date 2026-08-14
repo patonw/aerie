@@ -150,6 +150,8 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
     let dump_result = send_dump(&app, &mut socket).await;
     // let _ = send_switch(&app.app_state.workflows, &mut socket).await;
 
+    let mut node_rx = app.app_state.workflows.node_state.subscribe();
+
     let mut waiting = true;
     let mut interval = tokio::time::interval(Duration::from_millis(1000));
     let task_count = app.app_state.task_count.clone();
@@ -166,10 +168,29 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
         tokio::select! {
             // TODO: use broadcast get updates for chat scratch
             _ = interval.tick() => {
-                if waiting  && task_count.load(Ordering::Relaxed) == 0 {
-                    tracing::info!("Finished waiting message");
-                    waiting = false;
+                if waiting {
+                    waiting = task_count.load(Ordering::Relaxed) > 0;
                     let _ = patch_all(&app, &mut socket).await;
+                }
+            }
+            ev = node_rx.recv() => {
+                match ev {
+                    Ok(ev) => {
+                        tracing::info!(?ev, "Sending NodeStateEvent");
+
+                        let update = ClientUpdate {
+                            update: UpdateData::NodeState(vec![ev])
+                        };
+
+                        let _ = socket
+                            .send(Message::Text(
+                                serde_json::to_string(&update).unwrap().into(),
+                            ))
+                        .await;
+                    }
+                    Err(err) => {
+                        tracing::warn!(?err, "Failed while receiving node state broadcast");
+                    }
                 }
             }
             res = socket.recv() => {
@@ -201,6 +222,7 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
                                                 },
                                                 ev @ (EnterSubgraph(_) | LeaveSubgraph(_) | NodesChanged(_, _) | GraphSnapshot(_) | WorkflowSnapshot(_)) => {
                                                     app.app_state.events.insert(ev);
+
                                                 }
                                                 ev => {
                                                     app.app_state.events.insert(ev);
@@ -211,9 +233,13 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
 
                                         app.app_state.handle_events();
 
+                                        let num_tasks = task_count.load(Ordering::Relaxed);
+                                        tracing::debug!("Handled client events. Waiting for {num_tasks} tasks.");
+
                                         if need_patch {
-                                            waiting = task_count.load(Ordering::Relaxed) > 0;
+                                            waiting =  num_tasks > 0;
                                             let _ = patch_all(&app, &mut socket).await;
+
                                         }
                                     }
                                 }
@@ -309,22 +335,13 @@ async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
     };
 
     tracing::info!("Initial workflow name {}", app.app_state.workflows.editing);
-
     let editor = EditorPatch::builder()
         .name(app.app_state.workflows.editing.clone())
         .shadow(shadow)
         .baseline(baseline)
         .build();
 
-    // tracing::info!("Sending editor patch {editor:?}");
-    // {
-    //     let txt = serde_json::to_string_pretty(&editor).unwrap();
-    //     tracing::info!("Editor patch txt: {txt}");
-    //     let patch: EditorPatch = serde_json::from_str(&txt).unwrap();
-    //
-    //     tracing::info!("round trip editor patch {patch:?}");
-    // }
-
+    let previews = app.app_state.workflows.previews.into_vec();
     let state = StatePatch::builder()
         .app_data(app.app_state.data.clone())
         .tools(tool_store)
@@ -333,15 +350,19 @@ async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
         .task_count(app.app_state.task_count.load(Ordering::Relaxed))
         .config_state(app.app_state.state.clone())
         .editor(editor)
+        // .node_state(Some(node_state))
+        .previews(Some(previews))
         .build();
 
     let update = ClientUpdate {
         update: UpdateData::Patch(state),
     };
 
-    socket
-        .send(Message::Text(
-            serde_json::to_string(&update).unwrap().into(),
-        ))
-        .await
+    match serde_json::to_string(&update) {
+        Ok(payload) => socket.send(Message::Text(payload.into())).await,
+        Err(err) => {
+            tracing::error!(?err, "Whoops");
+            Ok(())
+        }
+    }
 }

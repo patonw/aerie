@@ -42,6 +42,7 @@ impl super::AppState {
             // Snarl will draw our persisted positions and sizes.
             let mut snarl = self.workflows.view_stack.leaf_snarl().unwrap();
 
+            let exec_id = self.workflows.view_stack.exec_id().map(uuid::Uuid::from);
             let shadow = self.workflows.view_stack.leaf();
             let viewer = self.workflow_viewer();
 
@@ -66,9 +67,11 @@ impl super::AppState {
             if cfg!(feature = "debug-ui") {
                 let egui::Pos2 { x, y } = ui.max_rect().right_top();
                 let over_rect =
-                    egui::Rect::from_two_pos(egui::pos2(x - 64.0, y), egui::pos2(x, y + 20.0));
-                let scale_debug =
-                    egui::Label::new(format!("Scale: {:.02}", viewer.transform.scaling));
+                    egui::Rect::from_two_pos(egui::pos2(x - 200.0, y), egui::pos2(x, y + 20.0));
+                let scale_debug = egui::Label::new(format!(
+                    "Scale: {:.02}\n{exec_id:?}",
+                    viewer.transform.scaling
+                ));
                 ui.place(over_rect, scale_debug);
             }
 

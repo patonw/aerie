@@ -312,7 +312,7 @@ impl WorkflowStore for WorkflowStoreDir {
         CachedDirStore::rename(self, old_name, new_name)
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self))]
     fn backup(&self, name: &str) -> anyhow::Result<()> {
         use std::hash::{Hash, Hasher};
 

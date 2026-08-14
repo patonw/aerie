@@ -15,7 +15,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-use web_time::{Instant, SystemTime};
+use web_time::SystemTime;
 
 #[cfg(feature = "wip")]
 use crate::rmcp::model::Tool;
@@ -774,10 +774,10 @@ pub fn tool_glob(pattern: String) -> Result<Pattern, PatternError> {
     Pattern::new(&pattern)
 }
 
-#[derive(Builder)]
+#[derive(Builder, Serialize, Deserialize)]
 #[builder(
     name = "AgentSpec",
-    derive(Debug, Hash, PartialEq, Eq, Serialize),
+    derive(Debug, Hash, PartialEq, Eq, Serialize, Deserialize),
     field(public)
 )]
 // For use via the derived builder, not directly
