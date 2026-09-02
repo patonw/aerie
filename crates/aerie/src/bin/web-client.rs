@@ -1,4 +1,4 @@
-use std::hash::{DefaultHasher, Hash as _, Hasher as _};
+use std::{sync::Arc, time::Duration};
 
 use aerie::{
     client::{ActionData, ClientAction, ClientUpdate, UpdateData},
@@ -6,10 +6,10 @@ use aerie::{
     ui::{
         Pane,
         state::{AppData, AppState, WorkflowState},
-        workflow::ViewStack,
     },
+    utils::ErrorDistiller as _,
     workflow::{
-        runner::{ExecId, NodeStateMap},
+        runner::{NodeStateMap, WorkflowRun},
         store::WorkflowStoreStub,
     },
 };
@@ -17,7 +17,6 @@ use eframe::egui;
 use egui::Visuals;
 use egui_tiles::{LinearDir, TileId, Tree};
 use ewebsock::{WsEvent, WsReceiver, WsSender};
-use itertools::Itertools as _;
 
 // TODO: figure out how to manage different users
 // TODO: Save settings when changed
@@ -26,7 +25,6 @@ use itertools::Itertools as _;
 pub struct WebApp {
     sock: Option<(WsSender, WsReceiver)>,
     connected: bool,
-    dirty: bool,
     state: AppState,
     node_states: NodeStateMap,
     tile_tree: Tree<Pane>,
@@ -34,7 +32,6 @@ pub struct WebApp {
 
 impl WebApp {
     pub fn new(ctx: &egui::Context, node_states: NodeStateMap) -> Self {
-        let content_rect = ctx.content_rect();
         egui_extras::install_image_loaders(&ctx);
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
@@ -56,7 +53,6 @@ impl WebApp {
         Self {
             sock: None,
             connected: false,
-            dirty: false,
             state,
             node_states,
             tile_tree: make_tile_tree(),
@@ -67,8 +63,9 @@ impl WebApp {
 impl eframe::App for WebApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.style_mut(|style| style.visuals = Visuals::dark());
+        let errors = self.state.errors.clone();
         let mut task_update = None;
-        if let Some((tx, rx)) = &mut self.sock {
+        if let Some((_tx, rx)) = &mut self.sock {
             while let Some(event) = rx.try_recv() {
                 // log::info!("New event: {event:?}");
                 match event {
@@ -90,7 +87,9 @@ impl eframe::App for WebApp {
                         if let Ok(payload) = serde_json::from_str::<ClientUpdate>(&txt) =>
                     {
                         log::info!("Got client update");
-                        match payload.update {
+                        task_update = payload.task_count;
+                        let update_data = payload.update;
+                        match update_data {
                             UpdateData::Dump(dump) => {
                                 self.state.tools = dump.tools;
                                 self.state.data = dump.app_data;
@@ -102,8 +101,6 @@ impl eframe::App for WebApp {
                                 log::info!("Updated state from server dump");
                             }
                             UpdateData::Patch(patch) => {
-                                task_update = patch.task_count;
-
                                 if let Some(tools) = patch.tools {
                                     self.state.tools = tools;
                                 }
@@ -121,7 +118,9 @@ impl eframe::App for WebApp {
                                 }
 
                                 if let Some(config_state) = patch.config_state {
-                                    self.state.state.update(|state| *state = config_state);
+                                    errors.distil(
+                                        self.state.state.update(|state| *state = config_state),
+                                    );
                                 }
 
                                 // log::info!("Editor patch? {:?}", &patch.editor);
@@ -152,7 +151,41 @@ impl eframe::App for WebApp {
                             }
                             UpdateData::NodeState(events) => {
                                 for event in events {
-                                    self.node_states.handle_event(event);
+                                    errors.distil(self.node_states.handle_event(event));
+                                }
+                            }
+                            UpdateData::Event(ev) => {
+                                use aerie::events::ExecEvent::*;
+                                use aerie::events::WorkflowEvent::*;
+
+                                let runs = &mut self.state.workflows.outputs;
+
+                                match ev {
+                                    Exec(Start(_, name, started)) => {
+                                        let entry = WorkflowRun::builder()
+                                            .started(started)
+                                            .duration(Default::default())
+                                            .workflow(name)
+                                            .outputs(Default::default())
+                                            .build();
+
+                                        runs.push_back(entry);
+                                        if runs.len() > 128 {
+                                            *runs = runs.skip(runs.len() - 128);
+                                        }
+                                    }
+                                    Exec(Tick(_, millis)) | Exec(Finish(_, millis)) => {
+                                        runs.back_mut()
+                                            .unwrap()
+                                            .duration
+                                            .store(Arc::new(Duration::from_millis(millis)));
+                                    }
+                                    Exec(Output(_, label, value)) => {
+                                        runs.back_mut()
+                                            .unwrap()
+                                            .outputs
+                                            .rcu(|it| it.update(label.clone(), value.clone()));
+                                    }
                                 }
                             }
                         }
@@ -167,7 +200,7 @@ impl eframe::App for WebApp {
                     }
                     WsEvent::Message(ewebsock::WsMessage::Binary(bytes)) => {
                         let data = postcard::from_bytes::<ClientUpdate>(&bytes);
-                        log::info!("Got client update");
+                        tracing::info!("Got binary update: {:?}", data);
                     }
                     unk => {
                         log::warn!("Got unknonwn message: {unk:?}");
@@ -227,7 +260,7 @@ impl eframe::App for WebApp {
 
         if !events.is_empty()
             && self.connected
-            && let Some((tx, rx)) = &mut self.sock
+            && let Some((tx, _rx)) = &mut self.sock
         {
             let action = ActionData::Dispatch(events);
 
@@ -240,7 +273,6 @@ impl eframe::App for WebApp {
             self.state
                 .task_count
                 .store(task_count, std::sync::atomic::Ordering::Relaxed);
-            task_update = None;
         }
     }
 }

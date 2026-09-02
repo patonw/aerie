@@ -2,12 +2,13 @@ use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular::{DOWNLOAD_SIMPLE, MAGIC_WAND, PENCIL, ROCKET, TRASH, UPLOAD_SIMPLE};
 use std::{collections::BTreeSet, sync::atomic::Ordering};
 
-use crate::{events::AppEvent, utils::ErrorDistiller as _};
+use crate::{events::AppEvent, utils::ErrorDistiller as _, utils::spawn_wherever};
 
 impl super::AppState {
     pub fn nav_ui(&mut self, ui: &mut egui::Ui) {
         let session = self.data.session.clone();
         let errors = self.errors.clone();
+        let events = self.events.clone();
 
         let running = self.task_count.load(Ordering::Relaxed) > 0;
         egui::CentralPanel::default().show_inside(ui, |ui| {
@@ -26,6 +27,7 @@ impl super::AppState {
                         }
                         editor.request_focus();
                     } else {
+                        // TODO: refresh on remote import/rename
                         egui::ComboBox::from_id_salt("session_list")
                             .wrap()
                             .width(ui.available_width())
@@ -47,7 +49,6 @@ impl super::AppState {
                             });
                     }
 
-                    #[cfg(feature = "wip")]
                     StripBuilder::new(ui)
                         .size(Size::exact(16.0))
                         .vertical(|mut strip| {
@@ -70,50 +71,69 @@ impl super::AppState {
                                                     Some(self.data.session.name());
                                             }
                                         });
-                                        #[cfg(feature = "wip")]
                                         strip.cell(|ui| {
                                             if ui
                                                 .button(DOWNLOAD_SIMPLE)
                                                 .on_hover_text("Import")
                                                 .clicked()
-                                                && let Some(path) = rfd::FileDialog::new()
-                                                    .set_directory(&self.state.export_dir)
-                                                    .pick_file()
                                             {
-                                                self.state.set_export_dir(path.parent());
-                                                errors.distil(self.data.session.import(&path));
+                                                spawn_wherever(async move {
+                                                    if let Some(fh) = rfd::AsyncFileDialog::new()
+                                                        .pick_file()
+                                                        .await
+                                                    {
+                                                        tracing::info!(?fh, "picked ifle");
+                                                        let data = fh.read().await;
+
+                                                        // TODO: by event
+                                                        // #[cfg(feature = "native")]
+                                                        // self.state.set_export_dir(fh.path().parent());
+
+                                                        events.insert(AppEvent::ImportSession(
+                                                            fh.file_name(),
+                                                            data,
+                                                        ));
+                                                    }
+                                                });
                                             }
                                         });
-                                        #[cfg(feature = "wip")]
                                         strip.cell(|ui| {
                                             if ui
                                                 .button(UPLOAD_SIMPLE)
                                                 .on_hover_text("Export")
                                                 .clicked()
-                                                && let Some(path) = rfd::FileDialog::new()
-                                                    .set_directory(&self.state.export_dir)
-                                                    .set_file_name(format!(
-                                                        "{}.yml",
-                                                        session.name()
-                                                    ))
-                                                    .save_file()
                                             {
-                                                self.state.set_export_dir(path.parent());
-                                                errors.distil(self.data.session.export(&path));
+                                                // TODO: by event
+                                                // self.state.set_export_dir(path.parent());
+                                                // errors.distil(self.data.session.export(&path));
+
+                                                let name = session.name();
+                                                if let Some(data) =
+                                                    errors.distil(session.to_bytes())
+                                                {
+                                                    spawn_wherever(async move {
+                                                        if let Some(fh) =
+                                                            rfd::AsyncFileDialog::new()
+                                                                // .set_directory(&self.state.export_dir)
+                                                                .set_file_name(format!(
+                                                                    "{name}.yml"
+                                                                ))
+                                                                .save_file()
+                                                                .await
+                                                        {
+                                                            tracing::info!(?fh, "picked file");
+                                                            fh.write(&data).await.unwrap();
+                                                        }
+                                                    });
+                                                }
                                             }
                                         });
-                                        #[cfg(feature = "wip")]
                                         strip.cell(|ui| {
                                             ui.menu_button(TRASH, |ui| {
                                                 if ui.button("OK").clicked() {
-                                                    let old_name = session.name();
-                                                    errors.distil(self.data.session.switch(""));
-                                                    errors.distil(
-                                                        self.data.session.delete(&old_name),
-                                                    );
-                                                    self.state
-                                                        .set_session(self.data.session.name());
-                                                    ui.close();
+                                                    self.events.insert(AppEvent::DeleteSession(
+                                                        session.name(),
+                                                    ));
                                                 }
                                             })
                                             .response
@@ -157,7 +177,9 @@ impl super::AppState {
                         |ui| {
                             errors.distil(self.data.session.transform(|history| {
                                 let mut head = history.head.as_str();
-                                ui.selectable_value(&mut head, cursor, cursor);
+                                if ui.selectable_value(&mut head, cursor, cursor).clicked() {
+                                    self.events.insert(AppEvent::SwitchBranch(head.to_string()));
+                                }
                                 Ok(history.switch(head))
                             }));
                         },
@@ -186,7 +208,9 @@ impl super::AppState {
                 |ui| {
                     errors.distil(self.data.session.transform(|history| {
                         let mut head = history.head.as_str();
-                        ui.selectable_value(&mut head, cursor, cursor);
+                        if ui.selectable_value(&mut head, cursor, cursor).clicked() {
+                            self.events.insert(AppEvent::SwitchBranch(head.to_string()));
+                        }
                         Ok(history.switch(head))
                     }));
                 },

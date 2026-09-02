@@ -1396,30 +1396,31 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "cached"
-version = "0.59.0"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53b6f5d101f0f6322c8646a45b7c581a673e476329040d97565815c2461dd0c4"
+checksum = "c5a6cf8262820194a1488ece477f5fb5ba9256ef25229d525470e71d6e9a5835"
 dependencies = [
+ "blocking",
  "cached_proc_macro",
  "cached_proc_macro_types",
  "directories",
- "hashbrown 0.16.1",
- "once_cell",
+ "hashbrown 0.17.1",
  "parking_lot 0.12.5",
+ "redb",
  "rmp-serde",
  "serde",
- "sled",
  "thiserror 2.0.18",
  "web-time",
 ]
 
 [[package]]
 name = "cached_proc_macro"
-version = "0.27.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ebcf9c75f17a17d55d11afc98e46167d4790a263f428891b8705ab2f793eca3"
+checksum = "ece0579b43cf6e927b3370c7d44359c7122e7e52b3ea635bc8484da571442edb"
 dependencies = [
  "darling 0.20.11",
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -1427,9 +1428,9 @@ dependencies = [
 
 [[package]]
 name = "cached_proc_macro_types"
-version = "0.1.1"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ade8366b8bd5ba243f0a58f036cc0ca8a2f069cff1a2351ef1cac6b083e16fc0"
+checksum = "f5813789573ae815c8b4be58c4428e0e7ae05f0227678ba9de332ded585b9159"
 
 [[package]]
 name = "calloop"
@@ -7813,6 +7814,15 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "redb"
+version = "4.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de6c3b63e007e90ce536ec2ae4690826136a20ec8dbbbb400daef1bb999d2e36"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

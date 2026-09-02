@@ -38,6 +38,8 @@ use crate::{
 // TODO: emit an App that impl eframe::App
 // also omit the customizers
 
+const APP_NAME: &str = "aerie";
+
 // A bunch of hooks instead of sensible refactoring.
 // Not sure how customizable this will be in practice yet.
 #[derive(TypedBuilder)]
@@ -135,7 +137,10 @@ pub struct App {
 }
 
 impl App {
-    async fn save_settings(settings: Arc<ArcSwap<Preferences>>, settings_path: impl AsRef<Path>) {
+    pub async fn save_settings(
+        settings: Arc<ArcSwap<Preferences>>,
+        settings_path: impl AsRef<Path>,
+    ) {
         use tokio::io::AsyncWriteExt as _;
 
         let text = settings.view(|s| toml::to_string(s).unwrap());
@@ -143,19 +148,29 @@ impl App {
         let mut file = tokio::fs::File::create(settings_path).await.unwrap();
         file.write_all(text.as_bytes()).await.unwrap();
     }
-}
 
-impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let next_workflow: Arc<ArcSwapOption<String>> = self.next_workflow.clone();
-        let next_prompt: Arc<ArcSwapOption<String>> = self.next_prompt.clone();
-        let next_images: Arc<ArcSwap<Vec<String>>> = self.next_images.clone();
-        let task_count = self.task_count.clone();
+    pub fn save_prefs_if_changed(&mut self) {
+        let rt = self.app_state.rt.clone();
+        let settings = self.app_state.data.prefs.clone();
+        let dirty = settings.view(|s| *s != *self.stored_settings);
 
-        let rt_ = self.app_state.rt.clone();
+        if dirty && self.debounce < Instant::now() {
+            // This will apply/save settings every n seconds *while* or *after* they have been changed
+            let settings__ = settings.clone();
+            let settings_path_ = self.settings_path.clone();
+            self.debounce = Instant::now() + Duration::from_secs(5);
 
-        let settings_ = self.app_state.data.prefs.clone();
+            log::info!("Settings changed, reloading agent");
 
+            rt.spawn(async move {
+                Self::save_settings(settings__, settings_path_).await;
+            });
+
+            self.stored_settings = settings.view(|s| Arc::new(s.clone()));
+        }
+    }
+
+    fn show(&mut self, ctx: &egui::Context) {
         let content_rect = ctx.content_rect();
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -214,22 +229,31 @@ impl eframe::App for App {
                 self.app_state.errors.discard();
             }
         }
+    }
 
-        let dirty = settings_.view(|s| *s != *self.stored_settings);
+    pub fn post_update(&mut self) {
+        let next_workflow: Arc<ArcSwapOption<String>> = self.next_workflow.clone();
+        let next_prompt: Arc<ArcSwapOption<String>> = self.next_prompt.clone();
+        let next_images: Arc<ArcSwap<Vec<String>>> = self.next_images.clone();
+        let task_count = self.task_count.clone();
+
+        let rt = self.app_state.rt.clone();
+        let settings = self.app_state.data.prefs.clone();
+        let dirty = settings.view(|s| *s != *self.stored_settings);
 
         if dirty && self.debounce < Instant::now() {
             // This will apply/save settings every n seconds *while* or *after* they have been changed
-            let settings__ = settings_.clone();
+            let settings__ = settings.clone();
             let settings_path_ = self.settings_path.clone();
             self.debounce = Instant::now() + Duration::from_secs(5);
 
             log::info!("Settings changed, reloading agent");
 
-            rt_.spawn(async move {
+            rt.spawn(async move {
                 Self::save_settings(settings__, settings_path_).await;
             });
 
-            self.stored_settings = settings_.view(|s| Arc::new(s.clone()));
+            self.stored_settings = settings.view(|s| Arc::new(s.clone()));
         }
 
         let running = task_count.load(Ordering::Relaxed) > 0;
@@ -252,9 +276,10 @@ impl eframe::App for App {
         };
 
         if let Some(next_workflow) = next_workflow {
+            tracing::info!(?next_workflow, "Running next workflow");
             self.app_state.workflows.switch(&next_workflow);
 
-            let autorun = settings_.view(|s| s.autoruns);
+            let autorun = settings.view(|s| s.autoruns);
             if self.app_state.run_count < autorun {
                 self.app_state.run_count += 1;
 
@@ -264,8 +289,15 @@ impl eframe::App for App {
                 self.app_state.exec_workflow();
             }
         }
+    }
+}
 
+impl eframe::App for App {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.show(ctx);
         prune_image_cache(ctx);
+
+        self.post_update();
     }
 }
 
@@ -277,8 +309,17 @@ impl AppFactory {
         let settings_ = app_state.data.prefs.clone();
         let stored_settings = settings_.load_full();
 
+        let next_workflow = app_state.agent_factory.next_workflow.clone();
+        let next_prompt = app_state.agent_factory.next_prompt.clone();
+        let next_images = app_state.agent_factory.next_images.clone();
+        let task_count = app_state.agent_factory.task_count.clone();
+
         Ok(App::builder()
             .app_state(app_state)
+            .next_workflow(next_workflow)
+            .next_prompt(next_prompt)
+            .next_images(next_images)
+            .task_count(task_count)
             .tile_tree(tile_tree)
             .min_size(self.min_size)
             .max_size(self.max_size)
@@ -290,7 +331,7 @@ impl AppFactory {
     pub fn run_ui(&self) -> Result<(), anyhow::Error> {
         let app = self.make_app().unwrap();
         eframe::run_native(
-            "aerie",
+            APP_NAME,
             self.ui_options(),
             Box::new(move |cc| {
                 let ctx = &cc.egui_ctx;
@@ -365,6 +406,7 @@ impl AppFactory {
         let next_prompt: Arc<ArcSwapOption<String>> = Default::default();
         let next_images: Arc<ArcSwap<Vec<String>>> = Default::default();
         let task_count: Arc<AtomicU16> = Default::default();
+
         let settings_path = self.resolve_settings();
         let state_path = if let Some(path) = &self.state_path {
             path.clone()

@@ -174,11 +174,10 @@ impl ImageResolver {
 }
 
 #[cached(
-    result = true,
     key = "String",
     convert = r#"{ format!("{}", path) }"#,
-    time = 300,
-    time_refresh = true
+    ttl_secs = 300,
+    refresh = true
 )]
 fn rig_image_from_path(
     path: &str,
@@ -208,11 +207,10 @@ fn rig_image_from_path(
 }
 
 #[cached(
-    result = true,
     key = "String",
     convert = r#"{ format!("{}", path) }"#,
-    time = 300,
-    time_refresh = true
+    ttl_secs = 300,
+    refresh = true
 )]
 fn data_uri_from_image_path(
     path: &str,
@@ -262,10 +260,10 @@ fn resolve_image_to_bytes(
 }
 
 #[cfg(feature = "fetch-image")]
-#[cached::proc_macro::io_cached(
+#[cached::proc_macro::concurrent_cached(
     disk = true,
-    time = 3600,
-    time_refresh = true,
+    ttl_secs = 3600,
+    refresh = true,
     key = "String",
     convert = r#"{ format!("{}", url) }"#,
     map_error = r##"|e| anyhow::Error::from(e)"##

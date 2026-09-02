@@ -14,6 +14,7 @@ use crate::{config::ConfigExt as _, rig, utils::ErrorDistiller as _};
 
 #[cfg(feature = "wip")]
 use crate::{
+    events::{ExecEvent, WorkflowEvent},
     utils::ImageResolver,
     workflow::{
         RootContext, RunContext,
@@ -25,6 +26,7 @@ use crate::{
 impl super::AppState {
     /// Runs the workflow currently being edited and updates nodes in the viewer with results.
     pub fn exec_workflow(&mut self) {
+        let tx = self.workflows.broadcast.clone();
         let mut target = self.workflows.view_stack.root_snarl().unwrap();
         let task_count_ = self.task_count.clone();
         task_count_.fetch_add(1, Ordering::Relaxed);
@@ -113,6 +115,11 @@ impl super::AppState {
         let duration: Arc<ArcSwap<Duration>> = Default::default();
         let started = chrono::offset::Local::now();
 
+        let _ = tx.send(WorkflowEvent::Exec(ExecEvent::Start(
+            exec_id,
+            self.workflows.editing.clone(),
+            started,
+        )));
         let entry = WorkflowRun::builder()
             .started(started)
             .duration(duration.clone())
@@ -125,6 +132,8 @@ impl super::AppState {
         if runs.len() > 128 {
             *runs = runs.skip(runs.len() - 128);
         }
+
+        let tx = tx.clone();
 
         thread::spawn(move || {
             let started = SystemTime::now();
@@ -139,7 +148,12 @@ impl super::AppState {
                     break;
                 }
 
-                duration.store(Arc::new(started.elapsed().unwrap_or_default()));
+                let dur = started.elapsed().unwrap_or_default();
+                let _ = tx.send(WorkflowEvent::Exec(ExecEvent::Tick(
+                    exec_id,
+                    dur.as_millis() as u64,
+                )));
+                duration.store(Arc::new(dur));
                 match exec.step(&mut target) {
                     Ok(false) => {
                         errors.distil(exec.root_finish().map_err(|e| e.into()));
@@ -158,11 +172,21 @@ impl super::AppState {
                         break;
                     };
 
+                    let _ = tx.send(WorkflowEvent::Exec(ExecEvent::Output(
+                        exec_id,
+                        label.clone(),
+                        value.clone(),
+                    )));
                     outputs.rcu(|it| it.update(label.clone(), value.clone()));
                 }
             }
 
-            duration.store(Arc::new(started.elapsed().unwrap_or_default()));
+            let dur = started.elapsed().unwrap_or_default();
+            let _ = tx.send(WorkflowEvent::Exec(ExecEvent::Finish(
+                exec_id,
+                dur.as_millis() as u64,
+            )));
+            duration.store(Arc::new(dur));
             errors.distil(session.save());
 
             if errors.load().is_empty()

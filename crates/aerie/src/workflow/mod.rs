@@ -1089,7 +1089,6 @@ impl ShadowGraph<WorkNode> {
         alerts
     }
 
-    #[cfg(feature = "wip")]
     pub fn repair(&self) -> Self {
         let mut target = self.clone();
         if let Some(id) = self
@@ -1242,7 +1241,6 @@ impl Workflow {
         }
     }
 
-    #[cfg(feature = "wip")]
     pub fn repair(&self) -> Self {
         let graph = self.graph.repair();
         let meta = self.metadata.clone();
@@ -1251,6 +1249,12 @@ impl Workflow {
             graph: Arc::new(graph),
             metadata: meta,
         }
+    }
+
+    pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        let mut bytes = Vec::with_capacity(256);
+        serde_yml::to_writer(&mut bytes, &self.repair())?;
+        Ok(bytes)
     }
 }
 
@@ -1658,7 +1662,6 @@ impl From<anyhow::Error> for WorkflowError {
     }
 }
 
-#[cfg(feature = "wip")]
 pub fn fixup_workflow(mut snarl: Snarl<WorkNode>) -> Snarl<WorkNode> {
     tracing::debug!("Examining graph {snarl:?}");
 

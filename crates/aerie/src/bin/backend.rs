@@ -151,6 +151,7 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
     // let _ = send_switch(&app.app_state.workflows, &mut socket).await;
 
     let mut node_rx = app.app_state.workflows.node_state.subscribe();
+    let mut flow_rx = app.app_state.workflows.subscribe();
 
     let mut waiting = true;
     let mut interval = tokio::time::interval(Duration::from_millis(1000));
@@ -178,9 +179,13 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
                     Ok(ev) => {
                         tracing::info!(?ev, "Sending NodeStateEvent");
 
-                        let update = ClientUpdate {
-                            update: UpdateData::NodeState(vec![ev])
-                        };
+                        let update = ClientUpdate::builder().update(
+                            UpdateData::NodeState(vec![ev])
+                        )
+                        .task_count(task_count.load(Ordering::Relaxed))
+                        .build();
+
+                        waiting = task_count.load(Ordering::Relaxed) > 0;
 
                         let _ = socket
                             .send(Message::Text(
@@ -193,10 +198,30 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
                     }
                 }
             }
+            ev = flow_rx.recv() => {
+                match ev {
+                    Ok(ev) => {
+                        let update = ClientUpdate::builder()
+                            .update(UpdateData::Event(ev))
+                            .task_count(task_count.load(Ordering::Relaxed))
+                            .build();
+
+                        waiting = task_count.load(Ordering::Relaxed) > 0;
+                        let _ = socket
+                            .send(Message::Text(
+                                serde_json::to_string(&update).unwrap().into(),
+                            ))
+                        .await;
+                    }
+                    Err(err) => {
+                        tracing::warn!(?err, "Failed while receiving workflow event");
+                    }
+                }
+            }
             res = socket.recv() => {
                 match res {
                     Some(msg) => {
-                        tracing::info!(?msg, "Received message");
+                        tracing::trace!(?msg, "Received message");
                         match msg {
                             Ok(Message::Binary(bytes))
                                 if let Ok(payload) = postcard::from_bytes::<ClientAction>(&bytes) =>
@@ -207,7 +232,6 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
                                 if let Ok(payload) = serde_json::from_str::<ClientAction>(txt.as_str()) =>
                             {
                                 use aerie::client::ActionData::*;
-                                tracing::info!("Got json action {payload:?}");
                                 let mut need_patch = false;
 
                                 match payload.action {
@@ -222,7 +246,6 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
                                                 },
                                                 ev @ (EnterSubgraph(_) | LeaveSubgraph(_) | NodesChanged(_, _) | GraphSnapshot(_) | WorkflowSnapshot(_)) => {
                                                     app.app_state.events.insert(ev);
-
                                                 }
                                                 ev => {
                                                     app.app_state.events.insert(ev);
@@ -239,7 +262,6 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
                                         if need_patch {
                                             waiting =  num_tasks > 0;
                                             let _ = patch_all(&app, &mut socket).await;
-
                                         }
                                     }
                                 }
@@ -254,6 +276,8 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
                 }
             }
         }
+
+        app.post_update();
     }
     // while let Some(msg) = socket.recv().await {}
 }
@@ -267,9 +291,9 @@ async fn send_switch<W: aerie::workflow::store::WorkflowStore>(
         .baseline(work_state.baseline.clone())
         .build();
 
-    let update = ClientUpdate {
-        update: UpdateData::Switch(payload),
-    };
+    let update = ClientUpdate::builder()
+        .update(UpdateData::Switch(payload))
+        .build();
 
     let _ = socket
         .send(Message::Text(
@@ -300,9 +324,10 @@ async fn send_dump(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
         .prompt(app.app_state.prompt.clone())
         .task_count(app.app_state.task_count.load(Ordering::Relaxed))
         .build();
-    let update = ClientUpdate {
-        update: UpdateData::Dump(state),
-    };
+    let update = ClientUpdate::builder()
+        .update(UpdateData::Dump(state))
+        .task_count(app.task_count.load(Ordering::Relaxed))
+        .build();
 
     socket
         .send(Message::Text(
@@ -347,16 +372,19 @@ async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
         .tools(tool_store)
         .workflows(workflows)
         .prompt(app.app_state.prompt.clone())
-        .task_count(app.app_state.task_count.load(Ordering::Relaxed))
         .config_state(app.app_state.state.clone())
         .editor(editor)
         // .node_state(Some(node_state))
         .previews(Some(previews))
         .build();
 
-    let update = ClientUpdate {
-        update: UpdateData::Patch(state),
-    };
+    let names = state.app_data.as_ref().map(|d| d.session_names.clone());
+    tracing::debug!(?names, "patching session names");
+
+    let update = ClientUpdate::builder()
+        .update(UpdateData::Patch(state))
+        .task_count(app.task_count.load(Ordering::Relaxed))
+        .build();
 
     match serde_json::to_string(&update) {
         Ok(payload) => socket.send(Message::Text(payload.into())).await,

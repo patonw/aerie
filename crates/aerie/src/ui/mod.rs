@@ -10,7 +10,6 @@ pub mod workflow;
 
 use state::AppState;
 
-#[cfg(feature = "wip")]
 use crate::events::*;
 
 pub enum Pane {

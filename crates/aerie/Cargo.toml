@@ -32,7 +32,7 @@ axum-extra = { version = "0.12.6", features = [
   "typed-header",
 ], optional = true }
 base64 = "0.22.1"
-cached = { version = "0.59.0", default-features = false, features = [
+cached = { version = "4.0.0", default-features = false, features = [
   "proc_macro",
 ] }
 clap = { version = "4.5.48", features = ["env", "derive"] }
@@ -138,7 +138,7 @@ serde_path_to_error = "0.1.20"
 [features]
 native = [
   "wip",
-  "cached/disk_store",
+  "cached/redb_store",
   "cached/time_stores",
   "rig-dynclient/rmcp",
   "tokio/full",
@@ -160,10 +160,11 @@ desktop = ["native", "ui", "dep:egui_graphs"]
 web-ui = [
   "ui",
   "dep:ewebsock",
-  "cached/wasm",
+  # "cached/wasm",
   "uuid/js",
   "dep:rmp-serde",
   "dep:gloo-timers",
+  "dep:rfd",
 ]
 backend = [
   "native",

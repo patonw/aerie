@@ -769,7 +769,7 @@ impl ToolSelector {
     }
 }
 
-#[cached(result = true)]
+#[cached]
 pub fn tool_glob(pattern: String) -> Result<Pattern, PatternError> {
     Pattern::new(&pattern)
 }

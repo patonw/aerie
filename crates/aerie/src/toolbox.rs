@@ -90,7 +90,7 @@ impl ChainBreaker {
     }
 }
 
-#[cached(result = true)]
+#[cached]
 fn parse_schema(text: String) -> anyhow::Result<serde_json::Value> {
     Ok(serde_json::from_str(&text)?)
 }

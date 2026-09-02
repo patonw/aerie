@@ -18,6 +18,7 @@ use std::{
         atomic::{AtomicBool, AtomicU16},
     },
 };
+use tokio::sync::broadcast;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 use web_time::{Duration, SystemTime};
@@ -26,7 +27,6 @@ use web_time::{Duration, SystemTime};
 use crate::config::ConfigStateProxy;
 #[cfg(feature = "native")]
 use crate::config::ConfigStateStore;
-use crate::workflow::CheckContext;
 use crate::workflow::ShadowGraph;
 use crate::workflow::WorkNode;
 #[cfg(feature = "native")]
@@ -35,6 +35,7 @@ use crate::workflow::store::{WorkflowStore, WorkflowStoreDir};
 use crate::workflow::store::{WorkflowStore, WorkflowStoreStub};
 #[cfg(feature = "wip")]
 use crate::{agent::AgentFactory, ui::tiles::messages::MessageGraph};
+use crate::{events::WorkflowEvent, workflow::CheckContext};
 use crate::{
     toolbox::Toolbox,
     ui::{
@@ -72,7 +73,7 @@ pub enum ToolEditorState {
 }
 
 /// Data synced between client and server
-#[derive(Clone, Serialize, Deserialize, Default, TypedBuilder)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TypedBuilder)]
 pub struct AppData {
     #[builder(default)]
     pub prefs: Arc<ArcSwap<Preferences>>,
@@ -270,6 +271,10 @@ impl AppState {
                         self.workflows.switch(&timestamp);
                         true
                     }
+                    ImportWorkflow(name, bytes) => {
+                        errors.distil(self.workflows.import_bytes(name, bytes));
+                        true
+                    }
                     DeleteWorkflow(name) => {
                         self.workflows.editing = name.clone();
                         errors.distil(self.workflows.remove());
@@ -359,19 +364,42 @@ impl AppState {
                         errors.distil(self.data.session.switch(&timestamp));
                         errors.distil(self.data.session.save());
                         self.state.set_session(self.data.session.name());
-                        self.data.session_names = self.data.session.list();
+                        self.data.session_names = self.data.session.relist();
                         true
                     }
                     SwitchSession(session_name) => {
                         errors.distil(self.data.session.switch(session_name));
                         self.state.set_session(self.data.session.name());
-                        self.data.session_names = self.data.session.list();
+                        self.data.session_names = self.data.session.relist();
                         true
                     }
                     RenameSession(_old_name, new_name) => {
                         errors.distil(self.data.session.rename(new_name));
                         self.state.set_session(new_name);
-                        self.data.session_names = self.data.session.list();
+                        self.data.session_names = self.data.session.relist();
+                        true
+                    }
+                    ImportSession(fname, bytes) => {
+                        // self.state.set_export_dir(path.parent());
+                        errors.distil(self.data.session.import_bytes(fname, bytes));
+                        self.state.set_session(self.data.session.name());
+                        self.data.session_names = self.data.session.relist();
+                        true
+                    }
+                    DeleteSession(session_name) => {
+                        errors.distil(self.data.session.switch(""));
+                        errors.distil(self.data.session.delete(session_name));
+                        self.state.set_session(self.data.session.name());
+                        self.data.session_names = self.data.session.relist();
+                        true
+                    }
+                    SwitchBranch(name) => {
+                        errors.distil(
+                            self.data
+                                .session
+                                .transform(|history| Ok(history.switch(name))),
+                        );
+
                         true
                     }
                     _ => false,
@@ -497,6 +525,8 @@ pub struct WorkflowState<W: WorkflowStore> {
 
     pub graph_checked: bool,
     pub alerts: im::OrdMap<(GraphId, NodeId), Cow<'static, str>>,
+
+    pub broadcast: broadcast::Sender<WorkflowEvent>,
 }
 
 impl<W: WorkflowStore> WorkflowState<W> {
@@ -543,7 +573,12 @@ impl<W: WorkflowStore> WorkflowState<W> {
             outputs: Default::default(),
             graph_checked: false,
             alerts: Default::default(),
+            broadcast: broadcast::channel(64).0,
         }
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<WorkflowEvent> {
+        self.broadcast.subscribe()
     }
 
     pub fn with_node_state(mut self, node_state: NodeStateMap) -> Self {
@@ -882,16 +917,33 @@ impl<W: WorkflowStore> WorkflowState<W> {
         Ok(())
     }
 
-    #[cfg(feature = "wip")]
+    #[cfg(feature = "native")]
     pub fn import(&mut self, path: &Path) -> anyhow::Result<()> {
+        use std::io::Read as _;
+
         if !path.is_file() {
             anyhow::bail!("Invalid file: {path:?}");
         }
 
         let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or("unknown".into());
+
+        let mut bytes = Vec::new();
+        let mut reader = OpenOptions::new().read(true).open(path)?;
+        reader.read_to_end(&mut bytes)?;
+
+        self.import_bytes(&name, &bytes)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "native")]
+    pub fn import_bytes(&mut self, name: &str, bytes: &[u8]) -> anyhow::Result<()> {
+        let name = Path::new(name)
             .file_stem()
             .and_then(|s| s.to_os_string().into_string().ok())
-            .unwrap_or_default();
+            .unwrap_or("unknown".into());
 
         let datetime = chrono::offset::Local::now();
         let timestamp = datetime.format("%Y-%m-%dT%H:%M:%S").to_string();
@@ -901,8 +953,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
             name
         };
 
-        let reader = OpenOptions::new().read(true).open(path)?;
-        let data: Workflow = serde_yml::from_reader(reader)?;
+        let data: Workflow = serde_yml::from_slice(bytes)?;
 
         self.undo_stack
             .entry(name.clone())

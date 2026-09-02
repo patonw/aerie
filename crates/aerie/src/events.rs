@@ -36,6 +36,7 @@ pub enum AppEvent {
     GraphSnapshot(ShadowGraph<WorkNode>),
 
     CreateWorkflow,
+    ImportWorkflow(String, Vec<u8>),
     DeleteWorkflow(String),
     SaveWorkflow,
     WorkflowSnapshot(Workflow),
@@ -66,6 +67,10 @@ pub enum AppEvent {
     CreateSession,
     SwitchSession(String),
     RenameSession(String, String),
+    ImportSession(String, Vec<u8>),
+    DeleteSession(String),
+
+    SwitchBranch(String),
 }
 
 impl AppEvent {
@@ -106,4 +111,22 @@ pub enum NodeStateEvent {
 
     /// Update the state of a node within an execution
     Update(ExecId, NodeId, ExecState),
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum ExecEvent {
+    Start(ExecId, String, chrono::DateTime<chrono::Local>),
+    Tick(ExecId, u64),
+    Output(ExecId, String, crate::workflow::Value),
+    Finish(ExecId, u64),
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum GraphEditEvent {}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum WorkflowEvent {
+    Exec(ExecEvent),
+    // NodeState(NodeStateEvent),
+    // GraphEdit(GraphEditEvent),
 }

@@ -49,7 +49,7 @@ impl From<EVec2> for NodePos {
         }
     }
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AtomicBuffer<T>(pub Arc<ArcSwap<im::Vector<Arc<ArcSwap<T>>>>>);
 
@@ -632,6 +632,24 @@ pub mod ui {
             }
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn spawn_wherever<F>(future: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    let handle = tokio::runtime::Handle::current();
+    handle.spawn(future);
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn spawn_wherever<F>(future: F)
+where
+    F: Future<Output = ()> + 'static,
+{
+    use wasm_bindgen_futures::spawn_local;
+    spawn_local(future);
 }
 
 #[cfg(test)]

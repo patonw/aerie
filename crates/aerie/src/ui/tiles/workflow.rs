@@ -10,9 +10,9 @@ use egui_phosphor::regular::{
 use egui_snarl::ui::SnarlWidget;
 use itertools::Itertools;
 
-use crate::events::AppEvent;
 use crate::{
     config::ConfigExt as _,
+    events::AppEvent,
     ui::{
         ShowHelp,
         runner::{play_button, stop_button},
@@ -20,7 +20,7 @@ use crate::{
         state::MetaEdit,
         workflow::get_snarl_style,
     },
-    utils::ErrorDistiller as _,
+    utils::{ErrorDistiller as _, spawn_wherever},
     workflow::store::WorkflowStore as _,
 };
 
@@ -235,7 +235,7 @@ impl super::AppState {
 
     pub fn workflow_controls(&mut self, ui: &mut egui::Ui) {
         let settings = self.data.prefs.clone();
-        let errors = self.errors.clone();
+        let events = self.events.clone();
         let running = self
             .workflows
             .running
@@ -311,7 +311,6 @@ impl super::AppState {
                             });
                     });
                     strip.cell(|ui| {
-                        #[cfg(feature = "wip")]
                         StripBuilder::new(ui)
                             .sizes(Size::remainder(), 2)
                             .horizontal(|mut strip| {
@@ -321,32 +320,48 @@ impl super::AppState {
                                             .button(DOWNLOAD_SIMPLE)
                                             .on_hover_text("Import")
                                             .clicked()
-                                            && let Some(path) = rfd::FileDialog::new()
-                                                .add_filter("workflow", &["yml", "yaml"])
-                                                .add_filter("all", &[""])
-                                                .set_directory(&self.state.export_dir)
-                                                .pick_file()
                                         {
-                                            self.state.set_export_dir(path.parent());
-                                            errors.distil(self.workflows.import(&path));
+                                            spawn_wherever(async move {
+                                                if let Some(fh) = rfd::AsyncFileDialog::new()
+                                                    .add_filter("workflow", &["yml", "yaml"])
+                                                    .add_filter("all", &[""])
+                                                    // .set_directory(&self.state.export_dir)
+                                                    .pick_file()
+                                                    .await
+                                                {
+                                                    // TODO:
+                                                    // self.state.set_export_dir(path.parent());
+
+                                                    let data = fh.read().await;
+                                                    events.insert(AppEvent::ImportWorkflow(
+                                                        fh.file_name(),
+                                                        data,
+                                                    ));
+                                                }
+                                            });
                                         }
                                     });
                                 });
                                 strip.cell(|ui| {
                                     if ui.button(UPLOAD_SIMPLE).on_hover_text("Export").clicked()
-                                        && let Some(path) = rfd::FileDialog::new()
-                                            .add_filter("workflow", &["yml", "yaml"])
-                                            .add_filter("all", &[""])
-                                            .set_directory(&self.state.export_dir)
-                                            .set_file_name(format!(
-                                                "{}.yml",
-                                                self.workflows.editing
-                                            ))
-                                            .save_file()
+                                        && let Ok(bytes) = self.workflows.shadow.to_bytes()
                                     {
-                                        self.state.set_export_dir(path.parent());
+                                        let name = self.workflows.editing.clone();
+                                        spawn_wherever(async move {
+                                            if let Some(fh) = rfd::AsyncFileDialog::new()
+                                                .add_filter("workflow", &["yml", "yaml"])
+                                                .add_filter("all", &[""])
+                                                // .set_directory(&self.state.export_dir)
+                                                .set_file_name(format!("{name}.yml",))
+                                                .save_file()
+                                                .await
+                                            {
+                                                // TODO:
+                                                // self.state.set_export_dir(path.parent());
 
-                                        errors.distil(self.workflows.export(&path));
+                                                fh.write(&bytes).await.unwrap();
+                                            }
+                                        });
                                     }
                                 });
                             });
