@@ -11,7 +11,7 @@ use std::{borrow::Cow, str::FromStr as _, sync::Arc};
 #[cfg(feature = "ui")]
 use strum::IntoEnumIterator as _;
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 #[cfg(feature = "ui")]
 use crate::toolbox::ToolProvider;
 #[cfg(feature = "native")]
@@ -23,7 +23,7 @@ use crate::{
     utils::message_text,
     workflow::{DynNode, FlexNode, GraphId, Value, ValueKind, WorkflowError, with_deadline},
 };
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 use crate::{
     toolbox::{ChainBreaker, ChainTool},
     workflow::CheckContext,
@@ -70,7 +70,7 @@ impl DynNode for Tools {
         Value::Tools(self.toolset.clone())
     }
 
-    #[cfg(feature = "wip")]
+    #[cfg(feature = "native")]
     fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
         let missing = ctx.toolbox.missing_tools(&self.toolset);
         if !missing.is_empty() {

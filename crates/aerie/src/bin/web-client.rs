@@ -86,7 +86,6 @@ impl eframe::App for WebApp {
                     WsEvent::Message(ewebsock::WsMessage::Text(txt))
                         if let Ok(payload) = serde_json::from_str::<ClientUpdate>(&txt) =>
                     {
-                        log::info!("Got client update");
                         task_update = payload.task_count;
                         let update_data = payload.update;
                         match update_data {
@@ -98,7 +97,6 @@ impl eframe::App for WebApp {
                                     .task_count
                                     .store(dump.task_count, std::sync::atomic::Ordering::Relaxed);
                                 self.state.workflows.store.metadata = dump.workflows;
-                                log::info!("Updated state from server dump");
                             }
                             UpdateData::Patch(patch) => {
                                 if let Some(tools) = patch.tools {
@@ -113,8 +111,10 @@ impl eframe::App for WebApp {
                                     if prompt.is_empty() {
                                         self.state.prompt.clear();
                                     }
-                                    // Bad UX since delay in round trip
-                                    // self.state.prompt = prompt;
+                                }
+
+                                if let Some(images) = patch.images {
+                                    self.state.images.store(Arc::new(images));
                                 }
 
                                 if let Some(config_state) = patch.config_state {
@@ -125,15 +125,7 @@ impl eframe::App for WebApp {
 
                                 // log::info!("Editor patch? {:?}", &patch.editor);
                                 if let Some(editor) = patch.editor {
-                                    // log::info!(
-                                    //     "Patch stack is empty? {:?}",
-                                    //     editor.stack.as_ref().map(|s| s.is_empty()),
-                                    // );
                                     self.state.workflows.patch(editor);
-                                    log::info!(
-                                        "View stack is empty? {}",
-                                        self.state.workflows.view_stack.is_empty()
-                                    );
                                 }
 
                                 if let Some(previews) = patch.previews {

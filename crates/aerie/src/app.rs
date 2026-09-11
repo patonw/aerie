@@ -266,7 +266,11 @@ impl App {
                 .to_owned();
 
             self.app_state.prompt = prompt;
-            self.app_state.images = next_images.swap(Default::default()).as_ref().clone();
+            self.app_state
+                .images
+                .store(Arc::new(im::Vector::from(Arc::unwrap_or_clone(
+                    next_images.swap(Default::default()),
+                ))));
         }
 
         let next_workflow = if !running && next_workflow.load().is_some() {

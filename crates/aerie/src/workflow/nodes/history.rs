@@ -4,7 +4,6 @@ use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-#[cfg(feature = "wip")]
 use crate::utils::ImageResolver;
 #[cfg(feature = "native")]
 use crate::workflow::RunContext;

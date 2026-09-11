@@ -70,6 +70,9 @@ pub struct StatePatch {
     pub prompt: Option<String>,
 
     #[builder(default, setter(strip_option))]
+    pub images: Option<im::Vector<String>>,
+
+    #[builder(default, setter(strip_option))]
     pub config_state: Option<ConfigState>,
 
     #[builder(default, setter(strip_option))]

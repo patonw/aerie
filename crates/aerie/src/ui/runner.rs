@@ -63,8 +63,10 @@ impl super::AppState {
 
             let run_count = self.run_count;
             let errors = self.errors.clone();
+            errors.discard();
             let extra_content = self
                 .images
+                .load_full()
                 .iter()
                 .filter_map(|image| {
                     let image = rig::message::Image {
@@ -182,10 +184,6 @@ impl super::AppState {
             }
 
             let dur = started.elapsed().unwrap_or_default();
-            let _ = tx.send(WorkflowEvent::Exec(ExecEvent::Finish(
-                exec_id,
-                dur.as_millis() as u64,
-            )));
             duration.store(Arc::new(dur));
             errors.distil(session.save());
 
@@ -194,6 +192,11 @@ impl super::AppState {
             {
                 scratch.clear();
             }
+
+            let _ = tx.send(WorkflowEvent::Exec(ExecEvent::Finish(
+                exec_id,
+                dur.as_millis() as u64,
+            )));
         });
     }
 }

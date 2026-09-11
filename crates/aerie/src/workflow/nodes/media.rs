@@ -1,29 +1,51 @@
+#[cfg(feature = "ui")]
+use std::borrow::Cow;
+use std::hash::Hash;
+use std::sync::Arc;
 use std::time::Instant;
 
+use arc_swap::ArcSwap;
 #[cfg(feature = "ui")]
 use egui_phosphor::regular::{IMAGE_BROKEN, IMAGES, X_CIRCLE};
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-#[cfg(feature = "wip")]
 #[cfg(feature = "ui")]
-use crate::utils::{IMAGE_CACHE, ImageResolver, rig_image_to_egui};
+use crate::utils::{ArcVecExt as _, IMAGE_CACHE, rig_image_to_egui, spawn_wherever};
 #[cfg(feature = "ui")]
 use crate::{
     utils::ErrorDistiller as _,
     workflow::{UiNode, WorkNode, nodes::GraphSubmenu},
 };
 
-use crate::workflow::{DynNode, FlexNode, Value, ValueKind, WorkflowError};
+use crate::{
+    utils::ImageResolver,
+    workflow::{DynNode, FlexNode, Value, ValueKind, WorkflowError},
+};
 
 /// Stores images as data URIs in the graph
 #[skip_serializing_none]
-#[derive(Default, Debug, Clone, Hash, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Default, Debug, Clone, Deserialize, Serialize)]
 pub struct LoadImages {
     #[serde(default)]
-    images: im::Vector<String>,
+    // images: im::Vector<String>,
+    images: Arc<ArcSwap<im::Vector<String>>>,
 }
+
+impl Hash for LoadImages {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.images.load().hash(state);
+    }
+}
+
+impl PartialEq for LoadImages {
+    fn eq(&self, other: &Self) -> bool {
+        self.images.load().as_ref() == other.images.load().as_ref()
+    }
+}
+
+impl Eq for LoadImages {}
 
 #[typetag::serde]
 impl FlexNode for LoadImages {}
@@ -50,6 +72,7 @@ impl DynNode for LoadImages {
     ) -> Result<Vec<super::Value>, crate::workflow::WorkflowError> {
         let images = self
             .images
+            .load()
             .iter()
             .map(|uri| ImageResolver::default().to_rig_image(uri))
             .collect::<anyhow::Result<im::Vector<_>>>()?;
@@ -69,7 +92,6 @@ impl UiNode for LoadImages {
         true
     }
 
-    #[cfg(feature = "wip")]
     // TODO: a square-ish 4xN gallery
     fn show_body(&mut self, ui: &mut egui::Ui, ctx: &super::EditContext) {
         ui.vertical(|ui| {
@@ -77,10 +99,10 @@ impl UiNode for LoadImages {
                 .max_height(300.0)
                 .show(ui, |ui| {
                     ui.set_width(200.0);
-                    ui.set_max_height(3.0 * ui.available_width() * self.images.len() as f32);
+                    ui.set_max_height(3.0 * ui.available_width() * self.images.load().len() as f32);
 
                     let mut remove_idx = None;
-                    for (i, uri) in self.images.iter().enumerate() {
+                    for (i, uri) in self.images.load().iter().enumerate() {
                         // TODO: needs optimization
                         let resp = match ImageResolver::default().to_rig_image(uri) {
                             Ok(image) => {
@@ -140,42 +162,44 @@ impl UiNode for LoadImages {
                 .button(IMAGES)
                 .on_hover_text("Load images from disk")
                 .clicked()
-                && let Some(paths) = rfd::FileDialog::new()
-                    // .set_directory(settings.view(|s| s.last_export_dir.clone())) // TODO: get settings
-                    .add_filter("images", &["png", "jpg", "jpeg", "webp"])
-                    .add_filter("all", &[""])
-                    .pick_files()
             {
-                let paths = paths
-                    .into_iter()
-                    .filter_map(|p| p.to_str().map(|s| s.to_string()));
+                let images = self.images.clone();
+                let errors = ctx.errors.clone();
 
-                tracing::info!("Loading images {paths:?}");
+                spawn_wherever(async move {
+                    if let Some(fhs) = rfd::AsyncFileDialog::new()
+                        // .set_directory(settings.view(|s| s.last_export_dir.clone())) // TODO: get settings
+                        .add_filter("images", &["png", "jpg", "jpeg", "webp"])
+                        .add_filter("all", &[""])
+                        .pick_files()
+                        .await
+                    {
+                        use futures_util::future::join_all;
 
-                let images = paths
-                    .map(|p| {
-                        ImageResolver::builder()
-                            .allow_local(true)
-                            .build()
-                            .to_data_uri(&p)
-                    })
-                    .collect::<Result<Vec<_>, _>>();
+                        let results = join_all(fhs.into_iter().map(|fh| async move {
+                            let bytes = fh.read().await;
+                            ImageResolver::builder()
+                                .allow_local(true)
+                                .build()
+                                .bytes_to_data_uri(&fh.file_name(), Cow::Owned(bytes))
+                        }))
+                        .await;
 
-                let Some(images) = ctx.errors.distil(images) else {
-                    return;
-                };
+                        let mut new_imgs = Vec::new();
+                        for result in results {
+                            match result {
+                                Ok(img) => new_imgs.push(img),
+                                Err(err) => errors.push(err),
+                            }
+                        }
 
-                // let Some(images) = ctx
-                //     .errors
-                //     .distil(images.context("Problem converting image to data URI"))
-                // else {
-                //     return;
-                // };
+                        for img in &new_imgs {
+                            tracing::info!("img {}", &img[..32]);
+                        }
 
-                for img in &images {
-                    tracing::info!("img {}", &img[..32]);
-                }
-                self.images.extend(images);
+                        images.extend(new_imgs);
+                    }
+                });
             }
         });
     }

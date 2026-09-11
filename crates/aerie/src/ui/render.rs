@@ -1,5 +1,4 @@
 use crate::rig::message::Message;
-#[cfg(feature = "wip")]
 use crate::utils::{IMAGE_CACHE, MERMAID_MD, show_image};
 use eframe::egui;
 use egui_commonmark::*;
@@ -68,7 +67,6 @@ pub fn render_message_width(
                                 CommonMarkViewer::new().show(ui, cache, &text);
                             }
                             FormatOpts::Reasoning => {}
-                            #[cfg(feature = "wip")]
                             FormatOpts::Image => {
                                 let mut cache = IMAGE_CACHE.lock();
                                 let mut image = text;
@@ -140,7 +138,6 @@ pub fn render_message_width(
                             FormatOpts::Reasoning => {
                                 ui.label(egui::RichText::new(text.as_ref()).italics());
                             }
-                            #[cfg(feature = "wip")]
                             FormatOpts::Image => {
                                 let mut cache = IMAGE_CACHE.lock();
                                 let mut image = text;
@@ -172,7 +169,6 @@ pub fn render_message_width(
                 });
             });
 
-            #[cfg(feature = "wip")]
             for (_, [diagram]) in MERMAID_MD.captures_iter(&all_text).map(|m| m.extract()) {
                 ui.scope_builder(egui::UiBuilder::new().id_salt(diagram), |ui| {
                     let enc = BASE64_URL_SAFE_NO_PAD.encode(diagram);

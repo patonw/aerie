@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
 
-#[cfg(feature = "wip")]
 #[cfg(feature = "ui")]
 use crate::utils::{IMAGE_CACHE, rig_image_to_egui, show_image};
 #[cfg(feature = "ui")]
@@ -578,7 +577,6 @@ impl UiNode for Preview {
                                     ui.add(egui::Label::new(format!("{:?}", value)).wrap());
                                 }
                             }
-                            #[cfg(feature = "wip")]
                             Value::Images(images) => {
                                 ui.vertical(|ui| {
                                     ui.set_width(200.0);

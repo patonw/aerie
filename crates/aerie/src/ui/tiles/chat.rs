@@ -1,8 +1,11 @@
 use eframe::egui;
 use egui_extras::{Size, StripBuilder};
-use egui_phosphor::regular::{GIT_BRANCH, GLOBE, IMAGES, TRASH, X_CIRCLE};
+use egui_phosphor::regular::{GIT_BRANCH, GLOBE, IMAGE_BROKEN, IMAGES, TRASH, X_CIRCLE};
 use itertools::Itertools;
-use std::{borrow::Cow, sync::atomic::Ordering};
+use std::{
+    borrow::Cow,
+    sync::{Arc, atomic::Ordering},
+};
 
 use crate::{
     chat::ChatContent,
@@ -10,7 +13,7 @@ use crate::{
     events::AppEvent,
     rig::message::{Message, UserContent},
     ui::{error_bubble, shortcuts::squelch},
-    utils::ErrorDistiller as _,
+    utils::{ArcVecExt as _, ErrorDistiller as _, IMAGE_CACHE, ImageResolver, img_str_to_egui_key},
 };
 
 pub use crate::ui::render::render_message;
@@ -21,6 +24,7 @@ impl super::AppState {
     pub fn chat_ui(&mut self, ui: &mut egui::Ui) {
         let errors = self.errors.clone();
         let workflows = self.workflows.names().map(|s| s.to_string()).collect_vec();
+        let images = self.images.clone();
 
         // TODO: top panel with helper actions
         egui::TopBottomPanel::bottom("prompt")
@@ -37,43 +41,49 @@ impl super::AppState {
                             .auto_shrink(false)
                             .show(ui, |ui| {
                                 ui.set_max_height(
-                                    3.0 * ui.available_width() * self.images.len() as f32,
+                                    3.0 * ui.available_width() * images.load().len() as f32,
                                 );
 
                                 let mut remove_idx = None;
 
-                                for (i, path) in self.images.iter().enumerate() {
-                                    let path = if let Ok(exists) = std::fs::exists(path)
-                                        && exists
-                                    {
-                                        Cow::Owned(format!("file://{path}"))
-                                    } else {
-                                        Cow::Borrowed(path)
-                                    };
+                                for (i, path) in images.load().iter().enumerate() {
+                                    if let Ok(key) = img_str_to_egui_key(path) {
+                                        let mut cache = IMAGE_CACHE.lock();
+                                        if let Some(image) = cache.get(&key) {
+                                            let resp = ui.image(image.clone()).on_hover_ui(|ui| {
+                                                ui.add(
+                                                    egui::Image::new(image.clone())
+                                                        .max_size(ui.ctx().content_rect().size() * 0.75),
+                                                );
+                                            });
 
-                                    let resp = ui.image(&*path).on_hover_ui(|ui| {
-                                        ui.add(
-                                            egui::Image::new(&*path)
-                                                .max_size(ui.ctx().content_rect().size() * 0.75),
-                                        );
-                                    });
+                                            let button = egui::Button::new(X_CIRCLE)
+                                                .small()
+                                                .fill(egui::Color32::from_black_alpha(0));
+                                            let rect = egui::Rect::from_center_size(
+                                                resp.rect.left_top() + egui::vec2(8.0, 4.0),
+                                                egui::vec2(8.0, 8.0),
+                                            );
+                                            let resp = ui.place(rect, button);
 
-                                    let button = egui::Button::new(X_CIRCLE)
-                                        .small()
-                                        .fill(egui::Color32::from_black_alpha(0));
-                                    let rect = egui::Rect::from_center_size(
-                                        resp.rect.left_top() + egui::vec2(8.0, 4.0),
-                                        egui::vec2(8.0, 8.0),
-                                    );
-                                    let resp = ui.place(rect, button);
-
-                                    if resp.interact(egui::Sense::click()).clicked() {
-                                        remove_idx = Some(i);
-                                    }
+                                            if resp.interact(egui::Sense::click()).clicked() {
+                                                remove_idx = Some(i);
+                                            }
+                                        } else {
+                                            let width = ui.available_width();
+                                            let widget = egui::Label::new(IMAGE_BROKEN).selectable(false);
+                                            ui.add_sized(egui::vec2(width, width * 0.75), widget);
+                                        }}
                                 }
 
                                 if let Some(idx) = remove_idx {
-                                    self.images.remove(idx);
+                                    self.events.insert(AppEvent::RemoveChatImage(idx as u32));
+                                    images.rcu(|images| {
+                                        let mut images= im::Vector::clone(images); 
+                                        images.remove(idx);
+                                        Arc::new(images)
+
+                                    });
                                 }
                             });
                         ui.vertical_centered_justified(|ui| {
@@ -84,17 +94,18 @@ impl super::AppState {
                                         StripBuilder::new(ui)
                                             .sizes(
                                                 Size::remainder(),
-                                                if self.images.is_empty() { 2 } else { 3 },
+                                                if self.images.load().is_empty() { 2 } else { 3 },
                                             )
                                             .horizontal(|mut strip| {
-                                                if !self.images.is_empty() {
+                                                if !self.images.load().is_empty() {
                                                     strip.cell(|ui| {
                                                         if ui
                                                             .button(TRASH)
                                                             .on_hover_text("Clear")
                                                             .clicked()
                                                         {
-                                                            self.images.clear();
+                                                            self.events.insert(AppEvent::ClearChatImages);
+                                                            self.images.store(Default::default());
                                                         }
                                                     });
                                                 }
@@ -107,27 +118,49 @@ impl super::AppState {
                                                         self.image_input = Some(Default::default());
                                                     }
                                                 });
-                                                #[cfg(feature = "wip")]
                                                 strip.cell(|ui| {
                                                     if ui
                                                         .button(IMAGES)
                                                         .on_hover_text("Load Images (filesystem)")
                                                         .clicked()
-                                                        && let Some(paths) = rfd::FileDialog::new()
-                                                            .set_directory(&self.state.export_dir)
-                                                            .add_filter(
-                                                                "images",
-                                                                &["png", "jpg", "jpeg", "webp"],
-                                                            )
-                                                            .add_filter("all", &[""])
-                                                            .pick_files()
                                                     {
-                                                        let paths =
-                                                            paths.into_iter().filter_map(|p| {
-                                                                p.to_str().map(|s| s.to_string())
-                                                            });
+                                                        use crate::utils::spawn_wherever;
 
-                                                        self.images.extend(paths);
+                                                        let events = self.events.clone();
+
+                                                        spawn_wherever(async move {
+                                                            if let Some(fhs) =
+                                                                rfd::AsyncFileDialog::new()
+                                                                    // .set_directory(
+                                                                    //     &self.state.export_dir,
+                                                                    // )
+                                                                    .add_filter(
+                                                                        "images",
+                                                                        &[
+                                                                            "png", "jpg", "jpeg",
+                                                                            "webp",
+                                                                        ],
+                                                                    )
+                                                                    .add_filter("all", &[""])
+                                                                    .pick_files().await
+                                                            {
+                                                                use futures_util::future::join_all;
+
+                                                                // TODO: pre-process server-side
+                                                                let new_images = join_all(fhs
+                                                                    .into_iter()
+                                                                    .map(|fh| async move {
+                                                                        let bytes = fh.read().await;
+                                                                        {
+                                                                            let name: &str = &fh.file_name();
+                                                                            let bytes = Cow::Owned(bytes);
+                                                                            ImageResolver::default().bytes_to_data_uri(name, bytes)
+                                                                        }
+                                                                    })).await;
+                                                                let new_images = new_images.into_iter().filter_map(|it| it.ok()).collect_vec();
+                                                                events.insert(AppEvent::AddChatImages(new_images.clone()));
+                                                            }
+                                                        });
                                                     }
                                                 });
                                             });
@@ -214,7 +247,22 @@ impl super::AppState {
                             if let Some(path) = &drop.path
                                 && let Some(name) = path.to_str()
                             {
-                                self.images.push(name.to_string());
+                                self.images.rcu(|images| {
+                                    let mut images = im::Vector::clone(images);
+                                    self.events.insert(AppEvent::AddChatImages(vec![name.to_string()]));
+                                    Arc::new(images)
+                                });
+                            }
+                            else if let Some(bytes) = &drop.bytes {
+                                self.images.rcu(|images| {
+                                    let mut images = im::Vector::clone(images);
+                                    if let Some(uri) = errors.distil({
+                                        ImageResolver::default().bytes_to_data_uri(&drop.name, Cow::Borrowed(bytes.as_ref()))
+                                    }) {
+                                        self.events.insert(AppEvent::AddChatImages(vec![uri.clone()]));
+                                    }
+                                    Arc::new(images)
+                                });
                             }
                         }
                     }
@@ -333,6 +381,21 @@ impl super::AppState {
                     ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
                 }
             });
+
+            if cfg!(feature = "debug-ui") {
+                let history = self.data.session.history.load();
+                let scratch = self.data.session.scratch.load();
+
+                let n_scratch= scratch.len();
+                let n_msgs = history.iter_msgs().count();
+
+                let egui::Pos2 { x, y } = ui.max_rect().right_top();
+                let over_rect =
+                egui::Rect::from_two_pos(egui::pos2(x - 128.0, y), egui::pos2(x, y + 20.0));
+
+                let widget = egui::Label::new(format!("#scratch {n_scratch}\n#msgs {n_msgs}"));
+                ui.place(over_rect, widget);
+            }
         });
 
         if let Some(branch_point) = self.branch_point {
@@ -419,7 +482,15 @@ impl super::AppState {
             };
 
             ui.label("URL(s):");
-            ui.text_edit_multiline(input).request_focus();
+            egui::Resize::default()
+                .show(ui, |ui| {
+                    egui::ScrollArea::both().auto_shrink(false).show(
+                        ui,
+                        |ui| {
+                            let widget = egui::TextEdit::multiline(input);
+                            ui.add_sized(ui.available_size(), widget).request_focus();
+                        });
+                });
             ui.separator();
 
             egui::Sides::new().show(
@@ -445,7 +516,8 @@ impl super::AppState {
 
             if submit {
                 if let Some(new_items) = self.image_input.take() {
-                    self.images.extend(new_items.lines().map(|s| s.to_string()));
+                    let new_images = new_items.lines().map(|s| s.to_string()).collect_vec();
+                    self.events.insert(AppEvent::AddChatImages(new_images.clone()));
                 }
                 ui.close();
             }

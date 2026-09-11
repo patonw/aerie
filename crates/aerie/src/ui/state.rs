@@ -151,7 +151,7 @@ pub struct AppState {
 
     // TODO: migrate
     #[builder(default)]
-    pub images: Vec<String>,
+    pub images: Arc<ArcSwap<im::Vector<String>>>,
 
     // TODO: migrate
     #[builder(default)]
@@ -329,8 +329,31 @@ impl AppState {
                     SetPrompt(prompt) => {
                         self.prompt = prompt.clone();
                         if prompt.is_empty() {
-                            self.images.clear();
+                            self.images.store(Default::default());
                         }
+                        true
+                    }
+                    AddChatImages(new_images) => {
+                        self.images.rcu(|images| {
+                            let mut images = im::Vector::clone(images);
+                            images.extend(new_images.iter().cloned());
+                            Arc::new(images)
+                        });
+                        true
+                    }
+                    RemoveChatImage(idx) => {
+                        let idx = *idx as usize;
+                        self.images.rcu(|images| {
+                            let mut images = im::Vector::clone(images);
+                            if idx < images.len() {
+                                images.remove(idx);
+                            }
+                            Arc::new(images)
+                        });
+                        true
+                    }
+                    ClearChatImages => {
+                        self.images.store(Default::default());
                         true
                     }
                     UpdatePreferences(prefs) => {
@@ -689,7 +712,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         self.graph_checked = false;
     }
 
-    #[cfg(feature = "wip")]
+    #[cfg(feature = "native")]
     pub fn rename(&mut self) -> anyhow::Result<()> {
         let new_name = self.renaming.take();
 
@@ -731,7 +754,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         self.store.description(name)
     }
 
-    #[cfg(feature = "wip")]
+    #[cfg(feature = "native")]
     pub fn remove(&mut self) -> anyhow::Result<()> {
         self.store.remove(&self.editing)
     }
@@ -905,7 +928,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         );
     }
 
-    #[cfg(feature = "wip")]
+    #[cfg(feature = "native")]
     pub fn export(&mut self, path: &Path) -> anyhow::Result<()> {
         let writer = OpenOptions::new()
             .write(true)
@@ -967,7 +990,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
         Ok(())
     }
 
-    #[cfg(feature = "wip")]
+    #[cfg(feature = "native")]
     pub fn save(&mut self) {
         tracing::info!(
             "Saving {} to workflows...changed? {}",
@@ -1019,7 +1042,7 @@ impl<W: WorkflowStore> WorkflowState<W> {
     }
 
     // TODO: collect errors
-    #[cfg(feature = "wip")]
+    #[cfg(feature = "native")]
     pub fn handle_event(&mut self, event: &AppEvent) -> bool {
         use AppEvent::*;
         match event {

@@ -34,6 +34,7 @@ axum-extra = { version = "0.12.6", features = [
 base64 = "0.22.1"
 cached = { version = "4.0.0", default-features = false, features = [
   "proc_macro",
+  "time_stores",
 ] }
 clap = { version = "4.5.48", features = ["env", "derive"] }
 decorum = "0.4.0"
@@ -57,7 +58,7 @@ env_logger = "0.11.8"
 flume = { version = "0.12", features = ["async"] }
 glob = "0.3.3"
 im = { version = "15.1.0", features = ["serde", "debug"] }
-image = { version = "0.25.8", features = ["png"] }
+image = { version = "0.25.8", features = ["jpeg", "png"] }
 itertools = "0.14.0"
 kinded = "0.5.0"
 log = "0.4.28"
@@ -139,7 +140,6 @@ serde_path_to_error = "0.1.20"
 native = [
   "wip",
   "cached/redb_store",
-  "cached/time_stores",
   "rig-dynclient/rmcp",
   "tokio/full",
   "jsonschema/default",
@@ -165,6 +165,7 @@ web-ui = [
   "dep:rmp-serde",
   "dep:gloo-timers",
   "dep:rfd",
+  "dep:url",
 ]
 backend = [
   "native",
@@ -187,8 +188,6 @@ ui = [
   "egui-snarl/ui",
 ]
 wip = []
-rmp-serde = ["dep:rmp-serde"]
-gloo-timers = ["dep:gloo-timers"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.76"

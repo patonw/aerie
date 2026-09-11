@@ -372,6 +372,7 @@ async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
         .tools(tool_store)
         .workflows(workflows)
         .prompt(app.app_state.prompt.clone())
+        .images(im::Vector::clone(app.app_state.images.load().as_ref()))
         .config_state(app.app_state.state.clone())
         .editor(editor)
         // .node_state(Some(node_state))

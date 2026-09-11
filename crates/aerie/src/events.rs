@@ -51,6 +51,9 @@ pub enum AppEvent {
     RerunNodes(GraphId, Vec<NodeId>),
 
     SetPrompt(String),
+    AddChatImages(Vec<String>),
+    RemoveChatImage(u32),
+    ClearChatImages,
 
     Freeze(Option<bool>),
     Undo,
