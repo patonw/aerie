@@ -30,9 +30,9 @@ use crate::{
     },
 };
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 use crate::workflow::CheckContext;
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 use crate::workflow::runner::{ExecState, WorkflowRunner};
 
 #[skip_serializing_none]
@@ -623,7 +623,7 @@ impl DynNode for Subgraph {
         }
     }
 
-    #[cfg(feature = "wip")]
+    #[cfg(feature = "native")]
     fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
         let sub_ctx = ctx.with_graph(self.graph.uuid);
 

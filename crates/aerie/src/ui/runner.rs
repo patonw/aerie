@@ -12,7 +12,7 @@ use scopeguard::defer;
 
 use crate::{config::ConfigExt as _, rig, utils::ErrorDistiller as _};
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 use crate::{
     events::{ExecEvent, WorkflowEvent},
     utils::ImageResolver,

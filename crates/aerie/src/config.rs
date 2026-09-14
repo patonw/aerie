@@ -17,8 +17,6 @@ use std::{
 };
 use web_time::SystemTime;
 
-#[cfg(feature = "wip")]
-use crate::rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -730,11 +728,6 @@ impl ToolSelector {
 
     pub fn remove(&mut self, selector: &str) {
         self.0.remove(selector);
-    }
-
-    #[cfg(feature = "wip")]
-    pub fn include(&mut self, provider: &str, tool: &Tool) {
-        self.add(&format!("{provider}/{}", tool.name));
     }
 
     pub fn provider_selection(&'_ self, provider: &str) -> Ternary<Cow<'_, str>> {

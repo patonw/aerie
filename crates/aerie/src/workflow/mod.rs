@@ -354,7 +354,7 @@ impl OutputChannel {
     }
 }
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 #[derive(Clone, TypedBuilder)]
 pub struct RunContext {
     pub runtime: tokio::runtime::Handle,
@@ -425,7 +425,7 @@ pub struct RunContext {
     pub run_events: runner::RunEventCast,
 }
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 impl RunContext {
     #[inline]
     pub fn event(&self, event: AppEvent) {
@@ -467,7 +467,7 @@ impl RunContext {
     }
 }
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 #[derive(TypedBuilder)]
 pub struct RootContext {
     /// A full copy of the current graph
@@ -492,7 +492,7 @@ pub struct RootContext {
     pub extra_content: Vec<rig::message::UserContent>,
 }
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 impl RootContext {
     pub fn inputs(&self) -> Result<Vec<Option<Value>>, WorkflowError> {
         let schema: serde_json::Value = if !self.workflow.metadata.schema.is_empty() {
@@ -1470,11 +1470,11 @@ pub enum WorkflowError {
     )]
     MissingToolCall,
 
-    #[cfg(feature = "wip")]
+    #[cfg(feature = "native")]
     #[error("Error while invoking tool")]
     ToolCall(#[source] ToolExecutionError),
 
-    #[cfg(feature = "wip")]
+    #[cfg(feature = "native")]
     #[error("Error while invoking tool")]
     ToolServerCall(#[source] ToolServerError),
 
@@ -1489,7 +1489,7 @@ pub enum WorkflowError {
     #[error("timed out")]
     Timeout,
 
-    #[cfg(feature = "wip")]
+    #[cfg(feature = "native")]
     #[error("Graph execution halted before finishing: {0:?}")]
     Unfinished(ExecState),
 
@@ -1619,12 +1619,12 @@ impl PartialEq for WorkflowError {
             (Self::Required(l0), Self::Required(r0)) => l0 == r0,
             (Self::Conversion(l0), Self::Conversion(r0)) => l0 == r0,
             (Self::Provider(l0), Self::Provider(r0)) => std::ptr::eq(l0, r0),
-            #[cfg(feature = "wip")]
+            #[cfg(feature = "native")]
             (Self::ToolCall(l0), Self::ToolCall(r0)) => std::ptr::eq(l0, r0),
-            #[cfg(feature = "wip")]
+            #[cfg(feature = "native")]
             (Self::ToolServerCall(l0), Self::ToolServerCall(r0)) => std::ptr::eq(l0, r0),
             (Self::Validation(l0), Self::Validation(r0)) => std::ptr::eq(l0, r0),
-            #[cfg(feature = "wip")]
+            #[cfg(feature = "native")]
             (Self::Unfinished(l0), Self::Unfinished(r0)) => std::ptr::eq(l0, r0),
             (Self::Subgraph(l0), Self::Subgraph(r0)) => l0 == r0,
             (Self::Unknown(l0), Self::Unknown(r0)) => l0 == r0,
@@ -1633,14 +1633,14 @@ impl PartialEq for WorkflowError {
     }
 }
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 impl From<ToolExecutionError> for WorkflowError {
     fn from(value: ToolExecutionError) -> Self {
         WorkflowError::ToolCall(value)
     }
 }
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 impl From<ToolServerError> for WorkflowError {
     fn from(value: ToolServerError) -> Self {
         WorkflowError::ToolServerCall(value)

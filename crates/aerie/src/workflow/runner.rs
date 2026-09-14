@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 use crate::workflow::{
     RunContext, ShadowGraph, ValueKind, Wire, WorkNode,
     nodes::{Fallback, Flavor, Select},
@@ -575,7 +575,7 @@ impl RunEventCast {
     }
 }
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 #[derive(TypedBuilder)]
 pub struct WorkflowRunner {
     #[builder(default)]
@@ -608,7 +608,7 @@ pub struct WorkflowRunner {
     pub run_events: RunEventCast,
 }
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 // TODO methods to alter status when node controls or connections changed
 impl WorkflowRunner {
     pub fn init(&mut self, graph: &ShadowGraph<WorkNode>) {

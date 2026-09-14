@@ -20,7 +20,7 @@ use crate::{
         state::MetaEdit,
         workflow::get_snarl_style,
     },
-    utils::{ErrorDistiller as _, spawn_wherever},
+    utils::spawn_wherever,
     workflow::store::WorkflowStore as _,
 };
 
