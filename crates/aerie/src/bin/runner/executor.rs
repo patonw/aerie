@@ -69,7 +69,7 @@ pub fn check_workflows(args: &Args, pretty: bool) -> anyhow::Result<()> {
         anyhow::bail!("Nothing to check");
     };
 
-    let names = store.names().map(|n| n.to_string()).collect_vec();
+    let names = store.scan_names().map(|n| n.to_string()).collect_vec();
 
     let mut json_writer = JsonStreamWriter::new_custom(
         std::io::stdout(),

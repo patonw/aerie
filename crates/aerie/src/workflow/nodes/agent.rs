@@ -12,28 +12,22 @@ use std::{borrow::Cow, str::FromStr as _, sync::Arc};
 use strum::IntoEnumIterator as _;
 
 #[cfg(feature = "native")]
-#[cfg(feature = "ui")]
-use crate::toolbox::ToolProvider;
-#[cfg(feature = "native")]
-use crate::workflow::RunContext;
-use crate::{
-    config::ToolSelector,
-    config::{ModelRole, Ternary},
-    rig::message::Message,
-    utils::message_text,
-    workflow::{DynNode, FlexNode, GraphId, Value, ValueKind, WorkflowError, with_deadline},
-};
-#[cfg(feature = "native")]
-use crate::{
-    toolbox::{ChainBreaker, ChainTool},
-    workflow::CheckContext,
-};
+use crate::workflow::{CheckContext, RunContext};
+
 #[cfg(feature = "ui")]
 use crate::{
+    toolbox::ToolProvider,
     ui::{resizable_frame, resizable_frame_opt, shortcuts::squelch},
     workflow::{EditContext, NodeTheme, ThemeCodex, UiNode},
 };
 
+use crate::{
+    config::{ModelRole, Ternary, ToolSelector},
+    rig::message::Message,
+    toolbox::{ChainBreaker, ChainTool},
+    utils::message_text,
+    workflow::{DynNode, FlexNode, GraphId, Value, ValueKind, WorkflowError, with_deadline},
+};
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tools {
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -124,7 +118,6 @@ impl UiNode for Tools {
         true
     }
 
-    #[cfg(feature = "wip")]
     fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
         let dsize = Some(egui::vec2(250., 250.0));
         resizable_frame_opt(dsize, &mut self.size, ui, |ui| {

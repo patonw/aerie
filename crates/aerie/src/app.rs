@@ -318,6 +318,26 @@ impl AppFactory {
         let next_images = app_state.agent_factory.next_images.clone();
         let task_count = app_state.agent_factory.task_count.clone();
 
+        let rt = app_state.rt.clone();
+
+        let notify = Arc::new(tokio::sync::Notify::new());
+        rt.spawn({
+            let that = app_state.agent_factory.clone();
+            let errors = app_state.errors.clone();
+            let events = app_state.events.clone();
+            let notify = notify.clone();
+
+            async move {
+                let results = that.load_tools().await;
+                for result in results {
+                    errors.distil(result);
+                }
+
+                events.insert(AppEvent::ToolsChanged);
+                notify.notify_one();
+            }
+        });
+
         Ok(App::builder()
             .app_state(app_state)
             .next_workflow(next_workflow)
@@ -507,10 +527,13 @@ impl AppFactory {
                 .next_images(next_images.clone())
                 .build(),
         );
+
+        let notify = Arc::new(tokio::sync::Notify::new());
         rt.spawn({
             let that = agent_factory.clone();
             let errors = errors.clone();
             let events = events.clone();
+            let notify = notify.clone();
 
             async move {
                 let results = that.load_tools().await;
@@ -519,16 +542,20 @@ impl AppFactory {
                 }
 
                 events.insert(AppEvent::ToolsChanged);
+                notify.notify_one();
             }
         });
+
         let session_names = session.list();
         let data = AppData::builder()
             .prefs(preferences.clone())
             .session(session)
             .session_names(session_names)
             .build();
+
         let app_state = (self.appstate_fn)(
             AppState::builder()
+                .notify(notify)
                 .data(data)
                 .state(config_state)
                 .tools(tool_store)

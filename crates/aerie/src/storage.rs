@@ -37,7 +37,7 @@ pub trait CachedDirStore<T: Clone + Serialize + DeserializeOwned> {
         self.view_cache(|cache| cache.keys().cloned().collect_vec())
     }
 
-    fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
+    fn scan_names(&self) -> impl Iterator<Item = Cow<'_, str>> {
         glob::glob(
             &self
                 .base_path()
@@ -132,7 +132,7 @@ pub trait CachedDirStore<T: Clone + Serialize + DeserializeOwned> {
 
     /// Loads every entry from disk into the cache, skipping any broken files
     fn preload_all(&self) {
-        let names: Vec<_> = self.names().map(|n| n.into_owned()).collect();
+        let names: Vec<_> = self.scan_names().map(|n| n.into_owned()).collect();
 
         for name in names {
             if let Err(err) = self.load(&name) {
@@ -141,7 +141,7 @@ pub trait CachedDirStore<T: Clone + Serialize + DeserializeOwned> {
         }
     }
 
-    fn save(&self, name: &str, value: T) -> anyhow::Result<()> {
+    fn save(&self, name: &str, value: &T) -> anyhow::Result<()> {
         if !name.is_empty() {
             self.put_cache(name, value.clone());
 
@@ -152,7 +152,7 @@ pub trait CachedDirStore<T: Clone + Serialize + DeserializeOwned> {
                 .truncate(true)
                 .open(path)?;
 
-            serde_yaml_ng::to_writer(writer, &value)?;
+            serde_yaml_ng::to_writer(writer, value)?;
         }
 
         Ok(())
@@ -160,7 +160,7 @@ pub trait CachedDirStore<T: Clone + Serialize + DeserializeOwned> {
 
     fn update(&self, name: &str, cb: impl Fn(T) -> T) -> anyhow::Result<()> {
         let item = self.load(name)?;
-        self.save(name, cb(item))?;
+        self.save(name, &cb(item))?;
         Ok(())
     }
 }

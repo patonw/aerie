@@ -157,6 +157,8 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
     let mut interval = tokio::time::interval(Duration::from_millis(1000));
     let task_count = app.app_state.task_count.clone();
 
+    let notify = app.app_state.notify.clone();
+
     tracing::debug!("Sending initial dump {dump_result:?}",);
 
     // let bytes = postcard::to_allocvec(&update).unwrap();
@@ -167,12 +169,21 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
 
     loop {
         tokio::select! {
-            // TODO: use broadcast get updates for chat scratch
+            // Probably don't need the interval when using the notifier
             _ = interval.tick() => {
                 if waiting {
                     waiting = task_count.load(Ordering::Relaxed) > 0;
                     let _ = patch_all(&app, &mut socket).await;
                 }
+            }
+            _ = notify.notified() => {
+                app.app_state.handle_events();
+
+                let num_tasks = task_count.load(Ordering::Relaxed);
+                tracing::debug!("Wake-up with {num_tasks} tasks.");
+
+                waiting =  num_tasks > 0;
+                let _ = patch_all(&app, &mut socket).await;
             }
             ev = node_rx.recv() => {
                 match ev {
@@ -238,6 +249,8 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
                                     Dispatch(app_events) => {
                                         for event in app_events {
                                             use aerie::events::AppEvent::*;
+                                            tracing::debug!("Dispatching event: {}", event.kind());
+
                                             match event {
                                                 SwitchWorkflow(name) => {
                                                     app.app_state.workflows.switch(&name);
@@ -308,7 +321,7 @@ async fn send_dump(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
 
     let flow_store = &app.app_state.workflows.store;
     let workflows = flow_store
-        .names()
+        .scan_names()
         .filter_map(|n| {
             flow_store
                 .load(n.as_ref())
@@ -342,7 +355,7 @@ async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
 
     let flow_store = &app.app_state.workflows.store;
     let workflows = flow_store
-        .names()
+        .scan_names()
         .filter_map(|n| {
             flow_store
                 .load(n.as_ref())

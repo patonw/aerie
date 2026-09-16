@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(feature = "wip")]
+#[cfg(feature = "native")]
 use crate::agent::AgentW;
 #[cfg(feature = "ui")]
 use crate::workflow::{NodeTheme, ThemeCodex};

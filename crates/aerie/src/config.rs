@@ -517,7 +517,7 @@ pub struct ToolSettings {
 }
 
 /// Configuration to access a tool provider
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 #[serde(tag = "type")]
 pub enum ToolSpec {
     Stdio {

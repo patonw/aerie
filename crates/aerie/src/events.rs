@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use egui_snarl::{InPinId, NodeId, OutPinId};
+use kinded::Kinded;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    config::Preferences,
+    config::{Preferences, ToolSpec},
     utils::PriorityQueue,
     workflow::{
         AnyPin, GraphId, ShadowGraph, ValueKind, WorkNode, Workflow,
@@ -13,7 +14,7 @@ use crate::{
     },
 };
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, Kinded)]
 pub enum AppEvent {
     EnterSubgraph(NodeId),
     LeaveSubgraph(usize),
@@ -46,6 +47,10 @@ pub enum AppEvent {
     UserRunWorkflow,
 
     ToolsChanged,
+    ImportTools(String, Vec<u8>),
+    SaveToolProvider(Option<String>, String, ToolSpec),
+    ReloadToolProvider(String),
+    RemoveToolProvider(String),
 
     NodesChanged(GraphId, im::OrdSet<NodeId>),
     RerunNodes(GraphId, Vec<NodeId>),

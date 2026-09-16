@@ -1,25 +1,21 @@
-use std::{
-    fs::OpenOptions,
-    path::{Path, PathBuf},
-};
-
 use anyhow::Context as _;
 use eframe::egui;
 use egui_phosphor::regular::DOWNLOAD_SIMPLE;
 use itertools::Itertools;
 use serde_yaml_ng as serde_yml;
+use std::path::PathBuf;
 
 use crate::{
     config::ToolSpec,
-    storage::CachedDirStore as _,
-    toolbox::ToolProvider,
     ui::{AppEvent, state::ToolEditorState, toggled_field},
-    utils::ErrorDistiller as _,
+    utils::{ErrorDistiller as _, spawn_wherever},
 };
+
+// #[cfg(feature = "native")]
+// use crate::storage::CachedDirStore as _;
 
 impl super::AppState {
     pub fn toolset_ui(&mut self, ui: &mut egui::Ui) {
-        let errors = self.errors.clone();
         let language = "json";
         let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
 
@@ -97,15 +93,22 @@ impl super::AppState {
                     });
                 }
 
-                if ui.button(DOWNLOAD_SIMPLE).on_hover_text("Import").clicked()
-                    && let Some(path) = rfd::FileDialog::new()
-                        .set_directory(&self.state.export_dir)
-                        .add_filter("mcp", &["mcp"])
-                        .add_filter("all", &[""])
-                        .pick_file()
-                {
-                    self.state.set_export_dir(path.parent());
-                    errors.distil(self.import_tool_spec(&path));
+                if ui.button(DOWNLOAD_SIMPLE).on_hover_text("Import").clicked() {
+                    let export_dir = self.state.export_dir.clone();
+                    let events = self.events.clone();
+                    spawn_wherever(async move {
+                        if let Some(fh) = rfd::AsyncFileDialog::new()
+                            .set_directory(&export_dir)
+                            .add_filter("mcp", &["mcp"])
+                            .add_filter("all", &[""])
+                            .pick_file()
+                            .await
+                        {
+                            let name = fh.file_name();
+                            let bytes = fh.read().await;
+                            events.insert(AppEvent::ImportTools(name.to_string(), bytes));
+                        }
+                    });
                 }
             });
             self.tool_tree(ui);
@@ -113,87 +116,72 @@ impl super::AppState {
     }
 
     fn tool_tree(&mut self, ui: &mut egui::Ui) {
-        let errors = self.errors.clone();
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
 
-            for name in self.tools.cached_names() {
-                let Ok(spec) = self.tools.load(&name) else { continue };
+            for (name, tools) in &self.tools.tool_info {
+                let Some(spec) = self.tools.get(name) else { continue };
                 let enabled = spec.enabled();
 
                 egui::collapsing_header::CollapsingState::load_with_default_open(
                     ui.ctx(),
-                    ui.id().with(&name),
+                    ui.id().with(name),
                     true,
                 )
                 .show_header(ui, |ui| {
                         let selected = matches!(
                             &self.tool_editor,
-                            Some(ToolEditorState::EditProvider { original: Some(original), .. }) if original.0 == name
+                            Some(ToolEditorState::EditProvider { original: Some(original), .. }) if original.0 == *name
                         );
 
-                        let name_text = egui::RichText::new(&name);
+                        let name_text = egui::RichText::new(name);
                         let name_text = if enabled {name_text} else {name_text.weak()};
                         let resp = ui.selectable_label(selected, name_text);
                         resp.context_menu(|ui| {
                             if ui.button(if enabled { "Disable" } else { "Enable"}).clicked() {
-                                let mut tool_spec = self.tools.load(&name).unwrap();
+                                let mut tool_spec = self.tools.get(name).unwrap().into_owned();
                                 tool_spec.set_enabled(!enabled);
-                                errors.distil(self.tools.save(&name, tool_spec));
-                                self.agent_factory.stop_provider(&name);
 
-                                let name = name.clone();
-                                let agent_factory = self.agent_factory.clone();
-                                let errors = self.errors.clone();
-                                let events = self.events.clone();
-                                self.rt.spawn(async move {
-                                    errors.distil(agent_factory.reload_provider(&name).await);
-                                    events.insert(AppEvent::ToolsChanged);
-                                });
+                                self.events.insert(AppEvent::SaveToolProvider(None, name.to_string(), tool_spec));
                             }
 
                             ui.menu_button("Delete", |ui| {
                                 if ui.button("OK").clicked() {
-                                    self.errors.distil(self.tools.remove(&name));
+                                self.events.insert(AppEvent::RemoveToolProvider(name.to_string()));
                                 }
                             });
 
-                            if ui.button("Export").clicked()
-                                && let Some(path) = rfd::FileDialog::new()
-                                                    .add_filter("mcp", &["mcp"])
-                                                    .add_filter("all", &[""])
-                                                    .set_directory( &self.state.export_dir)
-                                                    .set_file_name(format!(
-                                                        "{name}.mcp",
-                                                    ))
-                                                    .save_file()
-                                {
-                                        self.state.set_export_dir(path.parent());
+                            if ui.button("Export").clicked() {
+                                let mut tool_spec = self.tools.get(name).unwrap().into_owned();
+                                tool_spec.set_enabled(false);
+                                let export_dir = self.state.export_dir.clone();
+                                let name = name.to_string();
+                                let errors = self.errors.clone();
 
-                                    if let Ok(writer) = OpenOptions::new()
-                                        .write(true)
-                                        .create(true)
-                                        .truncate(true)
-                                        .open(&path) {
+                                spawn_wherever(async move {
+                                    if let Some(fh) = rfd::AsyncFileDialog::new()
+                                        .add_filter("mcp", &["mcp"])
+                                        .add_filter("all", &[""])
+                                        .set_directory( &export_dir)
+                                        .set_file_name(format!(
+                                            "{name}.mcp",
+                                        ))
+                                        .save_file().await {
+                                        let mut bytes = Vec::new();
 
-
-                                        let mut tool_spec = self.tools.load(&name).unwrap();
-                                        tool_spec.set_enabled(false);
-                                        errors.distil(serde_yml::to_writer(writer, &tool_spec).context(format!("While writing {path:?}")));
+                                        errors.distil(serde_yml::to_writer(&mut bytes, &tool_spec).context(format!("While serializing tool provider {name}")));
+                                        let _ = fh.write(&bytes).await;
                                     }
+                                });
 
-                                }
+                            }
                         });
                         if resp.clicked() {
-                            let tool_spec = self.tools.load(&name).unwrap();
+                            let tool_spec = self.tools.get(name).unwrap().into_owned();
 
                             self.tool_editor = Some(ToolEditorState::EditProvider { original: Some((name.to_string(), tool_spec.clone())), modified: (name.to_string(), tool_spec.clone()) })
                         }
                     })
                 .body(|ui| {
-                        // TODO: Show any errors connecting to provider
-                        if let Some(provider) = self.agent_factory.toolbox.providers.load().get(&name) {
-
-                            let ToolProvider::MCP { tools, .. } = provider else { unreachable!() };
                             for item in tools {
                                 ui.horizontal(|ui| {
                                     let selected = matches!(
@@ -207,8 +195,8 @@ impl super::AppState {
                                             Some(ToolEditorState::ViewTool { tool: item.clone() })
                                     }
                                 });
+
                             }
-                        }
                 });
             }
         });
@@ -355,60 +343,15 @@ impl super::AppState {
 
                 let (name, value) = modified;
 
-                // Is there any way we can keep existing tool filters from breaking on renames?
-                let old_name = if let Some((old_name, _)) = original {
-                    self.agent_factory.stop_provider(&old_name);
-                    Some(old_name)
-                } else {
-                    None
-                };
-
-                if let Some(old_name) = old_name {
-                    self.errors.distil(self.tools.remove(&old_name));
-                }
-
-                self.errors.distil(self.tools.save(&name, value));
-
-                let errors = self.errors.clone();
-                let agent_factory = self.agent_factory.clone();
-                let events = self.events.clone();
-                self.rt.spawn(async move {
-                    errors.distil(agent_factory.reload_provider(&name).await);
-                    events.insert(AppEvent::ToolsChanged);
-                });
+                self.events.insert(AppEvent::SaveToolProvider(
+                    original.map(|it| it.0),
+                    name.to_string(),
+                    value,
+                ));
             }
             if ui.button("Cancel").clicked() {
                 self.tool_editor = None;
             }
         });
-    }
-
-    fn import_tool_spec(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
-        let path = path.as_ref();
-        if !path.is_file() {
-            anyhow::bail!("Invalid file: {path:?}");
-        }
-
-        let name = path
-            .file_stem()
-            .and_then(|s| s.to_os_string().into_string().ok())
-            .unwrap_or_default();
-
-        let exists = self.tools.exists(&name);
-        let name = if name.is_empty() || exists {
-            let datetime = chrono::offset::Local::now();
-            let timestamp = datetime.format("%Y-%m-%dT%H:%M:%S").to_string();
-            std::iter::chain([name], [timestamp]).join("-")
-        } else {
-            name
-        };
-
-        let reader = OpenOptions::new().read(true).open(path)?;
-        let mut data: ToolSpec = serde_yml::from_reader(reader)?;
-        data.set_enabled(false);
-
-        self.errors.distil(self.tools.save(&name, data));
-
-        Ok(())
     }
 }

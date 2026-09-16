@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     iter::{self, once},
     path::{Path, PathBuf},
     sync::Arc,
@@ -214,6 +215,7 @@ pub enum ToolProvider {
         #[cfg(feature = "native")]
         client: McpClient,
         tools: Vec<Tool>,
+        #[cfg(feature = "native")]
         timeout: Option<u64>,
     },
 }
@@ -548,17 +550,16 @@ pub struct Toolbox {
 }
 
 impl Toolbox {
-    #[cfg(feature = "native")]
     pub fn with_provider(&self, name: &str, provider: ToolProvider) -> &Self {
         self.providers
             .rcu(|providers| providers.update(name.into(), provider.clone()));
         self
     }
 
-    #[cfg(feature = "native")]
     pub fn without_provider(&self, name: &str) -> &Self {
         self.providers.rcu(|providers| {
             if let Some(provider) = providers.get(name) {
+                #[cfg(feature = "native")]
                 if let ToolProvider::MCP { client, .. } = provider {
                     client.cancel();
                 }
@@ -646,8 +647,9 @@ impl Toolbox {
 
     pub fn timeout(&self, toolset: &ToolSelector, tool_name: &str) -> Option<u64> {
         self.provider_for(toolset, tool_name).and_then(|p| match p {
+            #[cfg(feature = "native")]
             ToolProvider::MCP { timeout, .. } => timeout,
-            ToolProvider::Chainer { .. } => None,
+            _ => None,
         })
     }
 
@@ -728,9 +730,12 @@ impl Toolbox {
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ToolStore {
-    path: PathBuf,
+    pub path: PathBuf,
 
-    cache: Arc<ArcSwap<im::OrdMap<String, (SystemTime, ToolSpec)>>>,
+    pub cache: Arc<ArcSwap<im::OrdMap<String, (SystemTime, ToolSpec)>>>,
+
+    #[serde(default)]
+    pub tool_info: BTreeMap<String, Vec<Tool>>,
 }
 
 impl ToolStore {
@@ -738,6 +743,7 @@ impl ToolStore {
         Self {
             path: path.as_ref().to_path_buf(),
             cache: Default::default(),
+            tool_info: Default::default(),
         }
     }
 
@@ -787,5 +793,27 @@ impl crate::storage::CachedDirStore<ToolSpec> for ToolStore {
         ) -> im::OrdMap<String, (SystemTime, ToolSpec)>,
     ) {
         self.cache.rcu(|cache| cb(cache));
+    }
+}
+
+impl ToolStore {
+    pub fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
+        let cache = self.cache.load();
+        cache
+            .keys()
+            .cloned()
+            .collect_vec()
+            .into_iter()
+            .map(|s| Cow::Owned(s))
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        let cache = self.cache.load();
+        cache.contains_key(name)
+    }
+
+    pub fn get(&self, name: &str) -> Option<Cow<'_, ToolSpec>> {
+        let cache = self.cache.load();
+        cache.get(name).map(|it| Cow::Owned(it.1.clone()))
     }
 }

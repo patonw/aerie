@@ -380,7 +380,7 @@ fn make_tile_tree() -> Tree<Pane> {
 
     let content_tabs: TileId = tiles.insert_tab_tile(tabs);
     let tabs = vec![
-        // tiles.insert_pane(Pane::Tools),
+        tiles.insert_pane(Pane::Tools),
         tiles.insert_pane(Pane::Navigator),
         tiles.insert_pane(Pane::Settings),
     ];

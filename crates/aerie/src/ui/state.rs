@@ -115,6 +115,11 @@ pub struct AppState {
     #[cfg(feature = "native")]
     pub rt: tokio::runtime::Handle,
 
+    /// Tells event loop when something interesting happens from a background task
+    #[cfg(feature = "native")]
+    #[builder(default)]
+    pub notify: Arc<tokio::sync::Notify>,
+
     // TODO: migrate
     #[builder(default)]
     pub show_help: Option<ShowHelp>,
@@ -202,9 +207,31 @@ impl AppState {
     fn get_toolbox(&self) -> Toolbox {
         self.agent_factory.toolbox.clone()
     }
+
     #[cfg(not(feature = "native"))]
     fn get_toolbox(&self) -> Toolbox {
-        Default::default()
+        use crate::toolbox::ToolProvider;
+
+        let mut toolbox = Toolbox::default();
+
+        toolbox.with_provider(
+            "chainer",
+            ToolProvider::Chainer {
+                workflows: self.workflows.store.clone(),
+                next_workflow: Default::default(),
+                next_prompt: Default::default(),
+                next_images: Default::default(),
+            },
+        );
+
+        for (provider, tools) in &self.tools.tool_info {
+            let entry = ToolProvider::MCP {
+                tools: tools.clone(),
+            };
+            toolbox.with_provider(provider, entry);
+        }
+
+        toolbox
     }
 
     pub fn workflow_viewer(&mut self) -> &mut WorkflowViewer {
@@ -306,6 +333,78 @@ impl AppState {
                         self.workflows.node_state.clear();
                         self.exec_workflow();
                         executed = true;
+                        true
+                    }
+                    ImportTools(file_name, bytes) => {
+                        use anyhow::Context as _;
+
+                        use crate::storage::CachedDirStore as _;
+
+                        let name = Path::new(file_name)
+                            .file_stem()
+                            .and_then(|s| s.to_os_string().into_string().ok())
+                            .unwrap_or_default();
+
+                        let exists = self.tools.contains(&name);
+
+                        let name = if name.is_empty() || exists {
+                            let datetime = chrono::offset::Local::now();
+                            let timestamp = datetime.format("%Y-%m-%dT%H:%M:%S").to_string();
+                            std::iter::chain([name], [timestamp]).join("-")
+                        } else {
+                            name
+                        };
+
+                        if let Some(mut data) = errors.distil(
+                            serde_yml::from_slice::<ToolSpec>(bytes)
+                                .context("Could not deserialize tool spec"),
+                        ) {
+                            data.set_enabled(false);
+                            self.errors.distil(self.tools.save(&name, &data));
+                            self.events.insert(AppEvent::ToolsChanged);
+                        }
+
+                        true
+                    }
+                    SaveToolProvider(old_name, name, spec) => {
+                        use crate::storage::CachedDirStore as _;
+
+                        if let Some(old_name) = old_name {
+                            self.agent_factory.stop_provider(old_name);
+
+                            errors.distil(self.tools.remove(old_name));
+                        }
+
+                        errors.distil(self.tools.save(name, spec));
+                        self.events
+                            .insert(AppEvent::ReloadToolProvider(name.to_string()));
+
+                        true
+                    }
+                    ReloadToolProvider(name) => {
+                        self.agent_factory.stop_provider(name);
+
+                        let name = name.to_string();
+                        let agent_factory = self.agent_factory.clone();
+                        let errors = self.errors.clone();
+                        let events = self.events.clone();
+                        let notify = self.notify.clone();
+
+                        self.rt.spawn(async move {
+                            errors.distil(agent_factory.reload_provider(&name).await);
+                            events.insert(AppEvent::ToolsChanged);
+                            notify.notify_one();
+                        });
+
+                        true
+                    }
+                    RemoveToolProvider(name) => {
+                        use crate::storage::CachedDirStore as _;
+
+                        errors.distil(self.tools.remove(name));
+                        self.agent_factory.stop_provider(name);
+                        self.events.insert(AppEvent::ToolsChanged);
+
                         true
                     }
                     NodesChanged(graph_id, nodes) => {
@@ -425,6 +524,32 @@ impl AppState {
 
                         true
                     }
+                    ToolsChanged => {
+                        use crate::{storage::CachedDirStore, toolbox::ToolProvider};
+
+                        self.tools.tool_info.clear();
+                        let names = self.tools.scan_names().map(|s| s.to_string()).collect_vec();
+
+                        for provider in names {
+                            self.tools
+                                .tool_info
+                                .insert(provider.to_string(), Default::default());
+                        }
+
+                        let providers = self.agent_factory.toolbox.providers.load();
+                        let mcp_tools = providers.iter().filter_map(|(n, p)| match p {
+                            ToolProvider::Chainer { .. } => None,
+                            ToolProvider::MCP { tools, .. } => Some((n, tools)),
+                        });
+
+                        for (provider, tools) in mcp_tools {
+                            tracing::debug!(provider, "Extracting tool info");
+
+                            self.tools.tool_info.insert(provider.clone(), tools.clone());
+                        }
+
+                        true
+                    }
                     _ => false,
                 };
 
@@ -472,7 +597,6 @@ impl egui_tiles::Behavior<Pane> for AppState {
             Pane::Logs => {
                 self.logview_ui(ui);
             }
-            #[cfg(feature = "wip")]
             Pane::Tools => {
                 self.toolset_ui(ui);
             }
@@ -1258,8 +1382,9 @@ impl<W: WorkflowStore> WorkflowState<W> {
                 false
             }
             ToolsChanged => {
+                // TODO: extract tool info from providers into struct for client
                 self.graph_checked = false;
-                true
+                false
             }
             _ => false,
         }

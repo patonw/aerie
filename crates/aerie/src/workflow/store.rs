@@ -209,18 +209,18 @@ impl WorkflowStoreDir {
             cache: Default::default(),
         };
 
-        let names = CachedDirStore::names(&this).collect_vec();
+        let names = CachedDirStore::scan_names(&this).collect_vec();
         tracing::info!("Discovered workflows: {names:?}");
 
         if tutorial && names.iter().all(|n| n == "__default__") {
             let bytes = include_bytes!("../../../../examples/workflows/beginner/basic.yml");
             if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
-                let _ = CachedDirStore::save(&this, "basic", graph);
+                let _ = CachedDirStore::save(&this, "basic", &graph);
             }
 
             let bytes = include_bytes!("../../../../examples/workflows/beginner/chatty.yml");
             if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
-                let _ = CachedDirStore::save(&this, "chatty", graph);
+                let _ = CachedDirStore::save(&this, "chatty", &graph);
             }
         }
 
@@ -268,12 +268,12 @@ impl WorkflowStore for WorkflowStoreDir {
         if name.is_empty() || name == "__default__" {
             Ok(())
         } else {
-            CachedDirStore::save(self, name, value)
+            CachedDirStore::save(self, name, &value)
         }
     }
 
     fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
-        CachedDirStore::names(self)
+        CachedDirStore::scan_names(self)
     }
 
     fn exists(&self, key: &str) -> bool {
