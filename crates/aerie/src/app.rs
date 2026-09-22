@@ -28,6 +28,7 @@ use crate::{
     toolbox::ToolStore,
     ui::{
         Pane,
+        render::display_errors,
         shortcuts::SHORTCUT_QUIT,
         state::{AppData, AppState, WorkflowState},
     },
@@ -193,42 +194,12 @@ impl App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
 
-        let errors = self.app_state.errors.load();
-        if !errors.is_empty() {
-            let modal = egui::Modal::new(egui::Id::new("Errors")).show(ctx, |ui| {
-                ui.set_max_width(content_rect.width() * 0.8);
-                ui.set_min_height(content_rect.height() * 0.5);
-                ui.heading("Errors");
-                egui::ScrollArea::both()
-                    .auto_shrink(egui::Vec2b::new(true, false))
-                    .show(ui, |ui| {
-                        for (i, err) in errors.iter().enumerate() {
-                            egui::collapsing_header::CollapsingState::load_with_default_open(
-                                ui.ctx(),
-                                ui.make_persistent_id(format!("error #{i}")),
-                                false,
-                            )
-                            .show_header(ui, |ui| {
-                                let heading = egui::RichText::new(
-                                    err.to_string().lines().next().unwrap_or_default(),
-                                )
-                                .strong();
-                                ui.add(egui::Label::new(heading).wrap());
-                            })
-                            .body(|ui| {
-                                ui.label(format!("{err:?}"));
-                                // for line in err.to_string().lines().skip(1) {
-                                //     ui.label(line);
-                                // }
-                            });
-                        }
-                    });
-            });
-
-            if modal.should_close() {
-                self.app_state.errors.discard();
-            }
-        }
+        display_errors(
+            ctx,
+            content_rect,
+            self.app_state.errors.clone(),
+            self.app_state.events.clone(),
+        );
     }
 
     pub fn post_update(&mut self) {

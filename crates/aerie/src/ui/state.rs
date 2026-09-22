@@ -291,6 +291,10 @@ impl AppState {
 
             handled = handled
                 || match &event {
+                    DiscardErrors => {
+                        self.errors.discard();
+                        true
+                    }
                     CreateWorkflow => {
                         let datetime = chrono::offset::Local::now();
                         let timestamp = datetime.format("unnamed-%Y-%m-%dT%H:%M:%S").to_string();

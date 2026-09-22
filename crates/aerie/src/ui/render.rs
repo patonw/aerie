@@ -1,8 +1,10 @@
+use crate::events::{AppEvent, AppEvents};
 use crate::rig::message::Message;
-use crate::utils::{IMAGE_CACHE, MERMAID_MD, show_image};
+use crate::utils::{ErrorList, IMAGE_CACHE, MERMAID_MD, show_image};
 use eframe::egui;
 use egui_commonmark::*;
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use crate::{
     ui::{agent_bubble, user_bubble},
@@ -233,6 +235,50 @@ pub fn render_message_width(
                     ui.set_width(width.unwrap_or(ui.available_width()));
                     ui.label(content);
                 });
+        }
+    }
+}
+
+pub fn display_errors(
+    ctx: &egui::Context,
+    content_rect: egui::Rect,
+    errors: ErrorList<anyhow::Error>,
+    events: Arc<AppEvents>,
+) {
+    let guard = errors.load();
+    if !guard.is_empty() {
+        let modal = egui::Modal::new(egui::Id::new("Errors")).show(ctx, |ui| {
+            ui.set_max_width(content_rect.width() * 0.8);
+            ui.set_min_height(content_rect.height() * 0.5);
+            ui.heading("Errors");
+            egui::ScrollArea::both()
+                .auto_shrink(egui::Vec2b::new(true, false))
+                .show(ui, |ui| {
+                    for (i, err) in guard.iter().enumerate() {
+                        egui::collapsing_header::CollapsingState::load_with_default_open(
+                            ui.ctx(),
+                            ui.make_persistent_id(format!("error #{i}")),
+                            false,
+                        )
+                        .show_header(ui, |ui| {
+                            let heading = egui::RichText::new(
+                                err.to_string().lines().next().unwrap_or_default(),
+                            )
+                            .strong();
+                            ui.add(egui::Label::new(heading).wrap());
+                        })
+                        .body(|ui| {
+                            ui.label(format!("{err:?}"));
+                            // for line in err.to_string().lines().skip(1) {
+                            //     ui.label(line);
+                            // }
+                        });
+                    }
+                });
+        });
+
+        if modal.should_close() {
+            events.insert(AppEvent::DiscardErrors);
         }
     }
 }

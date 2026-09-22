@@ -16,6 +16,8 @@ use crate::{
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, Kinded)]
 pub enum AppEvent {
+    DiscardErrors,
+
     EnterSubgraph(NodeId),
     LeaveSubgraph(usize),
 

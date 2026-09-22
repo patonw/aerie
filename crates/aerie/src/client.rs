@@ -80,6 +80,9 @@ pub struct StatePatch {
 
     #[builder(default)]
     pub previews: Option<Vec<((ExecId, Uuid), Value)>>,
+
+    #[builder(default)]
+    pub errors: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TypedBuilder)]

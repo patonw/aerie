@@ -1,4 +1,5 @@
 use clap::Parser as _;
+use itertools::Itertools as _;
 use std::{
     net::SocketAddr,
     path::PathBuf,
@@ -380,6 +381,16 @@ async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
         .build();
 
     let previews = app.app_state.workflows.previews.into_vec();
+    let errors = app
+        .app_state
+        .errors
+        .load()
+        .iter()
+        .map(|e| format!("{e:#}"))
+        .collect_vec();
+
+    tracing::info!("# errors {}", errors.len());
+
     let state = StatePatch::builder()
         .app_data(app.app_state.data.clone())
         .tools(tool_store)
@@ -388,8 +399,8 @@ async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
         .images(im::Vector::clone(app.app_state.images.load().as_ref()))
         .config_state(app.app_state.state.clone())
         .editor(editor)
-        // .node_state(Some(node_state))
         .previews(Some(previews))
+        .errors(Some(errors))
         .build();
 
     let names = state.app_data.as_ref().map(|d| d.session_names.clone());
@@ -400,8 +411,11 @@ async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
         .task_count(app.task_count.load(Ordering::Relaxed))
         .build();
 
-    match serde_json::to_string(&update) {
-        Ok(payload) => socket.send(Message::Text(payload.into())).await,
+    match rmp_serde::to_vec_named(&update) {
+        Ok(payload) => {
+            tracing::debug!("Patch size {} bytes", payload.len());
+            socket.send(Message::Binary(payload.into())).await
+        }
         Err(err) => {
             tracing::error!(?err, "Whoops");
             Ok(())

@@ -388,12 +388,13 @@ impl super::AppState {
 
                 let n_scratch= scratch.len();
                 let n_msgs = history.iter_msgs().count();
+                let n_errs = self.errors.load().len();
 
                 let egui::Pos2 { x, y } = ui.max_rect().right_top();
                 let over_rect =
                 egui::Rect::from_two_pos(egui::pos2(x - 128.0, y), egui::pos2(x, y + 20.0));
 
-                let widget = egui::Label::new(format!("#scratch {n_scratch}\n#msgs {n_msgs}"));
+                let widget = egui::Label::new(format!("#scratch {n_scratch}\n#msgs {n_msgs}\n#errs {n_errs}"));
                 ui.place(over_rect, widget);
             }
         });

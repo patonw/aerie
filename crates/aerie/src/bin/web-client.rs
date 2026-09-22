@@ -5,9 +5,10 @@ use aerie::{
     config::ConfigStateProxy,
     ui::{
         Pane,
+        render::display_errors,
         state::{AppData, AppState, WorkflowState},
     },
-    utils::ErrorDistiller as _,
+    utils::{ErrorDistiller as _, ErrorList},
     workflow::{
         runner::{NodeStateMap, WorkflowRun},
         store::WorkflowStoreStub,
@@ -17,6 +18,7 @@ use eframe::egui;
 use egui::Visuals;
 use egui_tiles::{LinearDir, TileId, Tree};
 use ewebsock::{WsEvent, WsReceiver, WsSender};
+use rmp_serde::{Deserializer, Serializer};
 
 // TODO: figure out how to manage different users
 // TODO: Save settings when changed
@@ -86,102 +88,9 @@ impl eframe::App for WebApp {
                     WsEvent::Message(ewebsock::WsMessage::Text(txt))
                         if let Ok(payload) = serde_json::from_str::<ClientUpdate>(&txt) =>
                     {
+                        tracing::debug!("received {} chars", txt.len());
                         task_update = payload.task_count;
-                        let update_data = payload.update;
-                        match update_data {
-                            UpdateData::Dump(dump) => {
-                                self.state.tools = dump.tools;
-                                self.state.data = dump.app_data;
-                                self.state.prompt = dump.prompt;
-                                self.state
-                                    .task_count
-                                    .store(dump.task_count, std::sync::atomic::Ordering::Relaxed);
-                                self.state.workflows.store.metadata = dump.workflows;
-                            }
-                            UpdateData::Patch(patch) => {
-                                if let Some(tools) = patch.tools {
-                                    self.state.tools = tools;
-                                }
-
-                                if let Some(app_data) = patch.app_data {
-                                    self.state.data = app_data;
-                                }
-
-                                if let Some(prompt) = patch.prompt {
-                                    if prompt.is_empty() {
-                                        self.state.prompt.clear();
-                                    }
-                                }
-
-                                if let Some(images) = patch.images {
-                                    self.state.images.store(Arc::new(images));
-                                }
-
-                                if let Some(config_state) = patch.config_state {
-                                    errors.distil(
-                                        self.state.state.update(|state| *state = config_state),
-                                    );
-                                }
-
-                                // log::info!("Editor patch? {:?}", &patch.editor);
-                                if let Some(editor) = patch.editor {
-                                    self.state.workflows.patch(editor);
-                                }
-
-                                if let Some(previews) = patch.previews {
-                                    self.state.workflows.previews.replace(previews);
-                                }
-
-                                if let Some(workflows) = patch.workflows {
-                                    self.state.workflows.store.metadata = workflows;
-                                }
-                            }
-                            UpdateData::Switch(data) => {
-                                self.state
-                                    .workflows
-                                    .switch_workflow(&data.name, data.baseline);
-                            }
-                            UpdateData::NodeState(events) => {
-                                for event in events {
-                                    errors.distil(self.node_states.handle_event(event));
-                                }
-                            }
-                            UpdateData::Event(ev) => {
-                                use aerie::events::ExecEvent::*;
-                                use aerie::events::WorkflowEvent::*;
-
-                                let runs = &mut self.state.workflows.outputs;
-
-                                match ev {
-                                    Exec(Start(_, name, started)) => {
-                                        let entry = WorkflowRun::builder()
-                                            .started(started)
-                                            .duration(Default::default())
-                                            .workflow(name)
-                                            .outputs(Default::default())
-                                            .build();
-
-                                        runs.push_back(entry);
-                                        if runs.len() > 128 {
-                                            *runs = runs.skip(runs.len() - 128);
-                                        }
-                                    }
-                                    Exec(Tick(_, millis)) | Exec(Finish(_, millis)) => {
-                                        runs.back_mut()
-                                            .unwrap()
-                                            .duration
-                                            .store(Arc::new(Duration::from_millis(millis)));
-                                    }
-                                    Exec(Output(_, label, value)) => {
-                                        runs.back_mut()
-                                            .unwrap()
-                                            .outputs
-                                            .rcu(|it| it.update(label.clone(), value.clone()));
-                                    }
-                                }
-                            }
-                        }
-                        // ctx.request_repaint();
+                        handle_update(&mut self.state, &mut self.node_states, payload.update);
                     }
                     WsEvent::Message(ewebsock::WsMessage::Text(txt)) => {
                         let jd = &mut serde_json::Deserializer::from_str(&txt);
@@ -191,8 +100,20 @@ impl eframe::App for WebApp {
                         }
                     }
                     WsEvent::Message(ewebsock::WsMessage::Binary(bytes)) => {
-                        let data = postcard::from_bytes::<ClientUpdate>(&bytes);
-                        tracing::info!("Got binary update: {:?}", data);
+                        tracing::debug!("received {} bytes", bytes.len());
+                        match rmp_serde::from_slice::<ClientUpdate>(&bytes) {
+                            Ok(payload) => {
+                                task_update = payload.task_count;
+                                handle_update(
+                                    &mut self.state,
+                                    &mut self.node_states,
+                                    payload.update,
+                                );
+                            }
+                            Err(err) => {
+                                tracing::error!(%err);
+                            }
+                        }
                     }
                     unk => {
                         log::warn!("Got unknonwn message: {unk:?}");
@@ -209,6 +130,7 @@ impl eframe::App for WebApp {
             log::info!("Connected");
         }
 
+        let content_rect = ctx.content_rect();
         egui::CentralPanel::default().show(ctx, |ui| {
             self.tile_tree.ui(&mut self.state, ui);
 
@@ -265,6 +187,114 @@ impl eframe::App for WebApp {
             self.state
                 .task_count
                 .store(task_count, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        display_errors(ctx, content_rect, errors, self.state.events.clone());
+    }
+}
+
+fn handle_update(
+    app_state: &mut AppState,
+    node_states: &mut NodeStateMap,
+    update_data: UpdateData,
+) {
+    let errors = app_state.errors.clone();
+    match update_data {
+        UpdateData::Dump(dump) => {
+            app_state.tools = dump.tools;
+            app_state.data = dump.app_data;
+            app_state.prompt = dump.prompt;
+            app_state
+                .task_count
+                .store(dump.task_count, std::sync::atomic::Ordering::Relaxed);
+            app_state.workflows.store.metadata = dump.workflows;
+        }
+        UpdateData::Patch(patch) => {
+            if let Some(tools) = patch.tools {
+                app_state.tools = tools;
+            }
+
+            if let Some(app_data) = patch.app_data {
+                app_state.data = app_data;
+            }
+
+            if let Some(prompt) = patch.prompt {
+                if prompt.is_empty() {
+                    app_state.prompt.clear();
+                }
+            }
+
+            if let Some(images) = patch.images {
+                app_state.images.store(Arc::new(images));
+            }
+
+            if let Some(config_state) = patch.config_state {
+                errors.distil(app_state.state.update(|state| *state = config_state));
+            }
+
+            // log::info!("Editor patch? {:?}", &patch.editor);
+            if let Some(editor) = patch.editor {
+                app_state.workflows.patch(editor);
+            }
+
+            if let Some(previews) = patch.previews {
+                app_state.workflows.previews.replace(previews);
+            }
+
+            if let Some(errors) = patch.errors {
+                app_state.errors.discard();
+                for err in errors.into_iter().map(|e| anyhow::anyhow!(e)) {
+                    app_state.errors.push(err);
+                }
+            }
+
+            if let Some(workflows) = patch.workflows {
+                app_state.workflows.store.metadata = workflows;
+            }
+        }
+        UpdateData::Switch(data) => {
+            app_state
+                .workflows
+                .switch_workflow(&data.name, data.baseline);
+        }
+        UpdateData::NodeState(events) => {
+            for event in events {
+                errors.distil(node_states.handle_event(event));
+            }
+        }
+        UpdateData::Event(ev) => {
+            use aerie::events::ExecEvent::*;
+            use aerie::events::WorkflowEvent::*;
+
+            let runs = &mut app_state.workflows.outputs;
+
+            match ev {
+                Exec(Start(_, name, started)) => {
+                    let entry = WorkflowRun::builder()
+                        .started(started)
+                        .duration(Default::default())
+                        .workflow(name)
+                        .outputs(Default::default())
+                        .build();
+
+                    runs.push_back(entry);
+                    if runs.len() > 128 {
+                        *runs = runs.skip(runs.len() - 128);
+                    }
+                }
+                Exec(Tick(_, millis)) | Exec(Finish(_, millis)) => {
+                    runs.back_mut()
+                        .unwrap()
+                        .duration
+                        .store(Arc::new(Duration::from_millis(millis)));
+                }
+                Exec(Output(_, label, value)) => {
+                    runs.back_mut()
+                        .unwrap()
+                        .outputs
+                        .rcu(|it| it.update(label.clone(), value.clone()));
+                }
+            }
         }
     }
 }
