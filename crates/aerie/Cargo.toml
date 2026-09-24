@@ -135,6 +135,9 @@ web-time = { version = "1.1.0", features = ["serde"] }
 gloo-timers = { version = "0.4.0", optional = true }
 sha3 = "0.12.0"
 serde_path_to_error = "0.1.20"
+footnote = { path = "../footnote" }
+footnote-macro = { path = "../footnote-macro" }
+struct-patch.workspace = true
 
 [features]
 native = [
@@ -150,7 +153,7 @@ native = [
   "rmcp/client-side-sse",
 ]
 debug-ui = []
-default = ["fetch-image", "runner-http", "runner-mcp", "scripting"]
+default = ["fetch-image", "runner-http", "runner-mcp", "scripting", "nesting"]
 runner-http = ["native", "dep:axum"]
 runner-mcp = ["native", "dep:axum", "dep:schemars"]
 migration = ["dep:saphyr"]
@@ -188,6 +191,7 @@ ui = [
   "egui-snarl/ui",
 ]
 wip = []
+nesting = [] # Bypass silliness in struct-patch-derive
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.76"

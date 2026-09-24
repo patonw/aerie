@@ -212,7 +212,7 @@ pub struct NodeStateMap {
 
 impl Default for NodeStateMap {
     fn default() -> Self {
-        Self::from_capacity(8)
+        Self::from_capacity(256)
     }
 }
 

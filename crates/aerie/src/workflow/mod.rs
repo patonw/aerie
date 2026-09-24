@@ -37,7 +37,7 @@ use crate::toolbox::Toolbox;
 #[cfg(feature = "wip")]
 use crate::{
     agent::AgentFactory,
-    config::{ModelRole, SeedConfig},
+    config::ModelRole,
     rig::{
         self,
         tool::{ToolExecutionError, server::ToolServerError},
@@ -99,6 +99,32 @@ pub enum Value {
 impl Default for Value {
     fn default() -> Self {
         Value::Placeholder(ValueKind::Placeholder)
+    }
+}
+
+impl std::hash::Hash for Value {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        core::mem::discriminant(self).hash(state);
+        match self {
+            Value::Placeholder(it) => it.hash(state),
+            Value::Failure(it) => {
+                format!("{it:#?}").hash(state);
+            }
+            Value::Text(it) => it.hash(state),
+            Value::Number(it) => it.hash(state),
+            Value::Integer(it) => it.hash(state),
+            Value::TextList(it) => it.hash(state),
+            Value::FloatList(it) => it.hash(state),
+            Value::IntList(it) => it.hash(state),
+            Value::Json(it) => it.hash(state),
+            Value::Agent(it) => it.hash(state),
+            Value::Tools(it) => it.hash(state),
+            Value::Chat(it) => it.hash(state),
+            // TODO: use a cheaper repr
+            Value::Message(it) => serde_json::to_string(it).unwrap().hash(state),
+            Value::MsgList(it) => serde_json::to_string(it).unwrap().hash(state),
+            Value::Images(it) => serde_json::to_string(it).unwrap().hash(state),
+        }
     }
 }
 
@@ -392,9 +418,6 @@ pub struct RunContext {
     /// Snapshot of the chat before the workflow is run
     #[builder(default)]
     pub history: Arc<ArcSwap<ChatHistory>>,
-
-    #[builder(default)]
-    pub seed: Option<SeedConfig>,
 
     #[builder(default)]
     pub scratch: Option<AtomicBuffer<Result<Message, String>>>,

@@ -1,4 +1,5 @@
 use clap::Parser as _;
+use footnote::Footnote;
 use itertools::Itertools as _;
 use std::{
     net::SocketAddr,
@@ -7,12 +8,15 @@ use std::{
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
+use struct_patch::Patch;
+use tokio::sync::broadcast::error::TryRecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
 use aerie::{
     client::{
-        ClientAction, ClientUpdate, EditorPatch, StateDump, StatePatch, SwitchData, UpdateData,
+        ClientAction, ClientUpdate, EditorPatch, StateDump, StatePatch, StatePatchField,
+        StatePatchNote, SwitchData, UpdateData,
     },
     config::Args,
     storage::CachedDirStore as _,
@@ -151,6 +155,8 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
     let dump_result = send_dump(&app, &mut socket).await;
     // let _ = send_switch(&app.app_state.workflows, &mut socket).await;
 
+    let mut note: Option<StatePatchNote> = None;
+
     let mut node_rx = app.app_state.workflows.node_state.subscribe();
     let mut flow_rx = app.app_state.workflows.subscribe();
 
@@ -174,7 +180,7 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
             _ = interval.tick() => {
                 if waiting {
                     waiting = task_count.load(Ordering::Relaxed) > 0;
-                    let _ = patch_all(&app, &mut socket).await;
+                    let _ = patch_all(&app, &mut socket, &mut note).await;
                 }
             }
             _ = notify.notified() => {
@@ -183,31 +189,48 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
                 let num_tasks = task_count.load(Ordering::Relaxed);
                 tracing::debug!("Wake-up with {num_tasks} tasks.");
 
-                waiting =  num_tasks > 0;
-                let _ = patch_all(&app, &mut socket).await;
+                if waiting && num_tasks == 0 {
+                    waiting = false;
+                }
+                let _ = patch_all(&app, &mut socket, &mut note).await;
             }
             ev = node_rx.recv() => {
+                let mut events = vec![];
+
                 match ev {
                     Ok(ev) => {
-                        tracing::info!(?ev, "Sending NodeStateEvent");
-
-                        let update = ClientUpdate::builder().update(
-                            UpdateData::NodeState(vec![ev])
-                        )
-                        .task_count(task_count.load(Ordering::Relaxed))
-                        .build();
-
-                        waiting = task_count.load(Ordering::Relaxed) > 0;
-
-                        let _ = socket
-                            .send(Message::Text(
-                                serde_json::to_string(&update).unwrap().into(),
-                            ))
-                        .await;
+                        events.push(ev);
                     }
                     Err(err) => {
                         tracing::warn!(?err, "Failed while receiving node state broadcast");
                     }
+                }
+
+                loop {
+                    // Pull any other available events into the batch, ignoring lagged.
+                    match node_rx.try_recv() {
+                        Ok(ev) => events.push(ev),
+                        Err(TryRecvError::Lagged(n)) => tracing::warn!("NodeState channel lagged by {n}"),
+                        _ => break,
+                    }
+                }
+
+                if !events.is_empty() {
+                    tracing::debug!(?events, "Sending NodeState events");
+
+                    let update = ClientUpdate::builder().update(
+                        UpdateData::NodeState(events)
+                    )
+                    .task_count(task_count.load(Ordering::Relaxed))
+                    .build();
+
+                    waiting = task_count.load(Ordering::Relaxed) > 0;
+
+                    let _ = socket
+                        .send(Message::Text(
+                            serde_json::to_string(&update).unwrap().into(),
+                        ))
+                    .await;
                 }
             }
             ev = flow_rx.recv() => {
@@ -247,6 +270,10 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
                                 let mut need_patch = false;
 
                                 match payload.action {
+                                    Checkpoint(cp) => {
+                                        tracing::trace!(?cp, "Setting checkpoint");
+                                        note = Some(cp)
+                                    }
                                     Dispatch(app_events) => {
                                         for event in app_events {
                                             use aerie::events::AppEvent::*;
@@ -275,7 +302,7 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
 
                                         if need_patch {
                                             waiting =  num_tasks > 0;
-                                            let _ = patch_all(&app, &mut socket).await;
+                                            let _ = patch_all(&app, &mut socket, &mut note).await;
                                         }
                                     }
                                 }
@@ -351,7 +378,12 @@ async fn send_dump(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
 }
 
 #[instrument(skip_all)]
-async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), axum::Error> {
+async fn patch_all(
+    app: &aerie::app::App,
+    socket: &mut WebSocket,
+    note: &mut Option<StatePatchNote>,
+) -> Result<Vec<StatePatchField>, axum::Error> {
+    let mut changed: Vec<StatePatchField> = vec![];
     let tool_store = app.app_state.tools.clone();
 
     let flow_store = &app.app_state.workflows.store;
@@ -393,6 +425,7 @@ async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
 
     let state = StatePatch::builder()
         .app_data(app.app_state.data.clone())
+        .prefs(app.app_state.data.prefs.load().as_ref().clone())
         .tools(tool_store)
         .workflows(workflows)
         .prompt(app.app_state.prompt.clone())
@@ -403,22 +436,32 @@ async fn patch_all(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
         .errors(Some(errors))
         .build();
 
-    let names = state.app_data.as_ref().map(|d| d.session_names.clone());
-    tracing::debug!(?names, "patching session names");
+    if let Some(note) = note {
+        changed = state.check_note(note);
+        let note = state.get_note();
+        tracing::trace!(?note, ?changed, "Changes from checkpoint");
+    }
+
+    let delta = if let Some(note) = note {
+        state.make_patch(note)
+    } else {
+        state.into_patch()
+    };
 
     let update = ClientUpdate::builder()
-        .update(UpdateData::Patch(state))
+        .update(UpdateData::Delta(delta))
         .task_count(app.task_count.load(Ordering::Relaxed))
         .build();
 
     match rmp_serde::to_vec_named(&update) {
         Ok(payload) => {
             tracing::debug!("Patch size {} bytes", payload.len());
-            socket.send(Message::Binary(payload.into())).await
+            socket.send(Message::Binary(payload.into())).await?;
+            Ok(changed)
         }
         Err(err) => {
             tracing::error!(?err, "Whoops");
-            Ok(())
+            Ok(vec![])
         }
     }
 }

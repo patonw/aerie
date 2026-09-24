@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["crates/aerie"]
+members = ["crates/aerie", "crates/footnote", "crates/footnote-macro"]
+
+[workspace.dependencies]
+struct-patch = { version = "0.14.2", features = ["nesting"] }
+
 
 [patch.crates-io]
 egui-snarl = { git = "https://github.com/patonw/egui-snarl", branch = "ui-flag" }

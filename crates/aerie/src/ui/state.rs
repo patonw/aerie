@@ -4,6 +4,7 @@ use egui::WidgetText;
 use egui_commonmark::*;
 use egui_snarl::{InPinId, NodeId};
 use egui_tiles::SimplificationOptions;
+use footnote::Footnote;
 use itertools::Itertools;
 use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
@@ -12,12 +13,14 @@ use std::{
     borrow::Cow,
     collections::VecDeque,
     fs::OpenOptions,
+    hash::Hash,
     path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU16},
     },
 };
+use struct_patch::Patch;
 use tokio::sync::broadcast;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
@@ -73,8 +76,10 @@ pub enum ToolEditorState {
 }
 
 /// Data synced between client and server
-#[derive(Debug, Clone, Serialize, Deserialize, Default, TypedBuilder)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TypedBuilder, Footnote, Patch)]
+#[patch(attribute(derive(Debug, Default, Clone, Serialize, Deserialize)))]
 pub struct AppData {
+    #[patch(skip)] // TODO: impl Hash via newtype
     #[builder(default)]
     pub prefs: Arc<ArcSwap<Preferences>>,
 
@@ -104,6 +109,20 @@ pub struct AppData {
     // #[builder(default)]
     // pub run_count: usize,
 }
+
+impl Hash for AppData {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.get_note().hash(state);
+    }
+}
+
+impl PartialEq for AppData {
+    fn eq(&self, other: &Self) -> bool {
+        self.get_note() == other.get_note()
+    }
+}
+
+impl Eq for AppData {}
 
 // TODO: Lift business-logic classes to top-level and leave this as pure data
 // TODO: use AppActions to trigger server-side handlers which update state

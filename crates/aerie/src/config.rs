@@ -10,10 +10,7 @@ use std::{
     collections::BTreeMap,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{
-        Arc, RwLock,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, RwLock},
 };
 use web_time::SystemTime;
 
@@ -47,29 +44,6 @@ pub struct Args {
     #[arg(long)]
     pub backup_dir: Option<PathBuf>,
 }
-
-#[inline]
-fn is_zero(x: &u64) -> bool {
-    *x == 0
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub struct SeedConfig {
-    pub value: Arc<AtomicU64>,
-
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub increment: u64,
-}
-
-impl PartialEq for SeedConfig {
-    fn eq(&self, other: &Self) -> bool {
-        let a = self.value.load(Ordering::Relaxed);
-        let b = other.value.load(Ordering::Relaxed);
-        a == b && self.increment == other.increment
-    }
-}
-
-impl Eq for SeedConfig {}
 
 #[non_exhaustive]
 #[derive(
@@ -125,13 +99,13 @@ pub enum ModelRole {
     Custom(String),
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone, Hash)]
 pub struct RoleEntry {
     pub name: String,
     pub roles: im::OrdSet<ModelRole>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Hash)]
 pub struct ProfileMap(im::OrdMap<String, im::Vector<RoleEntry>>);
 
 impl Default for ProfileMap {
@@ -167,7 +141,7 @@ impl ProfileMap {
 ///
 /// User configured preferences are stored in `Settings` instead.
 #[skip_serializing_none]
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone, Hash)]
 pub struct ConfigState {
     /// Models previously used in the UI
     #[serde(default, skip_serializing_if = "im::Vector::is_empty")]
@@ -360,7 +334,7 @@ impl ConfigStateStore {
 
 /// User managed preferences via file or settings tile in UI.
 #[skip_serializing_none]
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone, Hash)]
 pub struct Preferences {
     /// Profiles containing models tagged with roles
     #[serde(default, skip_serializing_if = "ProfileMap::is_empty")]
@@ -371,7 +345,7 @@ pub struct Preferences {
     pub profile: String,
 
     #[serde(default)]
-    pub temperature: f64,
+    pub temperature: E64,
 
     // Timeout on total request or non-streaming probably not useful, given
     // variability of payload sizes.
@@ -388,9 +362,6 @@ pub struct Preferences {
     /// note: these are tool call/result round-trips, not failure retries.
     #[serde(default)]
     pub tool_turns: Option<usize>,
-
-    /// PRNG seed for completion providers (which typically ignore it)
-    pub seed: Option<SeedConfig>,
 
     #[serde(default)]
     pub autoscroll: bool,

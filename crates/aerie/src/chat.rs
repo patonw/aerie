@@ -12,6 +12,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fs::OpenOptions,
+    hash::Hash,
     io::Write as _,
     ops::Deref,
     path::{Path, PathBuf},
@@ -36,6 +37,26 @@ impl Default for ChatSession {
         Self::transient().build().unwrap()
     }
 }
+
+impl Hash for ChatSession {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.directory.hash(state);
+        self.path.hash(state);
+        self.history.load().hash(state);
+        // self.scratch.0.load().hash(state);
+    }
+}
+
+impl PartialEq for ChatSession {
+    fn eq(&self, other: &Self) -> bool {
+        self.directory == other.directory
+            && self.path == other.path
+            && self.history.load().as_ref() == other.history.load().as_ref()
+        //&& self.scratch == other.scratch
+    }
+}
+
+impl Eq for ChatSession {}
 
 impl ChatSession {
     pub fn transient() -> ChatSessionBuilder {

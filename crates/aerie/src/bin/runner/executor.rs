@@ -319,7 +319,6 @@ pub fn run_loop(
             .agent_factory(agent_factory.clone())
             .metadata(workflow.metadata.clone())
             .history(session.history.clone())
-            .seed(settings.seed.clone())
             .models(models.clone())
             .run_events(event_tx.clone())
             .build();
@@ -341,7 +340,7 @@ pub fn run_loop(
             .user_prompt(std::mem::take(&mut prompt))
             .extra_content(extra_content)
             .model("default".into())
-            .temperature(settings.temperature)
+            .temperature(settings.temperature.into_inner())
             .build()
             .inputs()?;
 

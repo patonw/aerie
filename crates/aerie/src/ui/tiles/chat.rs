@@ -13,7 +13,7 @@ use crate::{
     events::AppEvent,
     rig::message::{Message, UserContent},
     ui::{error_bubble, shortcuts::squelch},
-    utils::{ArcVecExt as _, ErrorDistiller as _, IMAGE_CACHE, ImageResolver, img_str_to_egui_key},
+    utils::{ErrorDistiller as _, IMAGE_CACHE, ImageResolver, img_str_to_egui_key},
 };
 
 pub use crate::ui::render::render_message;
@@ -248,14 +248,14 @@ impl super::AppState {
                                 && let Some(name) = path.to_str()
                             {
                                 self.images.rcu(|images| {
-                                    let mut images = im::Vector::clone(images);
+                                    let images = im::Vector::clone(images);
                                     self.events.insert(AppEvent::AddChatImages(vec![name.to_string()]));
                                     Arc::new(images)
                                 });
                             }
                             else if let Some(bytes) = &drop.bytes {
                                 self.images.rcu(|images| {
-                                    let mut images = im::Vector::clone(images);
+                                    let images = im::Vector::clone(images);
                                     if let Some(uri) = errors.distil({
                                         ImageResolver::default().bytes_to_data_uri(&drop.name, Cow::Borrowed(bytes.as_ref()))
                                     }) {

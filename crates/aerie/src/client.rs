@@ -1,21 +1,27 @@
 use std::collections::BTreeMap;
 
+use footnote::Footnote;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use struct_patch::Patch;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use crate::{
-    config::ConfigState,
+    config::{ConfigState, Preferences},
     events::{AppEvent, NodeStateEvent, WorkflowEvent},
     toolbox::ToolStore,
-    ui::{state::AppData, workflow::ViewStack},
+    ui::{
+        state::{AppData, AppDataNote, AppDataPatch},
+        workflow::ViewStack,
+    },
     workflow::{ShadowMeta, Value, Workflow, runner::ExecId},
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 // #[serde(tag = "type")]
 pub enum ActionData {
+    Checkpoint(StatePatchNote),
     Dispatch(Vec<AppEvent>),
 }
 
@@ -42,7 +48,10 @@ pub struct StateDump {
     pub task_count: u16,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TypedBuilder)]
+#[derive(
+    Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, TypedBuilder, Footnote, Patch,
+)]
+#[patch(attribute(derive(Debug, Default, Clone, Serialize, Deserialize)))]
 pub struct EditorPatch {
     pub name: String,
 
@@ -55,10 +64,14 @@ pub struct EditorPatch {
     pub stack: Option<ViewStack>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TypedBuilder)]
+// Eventually we'll want to just put Footnote/Patch on AppState and bypass this.
+#[derive(Debug, Default, Serialize, Deserialize, Clone, TypedBuilder, Footnote, Patch)]
+#[patch(attribute(derive(Debug, Default, Clone, Serialize, Deserialize)))]
 pub struct StatePatch {
-    #[builder(default, setter(strip_option))]
-    pub app_data: Option<AppData>,
+    pub prefs: Preferences,
+
+    #[patch(nesting)]
+    pub app_data: AppData,
 
     #[builder(default, setter(strip_option))]
     pub tools: Option<ToolStore>,
@@ -75,8 +88,8 @@ pub struct StatePatch {
     #[builder(default, setter(strip_option))]
     pub config_state: Option<ConfigState>,
 
-    #[builder(default, setter(strip_option))]
-    pub editor: Option<EditorPatch>,
+    #[patch(nesting)]
+    pub editor: EditorPatch,
 
     #[builder(default)]
     pub previews: Option<Vec<((ExecId, Uuid), Value)>>,
@@ -96,6 +109,7 @@ pub struct SwitchData {
 pub enum UpdateData {
     Dump(StateDump),
     Patch(StatePatch),
+    Delta(StatePatchPatch), // TODO: some kind of consistency check
     Switch(SwitchData),
     NodeState(Vec<NodeStateEvent>),
     Event(WorkflowEvent),
@@ -109,4 +123,10 @@ pub struct ClientUpdate {
 
     #[builder(default, setter(strip_option))]
     pub task_count: Option<u16>,
+}
+
+impl From<UpdateData> for ClientUpdate {
+    fn from(value: UpdateData) -> Self {
+        Self::builder().update(value).build()
+    }
 }

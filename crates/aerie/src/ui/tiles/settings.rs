@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use decorum::E64;
 use egui::{Button, RichText, TextEdit};
 use egui_phosphor::regular::{CLOCK_COUNTER_CLOCKWISE, PENCIL, STACK_PLUS, TRASH};
 use itertools::Itertools;
@@ -172,7 +173,9 @@ impl super::AppState {
                         );
                         changed |= settings
                             .update(|settings_rw| {
-                                ui.add(egui::Slider::new(&mut settings_rw.temperature, 0.0..=1.0));
+                                let mut temp = settings_rw.temperature.into_inner();
+                                ui.add(egui::Slider::new(&mut temp, 0.0..=1.0));
+                                settings_rw.temperature = E64::assert(temp);
                             })
                             .0;
 

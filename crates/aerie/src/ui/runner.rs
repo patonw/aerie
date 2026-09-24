@@ -55,7 +55,6 @@ impl super::AppState {
                 .transmuter(self.transmuter.clone())
                 .interrupt(self.workflows.interrupt.clone())
                 .history(self.data.session.history.clone())
-                .seed(self.data.prefs.view(|s| s.seed.clone()))
                 .errors(self.errors.clone())
                 .scratch(Some(self.data.session.scratch.clone()))
                 .streaming(self.data.prefs.view(|s| s.streaming))
@@ -92,7 +91,7 @@ impl super::AppState {
                 .user_prompt(prompt)
                 .extra_content(extra_content)
                 .model("default".into())
-                .temperature(self.data.prefs.view(|s| s.temperature))
+                .temperature(self.data.prefs.view(|s| s.temperature.into_inner()))
                 .build()
                 .inputs()
                 .unwrap();

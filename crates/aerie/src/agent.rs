@@ -231,7 +231,7 @@ impl AgentFactory {
 
     #[allow(deprecated)]
     pub fn agent_builder(&self, provider_model: &str) -> anyhow::Result<AgentBuilderT> {
-        let temperature = self.prefs.view(|s| s.temperature);
+        let temperature = self.prefs.view(|s| s.temperature.into_inner());
 
         let (provider, model) = self.parse_model(provider_model)?;
 

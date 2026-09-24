@@ -1,14 +1,14 @@
 use std::{sync::Arc, time::Duration};
 
 use aerie::{
-    client::{ActionData, ClientAction, ClientUpdate, UpdateData},
+    client::{ActionData, ClientAction, ClientUpdate, StatePatch, UpdateData},
     config::ConfigStateProxy,
     ui::{
         Pane,
         render::display_errors,
         state::{AppData, AppState, WorkflowState},
     },
-    utils::{ErrorDistiller as _, ErrorList},
+    utils::ErrorDistiller as _,
     workflow::{
         runner::{NodeStateMap, WorkflowRun},
         store::WorkflowStoreStub,
@@ -18,16 +18,20 @@ use eframe::egui;
 use egui::Visuals;
 use egui_tiles::{LinearDir, TileId, Tree};
 use ewebsock::{WsEvent, WsReceiver, WsSender};
-use rmp_serde::{Deserializer, Serializer};
+use footnote::Footnote;
+use struct_patch::{Patch as _, Status};
+use typed_builder::TypedBuilder;
 
 // TODO: figure out how to manage different users
 // TODO: Save settings when changed
 // TODO: Ensure latest message is shown when autoscrolling
 
+#[derive(TypedBuilder)]
 pub struct WebApp {
     sock: Option<(WsSender, WsReceiver)>,
     connected: bool,
     state: AppState,
+    checkpoint: StatePatch,
     node_states: NodeStateMap,
     tile_tree: Tree<Pane>,
 }
@@ -44,6 +48,8 @@ impl WebApp {
             .session(Default::default())
             .build();
 
+        let checkpoint = Default::default();
+
         let workflows = WorkflowState::new(WorkflowStoreStub::default(), None)
             .with_node_state(node_states.clone());
         let state = AppState::builder()
@@ -56,6 +62,7 @@ impl WebApp {
             sock: None,
             connected: false,
             state,
+            checkpoint,
             node_states,
             tile_tree: make_tile_tree(),
         }
@@ -67,7 +74,7 @@ impl eframe::App for WebApp {
         ctx.style_mut(|style| style.visuals = Visuals::dark());
         let errors = self.state.errors.clone();
         let mut task_update = None;
-        if let Some((_tx, rx)) = &mut self.sock {
+        if let Some((tx, rx)) = &mut self.sock {
             while let Some(event) = rx.try_recv() {
                 // log::info!("New event: {event:?}");
                 match event {
@@ -90,7 +97,12 @@ impl eframe::App for WebApp {
                     {
                         tracing::debug!("received {} chars", txt.len());
                         task_update = payload.task_count;
-                        handle_update(&mut self.state, &mut self.node_states, payload.update);
+                        handle_update(
+                            &mut self.state,
+                            &mut self.checkpoint,
+                            &mut self.node_states,
+                            payload.update,
+                        );
                     }
                     WsEvent::Message(ewebsock::WsMessage::Text(txt)) => {
                         let jd = &mut serde_json::Deserializer::from_str(&txt);
@@ -104,11 +116,20 @@ impl eframe::App for WebApp {
                         match rmp_serde::from_slice::<ClientUpdate>(&bytes) {
                             Ok(payload) => {
                                 task_update = payload.task_count;
-                                handle_update(
+                                let status = handle_update(
                                     &mut self.state,
+                                    &mut self.checkpoint,
                                     &mut self.node_states,
                                     payload.update,
                                 );
+
+                                if status {
+                                    let action = ActionData::Checkpoint(self.checkpoint.get_note());
+
+                                    let payload =
+                                        serde_json::to_string(&ClientAction { action }).unwrap();
+                                    tx.send(ewebsock::WsMessage::Text(payload));
+                                }
                             }
                             Err(err) => {
                                 tracing::error!(%err);
@@ -195,9 +216,10 @@ impl eframe::App for WebApp {
 
 fn handle_update(
     app_state: &mut AppState,
+    checkpoint: &mut StatePatch,
     node_states: &mut NodeStateMap,
     update_data: UpdateData,
-) {
+) -> bool {
     let errors = app_state.errors.clone();
     match update_data {
         UpdateData::Dump(dump) => {
@@ -210,47 +232,14 @@ fn handle_update(
             app_state.workflows.store.metadata = dump.workflows;
         }
         UpdateData::Patch(patch) => {
-            if let Some(tools) = patch.tools {
-                app_state.tools = tools;
-            }
-
-            if let Some(app_data) = patch.app_data {
-                app_state.data = app_data;
-            }
-
-            if let Some(prompt) = patch.prompt {
-                if prompt.is_empty() {
-                    app_state.prompt.clear();
-                }
-            }
-
-            if let Some(images) = patch.images {
-                app_state.images.store(Arc::new(images));
-            }
-
-            if let Some(config_state) = patch.config_state {
-                errors.distil(app_state.state.update(|state| *state = config_state));
-            }
-
-            // log::info!("Editor patch? {:?}", &patch.editor);
-            if let Some(editor) = patch.editor {
-                app_state.workflows.patch(editor);
-            }
-
-            if let Some(previews) = patch.previews {
-                app_state.workflows.previews.replace(previews);
-            }
-
-            if let Some(errors) = patch.errors {
-                app_state.errors.discard();
-                for err in errors.into_iter().map(|e| anyhow::anyhow!(e)) {
-                    app_state.errors.push(err);
-                }
-            }
-
-            if let Some(workflows) = patch.workflows {
-                app_state.workflows.store.metadata = workflows;
-            }
+            patch_state(app_state, patch);
+            return true;
+        }
+        UpdateData::Delta(delta) => {
+            let status = !delta.is_empty();
+            checkpoint.apply(delta);
+            patch_state(app_state, checkpoint.clone());
+            return status;
         }
         UpdateData::Switch(data) => {
             app_state
@@ -296,6 +285,49 @@ fn handle_update(
                 }
             }
         }
+    }
+
+    false
+}
+
+fn patch_state(app_state: &mut AppState, patch: StatePatch) {
+    let errors = app_state.errors.clone();
+    if let Some(tools) = patch.tools {
+        app_state.tools = tools;
+    }
+
+    app_state.data = patch.app_data;
+    app_state.data.prefs.store(Arc::new(patch.prefs));
+
+    if let Some(prompt) = patch.prompt {
+        if prompt.is_empty() {
+            app_state.prompt.clear();
+        }
+    }
+
+    if let Some(images) = patch.images {
+        app_state.images.store(Arc::new(images));
+    }
+
+    if let Some(config_state) = patch.config_state {
+        errors.distil(app_state.state.update(|state| *state = config_state));
+    }
+
+    app_state.workflows.patch(patch.editor);
+
+    if let Some(previews) = patch.previews {
+        app_state.workflows.previews.replace(previews);
+    }
+
+    if let Some(errors) = patch.errors {
+        app_state.errors.discard();
+        for err in errors.into_iter().map(|e| anyhow::anyhow!(e)) {
+            app_state.errors.push(err);
+        }
+    }
+
+    if let Some(workflows) = patch.workflows {
+        app_state.workflows.store.metadata = workflows;
     }
 }
 

@@ -738,6 +738,28 @@ pub struct ToolStore {
     pub tool_info: BTreeMap<String, Vec<Tool>>,
 }
 
+impl std::hash::Hash for ToolStore {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match serde_json::to_vec(self) {
+            Ok(it) => it.hash(state),
+            Err(err) => format!("{err:#?}").hash(state),
+        }
+    }
+}
+
+impl PartialEq for ToolStore {
+    fn eq(&self, other: &Self) -> bool {
+        // TODO: a more serious impl
+        match (serde_json::to_vec(self), serde_json::to_vec(other)) {
+            (Ok(x), Ok(y)) => x == y,
+            (Err(x), Err(y)) => format!("{x:#?}") == format!("{y:#?}"),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ToolStore {}
+
 impl ToolStore {
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {

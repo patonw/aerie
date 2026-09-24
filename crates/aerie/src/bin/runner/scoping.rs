@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::Context as _;
 use arc_swap::{ArcSwap, ArcSwapOption};
+use decorum::E64;
 use itertools::Itertools as _;
 use lru::LruCache;
 use tokio_util::sync::CancellationToken;
@@ -194,7 +195,7 @@ pub fn make_scope_factory(
         settings.profile = profile.to_owned();
     }
     if let Some(temperature) = &args.temperature {
-        settings.temperature = *temperature;
+        settings.temperature = E64::assert(*temperature);
     }
     let models: BTreeMap<ModelRole, String> = if args.models.is_empty() {
         settings.get_model_map()
