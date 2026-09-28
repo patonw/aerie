@@ -1,21 +1,25 @@
+use egui::RichText;
+use egui_phosphor::regular::{PLAY, STOP};
+
+#[cfg(feature = "native")]
+use arc_swap::ArcSwap;
+#[cfg(feature = "native")]
+use itertools::Itertools as _;
+#[cfg(feature = "native")]
+use scopeguard::defer;
+#[cfg(feature = "native")]
 use std::{
     sync::{Arc, atomic::Ordering},
     thread,
     time::{Duration, SystemTime},
 };
 
-use arc_swap::ArcSwap;
-use egui::RichText;
-use egui_phosphor::regular::{PLAY, STOP};
-use itertools::Itertools as _;
-use scopeguard::defer;
-
-use crate::{config::ConfigExt as _, rig, utils::ErrorDistiller as _};
-
 #[cfg(feature = "native")]
 use crate::{
+    config::ConfigExt as _,
     events::{ExecEvent, WorkflowEvent},
-    utils::ImageResolver,
+    rig,
+    utils::{ErrorDistiller as _, ImageResolver},
     workflow::{
         RootContext, RunContext,
         runner::{WorkflowRun, WorkflowRunner},

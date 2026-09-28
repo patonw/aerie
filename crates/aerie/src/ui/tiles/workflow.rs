@@ -21,8 +21,10 @@ use crate::{
         workflow::get_snarl_style,
     },
     utils::spawn_wherever,
-    workflow::store::WorkflowStore as _,
 };
+
+#[cfg(feature = "native")]
+use crate::workflow::store::WorkflowStore as _;
 
 impl super::AppState {
     pub fn workflow_ui(&mut self, ui: &mut egui::Ui) {

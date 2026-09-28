@@ -6,11 +6,13 @@ use egui_phosphor::regular::{CLOCK_COUNTER_CLOCKWISE, PENCIL, STACK_PLUS, TRASH}
 use itertools::Itertools;
 use strum::{EnumMessage, IntoEnumIterator as _};
 
+#[cfg(feature = "native")]
+use crate::workflow::store::WorkflowStore as _;
+
 use crate::{
     config::{ConfigExt as _, ModelRole, RoleEntry},
     events::AppEvent,
     utils::ErrorDistiller as _,
-    workflow::store::WorkflowStore as _,
 };
 
 impl super::AppState {

@@ -1,49 +1,22 @@
-use std::{
-    borrow::Cow,
-    sync::{Arc, atomic::Ordering},
-    time::{Duration, Instant},
-};
+#![cfg_attr(feature = "web-ui", allow(unused))]
 
-#[cfg(feature = "native")]
-use crate::agent::AgentW;
-#[cfg(feature = "ui")]
-use crate::workflow::{NodeTheme, ThemeCodex};
-use crate::{
-    rig::{
-        OneOrMany,
-        completion::CompletionError,
-        message::{AssistantContent, Message, Reasoning, ToolCall, ToolFunction, UserContent},
-    },
-    utils::{ErrorDistiller, canonicalize_msg},
-    workflow::with_deadline,
-};
 use arc_swap::ArcSwap;
-use futures_util::pin_mut;
 use itertools::Itertools;
-use rig_dynclient::rig::{
-    agent::{MultiTurnStreamItem, PromptResponse},
-    prelude::PromptError,
-    tool::ToolExecutionError,
-};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-
-use crate::{
-    chat::ChatContent,
-    config::ToolSelector,
-    rig,
-    utils::{CowExt as _, extract_json, message_text},
-    workflow::{FlexNode, WorkflowError},
-};
-
-#[cfg(feature = "ui")]
-use crate::ui::{resizable_frame, shortcuts::squelch};
+use std::{borrow::Cow, sync::Arc};
 
 #[cfg(feature = "native")]
 use crate::workflow::RunContext;
-use crate::workflow::{DynNode, Value, ValueKind};
-#[cfg(feature = "ui")]
-use crate::workflow::{EditContext, UiNode};
+
+use crate::{
+    rig::{
+        self, OneOrMany,
+        completion::CompletionError,
+        message::{AssistantContent, Message, Reasoning, ToolCall},
+    },
+    workflow::{DynNode, FlexNode, Value, ValueKind, WorkflowError},
+};
 
 // TODO: Hash & eq by hand to ignore chat
 #[skip_serializing_none]
@@ -105,198 +78,6 @@ impl DynNode for ChatNode {
         let _ = (node_id,);
         let rt = ctx.runtime.clone();
         rt.block_on(self.forward(ctx, inputs))
-    }
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for ChatNode {
-    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
-        other
-            .downcast_ref::<Self>()
-            .is_some_and(|other| self.name == other.name && self.prompt == other.prompt)
-    }
-
-    fn title_mut(&mut self) -> Option<&mut String> {
-        Some(&mut self.name)
-    }
-
-    fn tooltip(&self) -> &str {
-        "Invoke an LLM completion model in conversation mode.\n\
-            Automatically invokes tools and sends the results\n\
-            back to the model for follow-up."
-    }
-
-    fn show_output(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                ui.label("conversation");
-            }
-            1 => {
-                ui.label("response");
-            }
-            2 => {
-                ui.label("failure");
-            }
-            _ => unreachable!(),
-        }
-        self.out_kind(pin_id).default_pin()
-    }
-
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                ui.label("agent");
-            }
-            1 => {
-                ui.label("conversation");
-            }
-            2 => {
-                return ui
-                    .vertical(|ui| {
-                        if remote.is_none() {
-                            resizable_frame(&mut self.size, ui, |ui| {
-                                egui::ScrollArea::vertical()
-                                    .auto_shrink(false)
-                                    .show(ui, |ui| {
-                                        let widget = egui::TextEdit::multiline(&mut self.prompt)
-                                            .id_salt("prompt")
-                                            .desired_width(f32::INFINITY)
-                                            .hint_text("Prompt");
-
-                                        squelch(
-                                            ui.add_sized(ui.available_size(), widget)
-                                                .on_hover_text("Prompt"),
-                                        );
-                                    });
-                            });
-                            self.ghost_pin(ValueKind::Message.color())
-                        } else {
-                            ui.label("prompt");
-                            ValueKind::Message.default_pin()
-                        }
-                    })
-                    .inner;
-            }
-            _ => unreachable!(),
-        };
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-
-    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
-        codex.remote_theme()
-    }
-
-    fn icon(&self) -> Option<&str> {
-        Some(egui_phosphor::regular::CHATS_CIRCLE)
-    }
-}
-
-#[cfg(feature = "native")]
-impl ChatNode {
-    pub async fn forward(
-        &mut self,
-        run_ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        self.validate(&inputs)?;
-
-        let agent_spec = match &inputs[0] {
-            Some(Value::Agent(spec)) => spec,
-            None => Err(WorkflowError::Required(vec!["Agent spec required".into()]))?,
-            _ => unreachable!(),
-        };
-        let mut chat = match &inputs[1] {
-            Some(Value::Chat(history)) => Cow::Borrowed(history.as_ref()),
-            None => Default::default(),
-            _ => unreachable!(),
-        };
-
-        let mut messages = chat.iter_msgs().map(|it| it.as_ref().clone()).collect_vec();
-
-        let prompt = match &inputs[2] {
-            Some(Value::Text(text)) if !text.is_empty() => Message::user((**text).clone()),
-            Some(Value::Message(msg)) if matches!(**msg, Message::User { .. }) => {
-                msg.as_ref().clone()
-            }
-            Some(Value::Message(msg)) if matches!(**msg, Message::Assistant { .. }) => {
-                // Coerce into user message if we want to use another agent's output for cross talk
-                Message::user(message_text(msg))
-            }
-            Some(Value::Json(value)) => match value.as_ref() {
-                serde_json::Value::String(text) => Message::user(text.as_str()),
-                value => Message::user(serde_json::to_string(value).map_err(|e| {
-                    WorkflowError::Conversion(format!("Failed to stringify value: {e:?}"))
-                })?),
-            },
-            None if !self.prompt.is_empty() => Message::user(self.prompt.clone()),
-            None if matches!(messages.last(), Some(Message::User { .. })) => {
-                messages.last().cloned().unwrap()
-            }
-            _ => Err(WorkflowError::Required(vec!["A prompt is required".into()]))?,
-        };
-
-        let prompt = tokio::task::spawn_blocking(move || canonicalize_msg(prompt))
-            .await
-            .map_err(|e| WorkflowError::Unknown(e.to_string()))?;
-
-        let prompt = prompt.map_err(|errs| {
-            for err in errs {
-                run_ctx.errors.push(err);
-            }
-            WorkflowError::Unknown("Could not resolve images".into())
-        })?;
-
-        let last_idx = messages.len();
-
-        let tools = agent_spec.tool_selection();
-        let agent_w = run_ctx.agent_factory.spec_to_agent(agent_spec)?;
-
-        let request = multi_turn_completion(run_ctx, &agent_w, tools, prompt, &mut messages);
-        let prompt_request = request.await;
-        match prompt_request {
-            Ok(_) => {
-                for msg in messages.into_iter().skip(last_idx) {
-                    // When we implement streaming, we can hold onto the pointer
-                    // and update it incrementally.
-                    if !run_ctx.streaming
-                        && let Some(scratch) = &run_ctx.scratch
-                    {
-                        scratch.push_back(Ok(msg.clone()));
-                    }
-
-                    chat = chat.try_moo(|c| c.push(Ok(Arc::new(msg)).into()))?;
-                }
-            }
-            Err(err) => Err(WorkflowError::Provider(err.into()))?,
-        }
-
-        let message = {
-            if let Some(entry) = chat.last()
-                && let ChatContent::Message(message) = &entry.content
-            {
-                Value::Message(message.clone())
-            } else {
-                Value::Placeholder(ValueKind::Message)
-            }
-        };
-
-        Ok(vec![
-            Value::Chat(Arc::new(chat.into_owned())),
-            message,
-            Value::Placeholder(ValueKind::Failure), // Runner handles the actual error values
-        ])
     }
 }
 
@@ -373,629 +154,767 @@ impl DynNode for StructuredChat {
 }
 
 #[cfg(feature = "ui")]
-impl UiNode for StructuredChat {
-    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
-        other.downcast_ref::<Self>().is_some_and(|other| {
-            self.name == other.name
-                && self.prompt == other.prompt
-                && self.retries == other.retries
-                && self.extract == other.extract
-        })
+mod gui {
+    use super::*;
+
+    use crate::{
+        ui::{resizable_frame, shortcuts::squelch},
+        workflow::{EditContext, NodeTheme, ThemeCodex, UiNode},
+    };
+
+    impl UiNode for ChatNode {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other
+                .downcast_ref::<Self>()
+                .is_some_and(|other| self.name == other.name && self.prompt == other.prompt)
+        }
+
+        fn title_mut(&mut self) -> Option<&mut String> {
+            Some(&mut self.name)
+        }
+
+        fn tooltip(&self) -> &str {
+            "Invoke an LLM completion model in conversation mode.\n\
+                Automatically invokes tools and sends the results\n\
+                back to the model for follow-up."
+        }
+
+        fn show_output(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    ui.label("conversation");
+                }
+                1 => {
+                    ui.label("response");
+                }
+                2 => {
+                    ui.label("failure");
+                }
+                _ => unreachable!(),
+            }
+            self.out_kind(pin_id).default_pin()
+        }
+
+        fn show_input(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+            remote: Option<Value>,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    ui.label("agent");
+                }
+                1 => {
+                    ui.label("conversation");
+                }
+                2 => {
+                    return ui
+                        .vertical(|ui| {
+                            if remote.is_none() {
+                                resizable_frame(&mut self.size, ui, |ui| {
+                                    egui::ScrollArea::vertical().auto_shrink(false).show(
+                                        ui,
+                                        |ui| {
+                                            let widget =
+                                                egui::TextEdit::multiline(&mut self.prompt)
+                                                    .id_salt("prompt")
+                                                    .desired_width(f32::INFINITY)
+                                                    .hint_text("Prompt");
+
+                                            squelch(
+                                                ui.add_sized(ui.available_size(), widget)
+                                                    .on_hover_text("Prompt"),
+                                            );
+                                        },
+                                    );
+                                });
+                                self.ghost_pin(ValueKind::Message.color())
+                            } else {
+                                ui.label("prompt");
+                                ValueKind::Message.default_pin()
+                            }
+                        })
+                        .inner;
+                }
+                _ => unreachable!(),
+            };
+
+            self.in_kinds(pin_id).first().unwrap().default_pin()
+        }
+
+        fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+            codex.remote_theme()
+        }
+
+        fn icon(&self) -> Option<&str> {
+            Some(egui_phosphor::regular::CHATS_CIRCLE)
+        }
     }
 
-    fn title_mut(&mut self) -> Option<&mut String> {
-        Some(&mut self.name)
-    }
+    impl UiNode for StructuredChat {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other.downcast_ref::<Self>().is_some_and(|other| {
+                self.name == other.name
+                    && self.prompt == other.prompt
+                    && self.retries == other.retries
+                    && self.extract == other.extract
+            })
+        }
 
-    fn tooltip(&self) -> &str {
-        "Use an LLM to produce structured data.\n\
+        fn title_mut(&mut self) -> Option<&mut String> {
+            Some(&mut self.name)
+        }
+
+        fn tooltip(&self) -> &str {
+            "Use an LLM to produce structured data.\n\
             If a schema is provided, it will output data conforming to it.\n\
             Otherwise, the output will be arguments for the provided tool.\n\
             Tools are not invoked automatically in either case."
-    }
-
-    fn show_output(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                ui.label("conversation");
-            }
-            1 => {
-                ui.label("response");
-            }
-            2 => {
-                ui.label("tool name");
-            }
-            3 => {
-                ui.label("data");
-            }
-            4 => {
-                ui.label("failure");
-            }
-            _ => unreachable!(),
         }
-        self.out_kind(pin_id).default_pin()
-    }
 
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                ui.label("agent");
+        fn show_output(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    ui.label("conversation");
+                }
+                1 => {
+                    ui.label("response");
+                }
+                2 => {
+                    ui.label("tool name");
+                }
+                3 => {
+                    ui.label("data");
+                }
+                4 => {
+                    ui.label("failure");
+                }
+                _ => unreachable!(),
             }
-            1 => {
-                ui.label("conversation");
-            }
-            2 => {
-                ui.label("schema");
-            }
-            3 => {
-                return ui
-                    .vertical(|ui| {
-                        if remote.is_none() {
-                            resizable_frame(&mut self.size, ui, |ui| {
-                                egui::ScrollArea::vertical()
-                                    .auto_shrink(false)
-                                    .show(ui, |ui| {
-                                        let widget = egui::TextEdit::multiline(&mut self.prompt)
-                                            .id_salt("prompt")
-                                            .desired_width(f32::INFINITY)
-                                            .hint_text("Prompt");
+            self.out_kind(pin_id).default_pin()
+        }
 
-                                        squelch(
-                                            ui.add_sized(ui.available_size(), widget)
-                                                .on_hover_text("Prompt"),
-                                        );
-                                    });
-                            });
-                            self.ghost_pin(ValueKind::Message.color())
-                        } else {
-                            ui.label("prompt");
-                            ValueKind::Message.default_pin()
-                        }
-                    })
-                    .inner;
-            }
-            _ => unreachable!(),
-        };
+        fn show_input(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+            remote: Option<Value>,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    ui.label("agent");
+                }
+                1 => {
+                    ui.label("conversation");
+                }
+                2 => {
+                    ui.label("schema");
+                }
+                3 => {
+                    return ui
+                        .vertical(|ui| {
+                            if remote.is_none() {
+                                resizable_frame(&mut self.size, ui, |ui| {
+                                    egui::ScrollArea::vertical().auto_shrink(false).show(
+                                        ui,
+                                        |ui| {
+                                            let widget =
+                                                egui::TextEdit::multiline(&mut self.prompt)
+                                                    .id_salt("prompt")
+                                                    .desired_width(f32::INFINITY)
+                                                    .hint_text("Prompt");
 
-        self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
+                                            squelch(
+                                                ui.add_sized(ui.available_size(), widget)
+                                                    .on_hover_text("Prompt"),
+                                            );
+                                        },
+                                    );
+                                });
+                                self.ghost_pin(ValueKind::Message.color())
+                            } else {
+                                ui.label("prompt");
+                                ValueKind::Message.default_pin()
+                            }
+                        })
+                        .inner;
+                }
+                _ => unreachable!(),
+            };
 
-    fn has_body(&self) -> bool {
-        true
-    }
+            self.in_kinds(pin_id).first().unwrap().default_pin()
+        }
 
-    fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
-        ui.vertical(|ui| {
-            ui.add(egui::Slider::new(&mut self.retries, 0..=10).text("R"))
-                .on_hover_text("retries");
+        fn has_body(&self) -> bool {
+            true
+        }
 
-            ui.checkbox(&mut self.extract, "extract").on_hover_text(
-                "If the model fails to submit a proper tool call,\n\
+        fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
+            ui.vertical(|ui| {
+                ui.add(egui::Slider::new(&mut self.retries, 0..=10).text("R"))
+                    .on_hover_text("retries");
+
+                ui.checkbox(&mut self.extract, "extract").on_hover_text(
+                    "If the model fails to submit a proper tool call,\n\
                     Attempt to find tool arguments inside its text response.",
-            );
-        });
-    }
+                );
+            });
+        }
 
-    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
-        codex.remote_theme()
-    }
+        fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+            codex.remote_theme()
+        }
 
-    fn icon(&self) -> Option<&str> {
-        Some(egui_phosphor::regular::TABLE)
+        fn icon(&self) -> Option<&str> {
+            Some(egui_phosphor::regular::TABLE)
+        }
     }
 }
 
 #[cfg(feature = "native")]
-// TODO: investigate why errors in the MCP server cause a panic here
-impl StructuredChat {
-    pub async fn forward(
-        &mut self,
-        run_ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        self.validate(&inputs)?;
+mod forward {
+    use super::*;
+    use futures_util::pin_mut;
+    use rig_dynclient::rig::{
+        agent::{MultiTurnStreamItem, PromptResponse},
+        prelude::PromptError,
+        tool::ToolExecutionError,
+    };
+    use std::{
+        sync::atomic::Ordering,
+        time::{Duration, Instant},
+    };
 
-        let mut agent_spec = match &inputs[0] {
-            Some(Value::Agent(spec)) => spec.clone(),
-            None => Err(WorkflowError::Required(vec!["Agent is required".into()]))?,
-            _ => unreachable!(),
+    #[cfg(feature = "native")]
+    use crate::{
+        agent::AgentW,
+        chat::ChatContent,
+        config::ToolSelector,
+        rig::message::{ToolFunction, UserContent},
+        utils::{CowExt as _, ErrorDistiller, canonicalize_msg, extract_json, message_text},
+        workflow::{RunContext, with_deadline},
+    };
+
+    use thiserror::Error;
+
+    #[derive(Debug, Error)]
+    enum StreamingError {
+        #[error("WorkflowError: {0}")]
+        Workflow(#[from] WorkflowError),
+        #[error("CompletionError: {0}")]
+        OneShot(#[from] rig::completion::PromptError),
+        #[error("CompletionError: {0}")]
+        Completion(#[from] CompletionError),
+        #[error("PromptError: {0}")]
+        Prompt(#[from] Box<rig::completion::PromptError>),
+        #[error("ToolSetError: {0}")]
+        Tool(#[from] rig::tool::ToolExecutionError),
+    }
+
+    impl From<rig::agent::StreamingError> for StreamingError {
+        fn from(value: rig::agent::StreamingError) -> Self {
+            match value {
+                rig::agent::StreamingError::Completion(completion_error) => completion_error.into(),
+                rig::agent::StreamingError::Prompt(prompt_error) => prompt_error.into(),
+            }
+        }
+    }
+
+    fn update_scratch(
+        scratch: impl AsRef<ArcSwap<Result<Message, String>>>,
+        texts: &str,
+        reasonings: &[String],
+        tool_calls: &[ToolCall],
+    ) {
+        let Some(msg) = contents_to_message(texts, reasonings, tool_calls) else {
+            return;
         };
 
-        let in_chat = match &inputs[1] {
-            Some(Value::Chat(history)) => history.clone(),
-            None => Default::default(),
-            _ => unreachable!(),
-        };
+        scratch.as_ref().store(Arc::new(Ok(msg)));
+    }
 
-        let mut chat = match &inputs[1] {
-            Some(Value::Chat(history)) => Cow::Borrowed(history.as_ref()),
-            None => Default::default(),
-            _ => unreachable!(),
-        };
+    fn contents_to_message(
+        texts: &str,
+        reasonings: &[String],
+        tool_calls: &[ToolCall],
+    ) -> Option<Message> {
+        use crate::rig::agent::Text;
 
-        let schema = match &inputs[2] {
-            Some(Value::Json(schema)) => Some(schema.clone()),
-            None => None,
-            _ => unreachable!(),
-        };
+        let mut contents = Vec::new();
+        if !reasonings.is_empty() {
+            contents.push(AssistantContent::Reasoning(Reasoning::multi(
+                reasonings.to_owned(),
+            )))
+        }
 
-        let prompt = match &inputs[3] {
-            Some(Value::Text(text)) if !text.is_empty() => Some(Message::user((**text).clone())),
-            Some(Value::Message(msg)) => Some(msg.as_ref().clone()),
-            Some(Value::Json(value)) => match value.as_ref() {
-                serde_json::Value::String(text) => Some(Message::user(text.as_str())),
-                value => Some(Message::user(serde_json::to_string(value).map_err(
-                    |e| WorkflowError::Conversion(format!("Failed to stringify value: {e:?}")),
-                )?)),
-            },
-            None if !self.prompt.is_empty() => Some(Message::user(self.prompt.clone())),
-            _ => None,
-        };
+        if !texts.is_empty() {
+            contents.push(AssistantContent::Text(Text::from(texts)));
+        }
 
-        let prompt = if let Some(prompt) = prompt {
-            let message = tokio::task::spawn_blocking(move || canonicalize_msg(prompt))
+        let tool_call_contents = tool_calls
+            .iter()
+            .cloned()
+            .map(AssistantContent::ToolCall)
+            .collect_vec();
+
+        contents.extend(tool_call_contents);
+
+        if contents.is_empty() {
+            None
+        } else {
+            Some(Message::Assistant {
+                id: None,
+                content: OneOrMany::many(contents).unwrap(),
+            })
+        }
+    }
+
+    impl ChatNode {
+        pub async fn forward(
+            &mut self,
+            run_ctx: &RunContext,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            self.validate(&inputs)?;
+
+            let agent_spec = match &inputs[0] {
+                Some(Value::Agent(spec)) => spec,
+                None => Err(WorkflowError::Required(vec!["Agent spec required".into()]))?,
+                _ => unreachable!(),
+            };
+            let mut chat = match &inputs[1] {
+                Some(Value::Chat(history)) => Cow::Borrowed(history.as_ref()),
+                None => Default::default(),
+                _ => unreachable!(),
+            };
+
+            let mut messages = chat.iter_msgs().map(|it| it.as_ref().clone()).collect_vec();
+
+            let prompt = match &inputs[2] {
+                Some(Value::Text(text)) if !text.is_empty() => Message::user((**text).clone()),
+                Some(Value::Message(msg)) if matches!(**msg, Message::User { .. }) => {
+                    msg.as_ref().clone()
+                }
+                Some(Value::Message(msg)) if matches!(**msg, Message::Assistant { .. }) => {
+                    // Coerce into user message if we want to use another agent's output for cross talk
+                    Message::user(message_text(msg))
+                }
+                Some(Value::Json(value)) => match value.as_ref() {
+                    serde_json::Value::String(text) => Message::user(text.as_str()),
+                    value => Message::user(serde_json::to_string(value).map_err(|e| {
+                        WorkflowError::Conversion(format!("Failed to stringify value: {e:?}"))
+                    })?),
+                },
+                None if !self.prompt.is_empty() => Message::user(self.prompt.clone()),
+                None if matches!(messages.last(), Some(Message::User { .. })) => {
+                    messages.last().cloned().unwrap()
+                }
+                _ => Err(WorkflowError::Required(vec!["A prompt is required".into()]))?,
+            };
+
+            let prompt = tokio::task::spawn_blocking(move || canonicalize_msg(prompt))
                 .await
                 .map_err(|e| WorkflowError::Unknown(e.to_string()))?;
-            Some(message.map_err(|errs| {
+
+            let prompt = prompt.map_err(|errs| {
                 for err in errs {
                     run_ctx.errors.push(err);
                 }
-
                 WorkflowError::Unknown("Could not resolve images".into())
-            })?)
-        } else {
-            None
-        };
+            })?;
 
-        let validator = if let Some(schema) = schema.as_ref() {
-            Some(
-                jsonschema::validator_for(schema)
-                    .map_err(|err| anyhow::anyhow!("Invalid schema: {err:?}"))?,
-            )
-        } else {
-            None
-        };
+            let last_idx = messages.len();
 
-        if let Some(schema) = &schema {
-            Arc::make_mut(&mut agent_spec).schema(schema.clone());
-        }
+            let tools = agent_spec.tool_selection();
+            let agent_w = run_ctx.agent_factory.spec_to_agent(agent_spec)?;
 
-        let agent_w = run_ctx.agent_factory.spec_to_agent(&agent_spec)?;
+            let request = multi_turn_completion(run_ctx, &agent_w, tools, prompt, &mut messages);
+            let prompt_request = request.await;
+            match prompt_request {
+                Ok(_) => {
+                    for msg in messages.into_iter().skip(last_idx) {
+                        // When we implement streaming, we can hold onto the pointer
+                        // and update it incrementally.
+                        if !run_ctx.streaming
+                            && let Some(scratch) = &run_ctx.scratch
+                        {
+                            scratch.push_back(Ok(msg.clone()));
+                        }
 
-        let max_attempts = self.retries + 1;
-        let mut attempts = 0;
-
-        if let Some(prompt) = prompt {
-            if !run_ctx.streaming
-                && let Some(scratch) = &run_ctx.scratch
-            {
-                scratch.push_back(Ok(prompt.clone()));
+                        chat = chat.try_moo(|c| c.push(Ok(Arc::new(msg)).into()))?;
+                    }
+                }
+                Err(err) => Err(WorkflowError::Provider(err.into()))?,
             }
 
-            chat = chat.try_moo(|c| c.push(Ok(Arc::new(prompt)).into()))?;
-        }
-        // else if !matches!(
-        //     chat.last(),
-        //     Some(crate::ChatEntry {
-        //         content: ChatcOntent::Message(Message::User { .. }),
-        //         ..
-        //     })
-        // ) {
-        //     // unless last entry is a user message.
-        //     Err(WorkflowError::Required(vec!["A prompt is required".into()]))?;
-        // }
-
-        let result: Result<_, WorkflowError> = loop {
-            if run_ctx.interrupt.load(Ordering::Relaxed) {
-                Err(WorkflowError::Interrupted)?;
-            }
-
-            if let Some(deadline) = run_ctx.deadline
-                && deadline < Instant::now()
-            {
-                Err(WorkflowError::Timeout)?;
-            }
-            // chat is the source of truth. history is just its shadow.
-            let mut history = chat.iter_msgs().map(|it| it.as_ref().clone()).collect_vec();
-
-            // Use the last message as the prompt. Some times this will be used to extract data
-            // from the previous assistant response.
-            let Some(current_prompt) = history.pop() else {
-                Err(WorkflowError::Required(vec!["Input is missing".into()]))?
+            let message = {
+                if let Some(entry) = chat.last()
+                    && let ChatContent::Message(message) = &entry.content
+                {
+                    Value::Message(message.clone())
+                } else {
+                    Value::Placeholder(ValueKind::Message)
+                }
             };
 
-            let response =
-                one_shot_completion(run_ctx, &agent_w, current_prompt, history.clone()).await;
+            Ok(vec![
+                Value::Chat(Arc::new(chat.into_owned())),
+                message,
+                Value::Placeholder(ValueKind::Failure), // Runner handles the actual error values
+            ])
+        }
+    }
 
-            attempts += 1;
-            match response {
-                Ok(resp) => {
-                    let agent_msg = Message::Assistant {
-                        id: None,
-                        content: resp.content.clone(),
-                    };
+    // TODO: investigate why errors in the MCP server cause a panic here
+    impl StructuredChat {
+        pub async fn forward(
+            &mut self,
+            run_ctx: &RunContext,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            self.validate(&inputs)?;
 
-                    if !run_ctx.streaming
-                        && let Some(scratch) = &run_ctx.scratch
-                    {
-                        scratch.push_back(Ok(agent_msg.clone()));
+            let mut agent_spec = match &inputs[0] {
+                Some(Value::Agent(spec)) => spec.clone(),
+                None => Err(WorkflowError::Required(vec!["Agent is required".into()]))?,
+                _ => unreachable!(),
+            };
+
+            let in_chat = match &inputs[1] {
+                Some(Value::Chat(history)) => history.clone(),
+                None => Default::default(),
+                _ => unreachable!(),
+            };
+
+            let mut chat = match &inputs[1] {
+                Some(Value::Chat(history)) => Cow::Borrowed(history.as_ref()),
+                None => Default::default(),
+                _ => unreachable!(),
+            };
+
+            let schema = match &inputs[2] {
+                Some(Value::Json(schema)) => Some(schema.clone()),
+                None => None,
+                _ => unreachable!(),
+            };
+
+            let prompt = match &inputs[3] {
+                Some(Value::Text(text)) if !text.is_empty() => {
+                    Some(Message::user((**text).clone()))
+                }
+                Some(Value::Message(msg)) => Some(msg.as_ref().clone()),
+                Some(Value::Json(value)) => match value.as_ref() {
+                    serde_json::Value::String(text) => Some(Message::user(text.as_str())),
+                    value => Some(Message::user(serde_json::to_string(value).map_err(
+                        |e| WorkflowError::Conversion(format!("Failed to stringify value: {e:?}")),
+                    )?)),
+                },
+                None if !self.prompt.is_empty() => Some(Message::user(self.prompt.clone())),
+                _ => None,
+            };
+
+            let prompt = if let Some(prompt) = prompt {
+                let message = tokio::task::spawn_blocking(move || canonicalize_msg(prompt))
+                    .await
+                    .map_err(|e| WorkflowError::Unknown(e.to_string()))?;
+                Some(message.map_err(|errs| {
+                    for err in errs {
+                        run_ctx.errors.push(err);
                     }
 
-                    let (tool_calls, texts): (Vec<_>, Vec<_>) = resp
-                        .content
-                        .iter()
-                        .partition(|choice| matches!(choice, AssistantContent::ToolCall(_)));
+                    WorkflowError::Unknown("Could not resolve images".into())
+                })?)
+            } else {
+                None
+            };
 
-                    tracing::debug!("Got tool calls {tool_calls:?} and texts {texts:?}");
+            let validator = if let Some(schema) = schema.as_ref() {
+                Some(
+                    jsonschema::validator_for(schema)
+                        .map_err(|err| anyhow::anyhow!("Invalid schema: {err:?}"))?,
+                )
+            } else {
+                None
+            };
 
-                    let mut tool_func = tool_calls
-                        .iter()
-                        .filter_map(|call| match call {
-                            AssistantContent::ToolCall(tool_call) => {
-                                Some(tool_call.function.clone())
-                            }
-                            _ => None,
-                        })
-                        .next();
+            if let Some(schema) = &schema {
+                Arc::make_mut(&mut agent_spec).schema(schema.clone());
+            }
 
-                    if self.extract && tool_func.is_none() {
-                        tracing::info!(
-                            "Did not receive a tool call. Attempting to find one in message text."
-                        );
+            let agent_w = run_ctx.agent_factory.spec_to_agent(&agent_spec)?;
 
-                        let text = message_text(&agent_msg);
-                        tool_func = extract_json(&text, false);
+            let max_attempts = self.retries + 1;
+            let mut attempts = 0;
 
-                        if tool_func.is_none() {
-                            // common mistakes:
-                            let text = text
-                                .replace("\"tool\"", "\"name\"")
-                                .replace("\"function\"", "\"name\"")
-                                .replace("\"parameters\"", "\"arguments\"");
+            if let Some(prompt) = prompt {
+                if !run_ctx.streaming
+                    && let Some(scratch) = &run_ctx.scratch
+                {
+                    scratch.push_back(Ok(prompt.clone()));
+                }
 
-                            tool_func = extract_json(&text, false);
-                        }
+                chat = chat.try_moo(|c| c.push(Ok(Arc::new(prompt)).into()))?;
+            }
+            // else if !matches!(
+            //     chat.last(),
+            //     Some(crate::ChatEntry {
+            //         content: ChatcOntent::Message(Message::User { .. }),
+            //         ..
+            //     })
+            // ) {
+            //     // unless last entry is a user message.
+            //     Err(WorkflowError::Required(vec!["A prompt is required".into()]))?;
+            // }
 
-                        // Still failed? If we asked for just an object try to find one to validate
-                        if schema.is_some()
-                            && tool_func.is_none()
-                            && let Some(args) = extract_json::<serde_json::Value>(&text, false)
-                        {
-                            tool_func = Some(ToolFunction {
-                                name: "???".into(),
-                                arguments: args,
-                            })
-                        }
-                    }
+            let result: Result<_, WorkflowError> = loop {
+                if run_ctx.interrupt.load(Ordering::Relaxed) {
+                    Err(WorkflowError::Interrupted)?;
+                }
 
-                    chat = chat.try_moo(|c| c.push(Ok(Arc::new(agent_msg)).into()))?;
+                if let Some(deadline) = run_ctx.deadline
+                    && deadline < Instant::now()
+                {
+                    Err(WorkflowError::Timeout)?;
+                }
+                // chat is the source of truth. history is just its shadow.
+                let mut history = chat.iter_msgs().map(|it| it.as_ref().clone()).collect_vec();
 
-                    if let Some(tool_func) = tool_func {
-                        let tool_name = tool_func.name.clone();
-                        let tool_args = Arc::new(tool_func.arguments.clone());
+                // Use the last message as the prompt. Some times this will be used to extract data
+                // from the previous assistant response.
+                let Some(current_prompt) = history.pop() else {
+                    Err(WorkflowError::Required(vec!["Input is missing".into()]))?
+                };
 
-                        // if a agentic tool call, fetch the schema from the toolbox
-                        let validator = if let Some(selector) = &agent_spec.tools
-                            && let Some(provider) = run_ctx
-                                .agent_factory
-                                .toolbox
-                                .provider_for(selector, &tool_name)
-                        {
-                            let schema = provider.input_schema(&tool_name);
-                            Cow::Owned(Some(
-                                jsonschema::validator_for(&schema)
-                                    .map_err(|err| anyhow::anyhow!("Invalid schema: {err:?}"))?,
-                            ))
-                        } else {
-                            Cow::Borrowed(&validator)
+                let response =
+                    one_shot_completion(run_ctx, &agent_w, current_prompt, history.clone()).await;
+
+                attempts += 1;
+                match response {
+                    Ok(resp) => {
+                        let agent_msg = Message::Assistant {
+                            id: None,
+                            content: resp.content.clone(),
                         };
 
-                        if let Some(validator) = &*validator {
-                            // Invalid schema non-retryable
+                        if !run_ctx.streaming
+                            && let Some(scratch) = &run_ctx.scratch
+                        {
+                            scratch.push_back(Ok(agent_msg.clone()));
+                        }
 
-                            if let Err(err) = validator.validate(&tool_func.arguments) {
-                                if attempts >= max_attempts {
-                                    break Err(WorkflowError::Validation(err.to_owned()));
-                                } else {
-                                    if let Some(scratch) = &run_ctx.scratch {
-                                        scratch.push_back(Err(format!("{err:?}")));
-                                    }
-                                    chat = chat.try_moo(|c| {
-                                        let validation = WorkflowError::Validation(err.to_owned());
-                                        c.push_error(validation)
-                                    })?;
-                                    continue;
+                        let (tool_calls, texts): (Vec<_>, Vec<_>) = resp
+                            .content
+                            .iter()
+                            .partition(|choice| matches!(choice, AssistantContent::ToolCall(_)));
+
+                        tracing::debug!("Got tool calls {tool_calls:?} and texts {texts:?}");
+
+                        let mut tool_func = tool_calls
+                            .iter()
+                            .filter_map(|call| match call {
+                                AssistantContent::ToolCall(tool_call) => {
+                                    Some(tool_call.function.clone())
                                 }
+                                _ => None,
+                            })
+                            .next();
+
+                        if self.extract && tool_func.is_none() {
+                            tracing::info!(
+                                "Did not receive a tool call. Attempting to find one in message text."
+                            );
+
+                            let text = message_text(&agent_msg);
+                            tool_func = extract_json(&text, false);
+
+                            if tool_func.is_none() {
+                                // common mistakes:
+                                let text = text
+                                    .replace("\"tool\"", "\"name\"")
+                                    .replace("\"function\"", "\"name\"")
+                                    .replace("\"parameters\"", "\"arguments\"");
+
+                                tool_func = extract_json(&text, false);
+                            }
+
+                            // Still failed? If we asked for just an object try to find one to validate
+                            if schema.is_some()
+                                && tool_func.is_none()
+                                && let Some(args) = extract_json::<serde_json::Value>(&text, false)
+                            {
+                                tool_func = Some(ToolFunction {
+                                    name: "???".into(),
+                                    arguments: args,
+                                })
                             }
                         }
 
-                        break Ok((tool_name, tool_args));
-                    } else if attempts >= max_attempts {
-                        break Err(WorkflowError::MissingToolCall);
-                    } else {
-                        tracing::warn!(
-                            "No tool calls from LLM response. Retrying ({attempts}/{max_attempts} attempts)..."
-                        );
-                        if let Some(scratch) = &run_ctx.scratch {
-                            scratch.push_back(Err(format!("{:?}", WorkflowError::MissingToolCall)));
+                        chat = chat.try_moo(|c| c.push(Ok(Arc::new(agent_msg)).into()))?;
+
+                        if let Some(tool_func) = tool_func {
+                            let tool_name = tool_func.name.clone();
+                            let tool_args = Arc::new(tool_func.arguments.clone());
+
+                            // if a agentic tool call, fetch the schema from the toolbox
+                            let validator =
+                                if let Some(selector) = &agent_spec.tools
+                                    && let Some(provider) = run_ctx
+                                        .agent_factory
+                                        .toolbox
+                                        .provider_for(selector, &tool_name)
+                                {
+                                    let schema = provider.input_schema(&tool_name);
+                                    Cow::Owned(Some(jsonschema::validator_for(&schema).map_err(
+                                        |err| anyhow::anyhow!("Invalid schema: {err:?}"),
+                                    )?))
+                                } else {
+                                    Cow::Borrowed(&validator)
+                                };
+
+                            if let Some(validator) = &*validator {
+                                // Invalid schema non-retryable
+
+                                if let Err(err) = validator.validate(&tool_func.arguments) {
+                                    if attempts >= max_attempts {
+                                        break Err(WorkflowError::Validation(err.to_owned()));
+                                    } else {
+                                        if let Some(scratch) = &run_ctx.scratch {
+                                            scratch.push_back(Err(format!("{err:?}")));
+                                        }
+                                        chat = chat.try_moo(|c| {
+                                            let validation =
+                                                WorkflowError::Validation(err.to_owned());
+                                            c.push_error(validation)
+                                        })?;
+                                        continue;
+                                    }
+                                }
+                            }
+
+                            break Ok((tool_name, tool_args));
+                        } else if attempts >= max_attempts {
+                            break Err(WorkflowError::MissingToolCall);
+                        } else {
+                            tracing::warn!(
+                                "No tool calls from LLM response. Retrying ({attempts}/{max_attempts} attempts)..."
+                            );
+                            if let Some(scratch) = &run_ctx.scratch {
+                                scratch.push_back(Err(format!(
+                                    "{:?}",
+                                    WorkflowError::MissingToolCall
+                                )));
+                            }
+
+                            chat =
+                                chat.try_moo(|c| c.push_error(WorkflowError::MissingToolCall))?;
                         }
-
-                        chat = chat.try_moo(|c| c.push_error(WorkflowError::MissingToolCall))?;
+                    }
+                    Err(err) if attempts >= max_attempts => {
+                        break Err(WorkflowError::Provider(err.into()));
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "LLM call failed on {err:?}. Retrying ({attempts}/{max_attempts} attempts)"
+                        );
+                        chat =
+                            chat.try_moo(|c| c.push_error(WorkflowError::Provider(err.into())))?;
                     }
                 }
-                Err(err) if attempts >= max_attempts => {
-                    break Err(WorkflowError::Provider(err.into()));
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        "LLM call failed on {err:?}. Retrying ({attempts}/{max_attempts} attempts)"
-                    );
-                    chat = chat.try_moo(|c| c.push_error(WorkflowError::Provider(err.into())))?;
-                }
-            }
-        };
+            };
 
-        let history = if let Cow::Owned(history) = chat {
-            Arc::new(history)
-        } else {
-            in_chat.clone()
-        };
+            let history = if let Cow::Owned(history) = chat {
+                Arc::new(history)
+            } else {
+                in_chat.clone()
+            };
 
-        tracing::info!("Final result {result:?} after {attempts} attempts");
-        let (tool_name, args) = result?;
+            tracing::info!("Final result {result:?} after {attempts} attempts");
+            let (tool_name, args) = result?;
 
-        let message = if let Some(entry) = history.last()
-            && let ChatContent::Message(message) = &entry.content
-        {
-            Value::Message(message.clone())
-        } else {
-            Value::Placeholder(ValueKind::Message)
-        };
-
-        Ok(vec![
-            Value::Chat(history),
-            message,
-            Value::Text(Arc::new(tool_name)),
-            Value::Json(args),
-            Value::Placeholder(ValueKind::Failure),
-        ])
-    }
-}
-
-#[cfg(feature = "native")]
-#[allow(deprecated)]
-async fn one_shot_completion(
-    run_ctx: &RunContext,
-    agent: &AgentW,
-    prompt: Message,
-    history: Vec<Message>,
-) -> Result<PromptResponse, WorkflowError> {
-    use crate::rig::streaming::StreamedAssistantContent;
-    use futures_util::stream::StreamExt as _;
-
-    let prefs = run_ctx.agent_factory.prefs.load();
-
-    if !run_ctx.streaming {
-        let request = agent.exec_completion(prompt.clone(), history);
-
-        return match with_deadline(request, None, run_ctx.deadline).await {
-            Ok(Ok(it)) => Ok(it),
-            Ok(Err(PromptError::PromptCancelled { chat_history, .. }))
-                if let Some(Message::Assistant { content, .. }) = chat_history.last().cloned() =>
+            let message = if let Some(entry) = history.last()
+                && let ChatContent::Message(message) = &entry.content
             {
-                Ok(PromptResponse::empty()
-                    .with_messages(chat_history)
-                    .with_content(content))
-            }
-            Ok(Err(PromptError::MaxTurnsError { chat_history, .. }))
-                if let Some(Message::Assistant { content, .. }) = chat_history.last().cloned() =>
-            {
-                Ok(PromptResponse::empty()
-                    .with_messages(*chat_history)
-                    .with_content(content))
-            }
-            Ok(Err(PromptError::MaxTurnsError { chat_history, .. })) => {
-                panic!("Could not deal with this max_turns: {:?}", chat_history);
-            }
-            Ok(Err(err)) => Err(WorkflowError::Provider(err.into())),
-            Err(err) => Err(err),
-        };
+                Value::Message(message.clone())
+            } else {
+                Value::Placeholder(ValueKind::Message)
+            };
+
+            Ok(vec![
+                Value::Chat(history),
+                message,
+                Value::Text(Arc::new(tool_name)),
+                Value::Json(args),
+                Value::Placeholder(ValueKind::Failure),
+            ])
+        }
     }
 
-    let mut texts = String::new();
-    let mut reasonings = Vec::new();
-    let mut tool_calls: Vec<ToolCall> = Vec::new();
+    #[allow(deprecated)]
+    async fn one_shot_completion(
+        run_ctx: &RunContext,
+        agent: &AgentW,
+        prompt: Message,
+        history: Vec<Message>,
+    ) -> Result<PromptResponse, WorkflowError> {
+        use crate::rig::streaming::StreamedAssistantContent;
+        use futures_util::stream::StreamExt as _;
 
-    let agent_msg = if let Some(scratch) = &run_ctx.scratch {
-        scratch.push_back(Ok(prompt.clone()));
-        Some(scratch.push_back(Ok(Message::assistant(""))))
-    } else {
-        None
-    };
+        let prefs = run_ctx.agent_factory.prefs.load();
 
-    let stream = agent.stream_completion(&prompt, history);
-    pin_mut!(stream);
+        if !run_ctx.streaming {
+            let request = agent.exec_completion(prompt.clone(), history);
 
-    while let Some(content) =
-        with_deadline(stream.next(), prefs.stream_idle, run_ctx.deadline).await?
-    {
-        if run_ctx.interrupt.load(Ordering::Relaxed) {
-            Err(WorkflowError::Interrupted)?;
-        }
-
-        if let Some(deadline) = run_ctx.deadline
-            && deadline < Instant::now()
-        {
-            Err(WorkflowError::Timeout)?;
-        }
-
-        match content {
-            Ok(MultiTurnStreamItem::StreamAssistantItem(item)) => match item {
-                StreamedAssistantContent::Text(text) => {
-                    texts.push_str(&text.text);
-                    let msg = Message::assistant(&texts);
-                    if let Some(a) = &agent_msg {
-                        a.store(Arc::new(Ok(msg)));
-                    }
-                }
-                StreamedAssistantContent::ToolCall { tool_call, .. } => {
-                    tool_calls.push(tool_call.clone());
-                }
-                StreamedAssistantContent::ToolCallDelta { .. } => {
-                    // Maybe we can just ignore. Seems like APIs that use this send
-                    // a complete ToolCall at the end.
-                    //
-                    // Also, deltas seem to omit the actual tool name.
-                    // Only sends back arguments.
-                }
-                StreamedAssistantContent::Reasoning(reasoning) => {
-                    reasonings.push(reasoning.display_text());
-                }
-                StreamedAssistantContent::Final(_) => {}
-                StreamedAssistantContent::ReasoningDelta { reasoning, .. } => {
-                    if reasonings.is_empty() {
-                        reasonings.push(Default::default());
-                    }
-
-                    reasonings.last_mut().unwrap().push_str(&reasoning);
-                }
-                StreamedAssistantContent::Unknown(unk) => {
-                    tracing::warn!(?unk, "Unknonwn content");
-                }
-            },
-            Ok(MultiTurnStreamItem::CompletionCall(usage)) => {
-                tracing::info!(?usage, "Stream completed");
-            }
-            Ok(unk) => {
-                panic!("Don't know what to do with {unk:?}");
-            }
-            Err(rig::agent::StreamingError::Prompt(boxed))
-                if let PromptError::PromptCancelled { chat_history, .. } = boxed.as_ref()
-                    && let Some(Message::Assistant { content, .. }) =
+            return match with_deadline(request, None, run_ctx.deadline).await {
+                Ok(Ok(it)) => Ok(it),
+                Ok(Err(PromptError::PromptCancelled { chat_history, .. }))
+                    if let Some(Message::Assistant { content, .. }) =
                         chat_history.last().cloned() =>
-            {
-                tracing::info!(?content, "Prompt cancelled during stream");
-            }
-            Err(err) => {
-                let err: rig::agent::StreamingError = err;
-                Err(WorkflowError::Provider(err.into()))?;
-            }
+                {
+                    Ok(PromptResponse::empty()
+                        .with_messages(chat_history)
+                        .with_content(content))
+                }
+                Ok(Err(PromptError::MaxTurnsError { chat_history, .. }))
+                    if let Some(Message::Assistant { content, .. }) =
+                        chat_history.last().cloned() =>
+                {
+                    Ok(PromptResponse::empty()
+                        .with_messages(*chat_history)
+                        .with_content(content))
+                }
+                Ok(Err(PromptError::MaxTurnsError { chat_history, .. })) => {
+                    panic!("Could not deal with this max_turns: {:?}", chat_history);
+                }
+                Ok(Err(err)) => Err(WorkflowError::Provider(err.into())),
+                Err(err) => Err(err),
+            };
         }
 
-        if let Some(scratch) = &agent_msg {
-            update_scratch(scratch, &texts, &reasonings, &tool_calls);
-        }
-    }
-
-    if let Some(Message::Assistant { id: _, content }) =
-        contents_to_message(&texts, &reasonings, &tool_calls)
-    {
-        Ok(PromptResponse::empty().with_content(content))
-    } else {
-        Err(WorkflowError::Unknown(
-            "No response or error message from provider".into(),
-        ))
-    }
-}
-
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-enum StreamingError {
-    #[error("WorkflowError: {0}")]
-    Workflow(#[from] WorkflowError),
-    #[error("CompletionError: {0}")]
-    OneShot(#[from] rig::completion::PromptError),
-    #[error("CompletionError: {0}")]
-    Completion(#[from] CompletionError),
-    #[error("PromptError: {0}")]
-    Prompt(#[from] Box<rig::completion::PromptError>),
-    #[error("ToolSetError: {0}")]
-    Tool(#[from] rig::tool::ToolExecutionError),
-}
-
-impl From<rig::agent::StreamingError> for StreamingError {
-    fn from(value: rig::agent::StreamingError) -> Self {
-        match value {
-            rig::agent::StreamingError::Completion(completion_error) => completion_error.into(),
-            rig::agent::StreamingError::Prompt(prompt_error) => prompt_error.into(),
-        }
-    }
-}
-
-#[cfg(feature = "native")]
-#[allow(deprecated)]
-// Following the example multi_turn_streaming_gemini, but I'm pretty lost.
-async fn multi_turn_completion(
-    run_ctx: &RunContext,
-    agent: &AgentW,
-    toolset: Arc<ToolSelector>,
-    prompt: Message,
-    chat_history: &mut Vec<Message>,
-) -> Result<(), StreamingError> {
-    use crate::rig::{self, streaming::StreamedAssistantContent};
-    use futures_util::stream::StreamExt as _;
-
-    let prefs = run_ctx.agent_factory.prefs.load();
-    let max_turns = prefs.tool_turns.unwrap_or(5);
-
-    if !run_ctx.streaming {
-        let prompt = agent.exec_chat(prompt, chat_history.clone(), Some(max_turns));
-        let resp = with_deadline(prompt, None, run_ctx.deadline).await??;
-
-        if let Some(messages) = resp.messages {
-            chat_history.extend(messages);
-        }
-
-        return Ok(());
-    }
-
-    // Using two buffers since chat_history is specific to this call, while scratch is
-    // more for monitoring global progress across nodes.
-    if chat_history.last() != Some(&prompt) {
-        chat_history.push(prompt.clone());
-    }
-    if let Some(scratch) = &run_ctx.scratch {
-        scratch.push_back(Ok(prompt.clone()));
-    }
-
-    // Turns are tool call/result round-trips, not retries of failed completion requests.
-    // A completion failure should immediately abort the node.
-    for _ in 0..max_turns {
-        let current_prompt = match chat_history.pop() {
-            Some(prompt) => prompt,
-            None => unreachable!("Chat history should never be empty at this point"),
-        };
-        if let Some(scratch) = &run_ctx.scratch {
-            scratch.pop_back();
-        }
-
-        chat_history.push(current_prompt.clone());
-        if let Some(scratch) = &run_ctx.scratch {
-            scratch.push_back(Ok(current_prompt.clone()));
-        }
-
-        let agent_msg = run_ctx
-            .scratch
-            .as_ref()
-            .map(|s| s.push_back(Ok(Message::assistant(""))));
-
-        let mut reasonings = Vec::new();
         let mut texts = String::new();
-        let mut tool_calls = vec![];
+        let mut reasonings = Vec::new();
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
 
-        let stream = agent.stream_completion(&current_prompt, chat_history.clone());
+        let agent_msg = if let Some(scratch) = &run_ctx.scratch {
+            scratch.push_back(Ok(prompt.clone()));
+            Some(scratch.push_back(Ok(Message::assistant(""))))
+        } else {
+            None
+        };
+
+        let stream = agent.stream_completion(&prompt, history);
         pin_mut!(stream);
 
         while let Some(content) =
@@ -1005,33 +924,62 @@ async fn multi_turn_completion(
                 Err(WorkflowError::Interrupted)?;
             }
 
+            if let Some(deadline) = run_ctx.deadline
+                && deadline < Instant::now()
+            {
+                Err(WorkflowError::Timeout)?;
+            }
+
             match content {
                 Ok(MultiTurnStreamItem::StreamAssistantItem(item)) => match item {
                     StreamedAssistantContent::Text(text) => {
                         texts.push_str(&text.text);
+                        let msg = Message::assistant(&texts);
+                        if let Some(a) = &agent_msg {
+                            a.store(Arc::new(Ok(msg)));
+                        }
                     }
                     StreamedAssistantContent::ToolCall { tool_call, .. } => {
-                        tool_calls.push(tool_call);
+                        tool_calls.push(tool_call.clone());
+                    }
+                    StreamedAssistantContent::ToolCallDelta { .. } => {
+                        // Maybe we can just ignore. Seems like APIs that use this send
+                        // a complete ToolCall at the end.
+                        //
+                        // Also, deltas seem to omit the actual tool name.
+                        // Only sends back arguments.
                     }
                     StreamedAssistantContent::Reasoning(reasoning) => {
                         reasonings.push(reasoning.display_text());
                     }
-                    StreamedAssistantContent::ReasoningDelta { id: _, reasoning } => {
+                    StreamedAssistantContent::Final(_) => {}
+                    StreamedAssistantContent::ReasoningDelta { reasoning, .. } => {
                         if reasonings.is_empty() {
                             reasonings.push(Default::default());
                         }
 
                         reasonings.last_mut().unwrap().push_str(&reasoning);
                     }
-                    unk => {
-                        tracing::warn!(?unk, "Unhandled content stream");
+                    StreamedAssistantContent::Unknown(unk) => {
+                        tracing::warn!(?unk, "Unknonwn content");
                     }
                 },
-                Ok(_) => {
-                    tracing::trace!(?content, "Unhandled streamed content");
+                Ok(MultiTurnStreamItem::CompletionCall(usage)) => {
+                    tracing::info!(?usage, "Stream completed");
                 }
-                err => {
-                    err?;
+                Ok(unk) => {
+                    tracing::warn!("Don't know what to do with {unk:?}");
+                }
+                Err(rig::agent::StreamingError::Prompt(boxed))
+                    if let PromptError::PromptCancelled { chat_history, .. } = boxed.as_ref()
+                        && let Some(Message::Assistant { content, .. }) =
+                            chat_history.last().cloned() =>
+                {
+                    tracing::warn!(?content, "Prompt cancelled during stream");
+                }
+                Err(err) => {
+                    let err: rig::agent::StreamingError = err;
+                    Err(WorkflowError::Provider(err.into()))?;
                 }
             }
 
@@ -1040,137 +988,205 @@ async fn multi_turn_completion(
             }
         }
 
-        let done = tool_calls.is_empty();
-
-        tracing::trace!(
-            ?texts,
-            ?reasonings,
-            ?tool_calls,
-            "Finished streaming completion"
-        );
-
-        if let Some(msg) = contents_to_message(&texts, &reasonings, &tool_calls) {
-            chat_history.push(msg.clone());
-
-            if let Some(a) = agent_msg {
-                a.store(Arc::new(Ok(msg)));
-            }
+        if let Some(Message::Assistant { id: _, content }) =
+            contents_to_message(&texts, &reasonings, &tool_calls)
+        {
+            Ok(PromptResponse::empty().with_content(content))
         } else {
-            Err(WorkflowError::Unknown("Provider response is empty".into()))?;
-            // tracing::warn!("Provider response is empty");
-            // continue;
+            Err(WorkflowError::Unknown(
+                "No response or error message from provider".into(),
+            ))
         }
+    }
 
-        let mut tool_results = vec![];
-        for tool_call in &tool_calls {
-            // TODO: implement tool namespacing by generating a new toolset
-            let timeout = run_ctx
-                .agent_factory
-                .toolbox
-                .timeout(&toolset, &tool_call.function.name);
-            // TODO: verify that the args are stringified inside the object and not a sub-object
-            let tool_args = tool_call.function.arguments.to_string();
-            tracing::debug!(
-                "Attempting to call tool with {} args {tool_args:?}. Timeout {timeout:?}",
-                &tool_call.function.name
-            );
+    #[allow(deprecated)]
+    // Following the example multi_turn_streaming_gemini, but I'm pretty lost.
+    async fn multi_turn_completion(
+        run_ctx: &RunContext,
+        agent: &AgentW,
+        toolset: Arc<ToolSelector>,
+        prompt: Message,
+        chat_history: &mut Vec<Message>,
+    ) -> Result<(), StreamingError> {
+        use crate::rig::{self, streaming::StreamedAssistantContent};
+        use futures_util::stream::StreamExt as _;
 
-            let call_tool = agent.exec_tool(&tool_call.function.name, &tool_args);
-            let tool_result = if let Some(timeout) = timeout {
-                tokio::time::timeout(Duration::from_secs(timeout), call_tool)
-                    .await
-                    .map_err(|_| WorkflowError::Timeout)?
-            } else {
-                call_tool.await
-            };
-            if !tool_result.is_success() {
-                return Err(StreamingError::Tool(ToolExecutionError::other(format!(
-                    "{tool_result:?}"
-                ))));
+        let prefs = run_ctx.agent_factory.prefs.load();
+        let max_turns = prefs.tool_turns.unwrap_or(5);
+
+        if !run_ctx.streaming {
+            let prompt = agent.exec_chat(prompt, chat_history.clone(), Some(max_turns));
+            let resp = with_deadline(prompt, None, run_ctx.deadline).await??;
+
+            if let Some(messages) = resp.messages {
+                chat_history.extend(messages);
             }
-            let tool_output = tool_result.output().render();
-            tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), tool_output));
-        }
 
-        // Add tool results to chat history
-        for (id, call_id, tool_result) in tool_results {
-            let msg = if let Some(call_id) = call_id {
-                Message::User {
-                    content: OneOrMany::one(UserContent::tool_result_with_call_id(
-                        id,
-                        call_id,
-                        OneOrMany::one(rig::message::ToolResultContent::text(tool_result)),
-                    )),
-                }
-            } else {
-                Message::User {
-                    content: OneOrMany::one(UserContent::tool_result(
-                        id,
-                        OneOrMany::one(rig::message::ToolResultContent::text(tool_result)),
-                    )),
-                }
-            };
-
-            chat_history.push(msg.clone());
-            if let Some(scratch) = &run_ctx.scratch {
-                scratch.push_back(Ok(msg));
-            }
-        }
-
-        if done {
             return Ok(());
         }
-    }
 
-    tracing::warn!("Too many tool calls from completion model");
-    Ok(())
-}
+        // Using two buffers since chat_history is specific to this call, while scratch is
+        // more for monitoring global progress across nodes.
+        if chat_history.last() != Some(&prompt) {
+            chat_history.push(prompt.clone());
+        }
+        if let Some(scratch) = &run_ctx.scratch {
+            scratch.push_back(Ok(prompt.clone()));
+        }
 
-fn update_scratch(
-    scratch: impl AsRef<ArcSwap<Result<Message, String>>>,
-    texts: &str,
-    reasonings: &[String],
-    tool_calls: &[ToolCall],
-) {
-    let Some(msg) = contents_to_message(texts, reasonings, tool_calls) else {
-        return;
-    };
+        // Turns are tool call/result round-trips, not retries of failed completion requests.
+        // A completion failure should immediately abort the node.
+        for _ in 0..max_turns {
+            let current_prompt = match chat_history.pop() {
+                Some(prompt) => prompt,
+                None => unreachable!("Chat history should never be empty at this point"),
+            };
+            if let Some(scratch) = &run_ctx.scratch {
+                scratch.pop_back();
+            }
 
-    scratch.as_ref().store(Arc::new(Ok(msg)));
-}
+            chat_history.push(current_prompt.clone());
+            if let Some(scratch) = &run_ctx.scratch {
+                scratch.push_back(Ok(current_prompt.clone()));
+            }
 
-fn contents_to_message(
-    texts: &str,
-    reasonings: &[String],
-    tool_calls: &[ToolCall],
-) -> Option<Message> {
-    use crate::rig::agent::Text;
+            let agent_msg = run_ctx
+                .scratch
+                .as_ref()
+                .map(|s| s.push_back(Ok(Message::assistant(""))));
 
-    let mut contents = Vec::new();
-    if !reasonings.is_empty() {
-        contents.push(AssistantContent::Reasoning(Reasoning::multi(
-            reasonings.to_owned(),
-        )))
-    }
+            let mut reasonings = Vec::new();
+            let mut texts = String::new();
+            let mut tool_calls = vec![];
 
-    if !texts.is_empty() {
-        contents.push(AssistantContent::Text(Text::from(texts)));
-    }
+            let stream = agent.stream_completion(&current_prompt, chat_history.clone());
+            pin_mut!(stream);
 
-    let tool_call_contents = tool_calls
-        .iter()
-        .cloned()
-        .map(AssistantContent::ToolCall)
-        .collect_vec();
+            while let Some(content) =
+                with_deadline(stream.next(), prefs.stream_idle, run_ctx.deadline).await?
+            {
+                if run_ctx.interrupt.load(Ordering::Relaxed) {
+                    Err(WorkflowError::Interrupted)?;
+                }
 
-    contents.extend(tool_call_contents);
+                match content {
+                    Ok(MultiTurnStreamItem::StreamAssistantItem(item)) => match item {
+                        StreamedAssistantContent::Text(text) => {
+                            texts.push_str(&text.text);
+                        }
+                        StreamedAssistantContent::ToolCall { tool_call, .. } => {
+                            tool_calls.push(tool_call);
+                        }
+                        StreamedAssistantContent::Reasoning(reasoning) => {
+                            reasonings.push(reasoning.display_text());
+                        }
+                        StreamedAssistantContent::ReasoningDelta { id: _, reasoning } => {
+                            if reasonings.is_empty() {
+                                reasonings.push(Default::default());
+                            }
 
-    if contents.is_empty() {
-        None
-    } else {
-        Some(Message::Assistant {
-            id: None,
-            content: OneOrMany::many(contents).unwrap(),
-        })
+                            reasonings.last_mut().unwrap().push_str(&reasoning);
+                        }
+                        unk => {
+                            tracing::warn!(?unk, "Unhandled content stream");
+                        }
+                    },
+                    Ok(_) => {
+                        tracing::trace!(?content, "Unhandled streamed content");
+                    }
+                    err => {
+                        err?;
+                    }
+                }
+
+                if let Some(scratch) = &agent_msg {
+                    update_scratch(scratch, &texts, &reasonings, &tool_calls);
+                }
+            }
+
+            let done = tool_calls.is_empty();
+
+            tracing::trace!(
+                ?texts,
+                ?reasonings,
+                ?tool_calls,
+                "Finished streaming completion"
+            );
+
+            if let Some(msg) = contents_to_message(&texts, &reasonings, &tool_calls) {
+                chat_history.push(msg.clone());
+
+                if let Some(a) = agent_msg {
+                    a.store(Arc::new(Ok(msg)));
+                }
+            } else {
+                Err(WorkflowError::Unknown("Provider response is empty".into()))?;
+                // tracing::warn!("Provider response is empty");
+                // continue;
+            }
+
+            let mut tool_results = vec![];
+            for tool_call in &tool_calls {
+                // TODO: implement tool namespacing by generating a new toolset
+                let timeout = run_ctx
+                    .agent_factory
+                    .toolbox
+                    .timeout(&toolset, &tool_call.function.name);
+                // TODO: verify that the args are stringified inside the object and not a sub-object
+                let tool_args = tool_call.function.arguments.to_string();
+                tracing::debug!(
+                    "Attempting to call tool with {} args {tool_args:?}. Timeout {timeout:?}",
+                    &tool_call.function.name
+                );
+
+                let call_tool = agent.exec_tool(&tool_call.function.name, &tool_args);
+                let tool_result = if let Some(timeout) = timeout {
+                    tokio::time::timeout(Duration::from_secs(timeout), call_tool)
+                        .await
+                        .map_err(|_| WorkflowError::Timeout)?
+                } else {
+                    call_tool.await
+                };
+                if !tool_result.is_success() {
+                    return Err(StreamingError::Tool(ToolExecutionError::other(format!(
+                        "{tool_result:?}"
+                    ))));
+                }
+                let tool_output = tool_result.output().render();
+                tool_results.push((tool_call.id.clone(), tool_call.call_id.clone(), tool_output));
+            }
+
+            // Add tool results to chat history
+            for (id, call_id, tool_result) in tool_results {
+                let msg = if let Some(call_id) = call_id {
+                    Message::User {
+                        content: OneOrMany::one(UserContent::tool_result_with_call_id(
+                            id,
+                            call_id,
+                            OneOrMany::one(rig::message::ToolResultContent::text(tool_result)),
+                        )),
+                    }
+                } else {
+                    Message::User {
+                        content: OneOrMany::one(UserContent::tool_result(
+                            id,
+                            OneOrMany::one(rig::message::ToolResultContent::text(tool_result)),
+                        )),
+                    }
+                };
+
+                chat_history.push(msg.clone());
+                if let Some(scratch) = &run_ctx.scratch {
+                    scratch.push_back(Ok(msg));
+                }
+            }
+
+            if done {
+                return Ok(());
+            }
+        }
+
+        tracing::warn!("Too many tool calls from completion model");
+        Ok(())
     }
 }

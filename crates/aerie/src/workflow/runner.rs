@@ -1,20 +1,27 @@
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Local};
-use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
+use egui_snarl::NodeId;
 use glob::{MatchOptions, Pattern};
-use im::OrdSet;
-use itertools::{EitherOrBoth, Itertools};
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use std::{
-    collections::{BTreeMap, BTreeSet, BinaryHeap},
-    ops::Deref,
-    sync::{Arc, atomic::Ordering},
-    time::Duration,
-};
+use std::{ops::Deref, sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
+
+#[cfg(feature = "native")]
+use egui_snarl::{InPinId, OutPinId, Snarl};
+#[cfg(feature = "native")]
+use im::OrdSet;
+#[cfg(feature = "native")]
+use itertools::EitherOrBoth;
+#[cfg(feature = "native")]
+use serde_json::json;
+#[cfg(feature = "native")]
+use std::{
+    collections::{BTreeMap, BTreeSet, BinaryHeap},
+    sync::atomic::Ordering,
+};
 
 #[cfg(feature = "native")]
 use crate::workflow::{

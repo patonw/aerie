@@ -1,16 +1,14 @@
-use std::{
-    borrow::Cow,
-    collections::BTreeMap,
-    fs::OpenOptions,
-    hash::DefaultHasher,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::SystemTime,
-};
+#![cfg_attr(feature = "web-ui", allow(unused))]
 
 use arc_swap::ArcSwap;
+use std::{borrow::Cow, collections::BTreeMap, path::PathBuf, sync::Arc, time::SystemTime};
+
+#[cfg(feature = "native")]
 use itertools::Itertools;
+#[cfg(feature = "native")]
 use serde_yaml_ng as serde_yml;
+#[cfg(feature = "native")]
+use std::{fs::OpenOptions, hash::DefaultHasher, path::Path};
 
 #[cfg(feature = "native")]
 use crate::storage::CachedDirStore;

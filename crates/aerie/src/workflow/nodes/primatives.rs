@@ -1,32 +1,12 @@
-use std::{borrow::Cow, convert::identity, iter::once, str::FromStr as _, sync::Arc};
-
 use decorum::E64;
-#[cfg(feature = "ui")]
-use egui_commonmark::CommonMarkCache;
-#[cfg(feature = "ui")]
-use egui_phosphor::regular::{BRACKETS_SQUARE, NUMPAD};
-use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use serde_with::skip_serializing_none;
+use std::{borrow::Cow, sync::Arc};
 
-#[cfg(feature = "ui")]
-use crate::utils::{IMAGE_CACHE, rig_image_to_egui, show_image};
-#[cfg(feature = "ui")]
-use crate::{
-    chat::ChatContent,
-    events::AppEvent,
-    ui::{render::render_message_width, resizable_frame, shortcuts::squelch},
-    workflow::{EditContext, UiNode},
-};
-
-use crate::{
-    utils::message_text,
-    workflow::{DynNode, FlexNode, GraphId, Value, ValueKind, WorkflowError},
-};
+use crate::workflow::{DynNode, FlexNode, GraphId, Value, ValueKind};
 
 #[cfg(feature = "native")]
-use crate::workflow::RunContext;
+use crate::workflow::{RunContext, WorkflowError};
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Number {
@@ -97,157 +77,7 @@ impl DynNode for Number {
         _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        let Self { list, integer, .. } = self;
-
-        match &inputs[0] {
-            None => {
-                if self.integer {
-                    Ok(vec![Value::Integer(self.i_value)])
-                } else {
-                    Ok(vec![Value::Number(self.f_value)])
-                }
-            }
-            Some(Value::Integer(value)) => Ok(vec![match (list, integer) {
-                (true, true) => Value::IntList(im::vector![*value]),
-                (false, true) => Value::Integer(*value),
-                (true, false) => Value::FloatList(im::vector![E64::assert(*value as f64)]),
-                (false, false) => Value::Number(E64::assert(*value as f64)),
-            }]),
-            Some(Value::IntList(value)) => Ok(vec![match (list, integer) {
-                (true, true) => Value::IntList(value.clone()),
-                (false, true) if value.len() == 1 => Value::Integer(value[0]),
-                (true, false) => {
-                    Value::FloatList(value.iter().map(|it| E64::assert(*it as f64)).collect())
-                }
-                (false, false) if value.len() == 1 => Value::Number(E64::assert(value[0] as f64)),
-                (false, _) => Err(WorkflowError::Conversion(
-                    "List must have exactly one value".into(),
-                ))?,
-            }]),
-            Some(Value::Number(value)) => Ok(vec![match (list, integer) {
-                (true, true) => Value::IntList(im::vector![value.into_inner() as i64]),
-                (false, true) => Value::Integer(value.into_inner() as i64),
-                (true, false) => Value::FloatList(im::vector![*value]),
-                (false, false) => Value::Number(*value),
-            }]),
-            Some(Value::FloatList(value)) => Ok(vec![match (list, integer) {
-                (true, true) => {
-                    Value::IntList(value.iter().map(|it| it.into_inner() as i64).collect())
-                }
-                (false, true) if value.len() == 1 => Value::Integer(value[0].into_inner() as i64),
-                (true, false) => Value::FloatList(value.clone()),
-                (false, false) if value.len() == 1 => Value::Number(value[0]),
-                (false, _) => Err(WorkflowError::Conversion(
-                    "List must have exactly one value".into(),
-                ))?,
-            }]),
-            Some(Value::Text(value)) => Ok(vec![match (list, integer) {
-                (true, true) => {
-                    let item = value
-                        .parse::<i64>()
-                        .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?;
-                    Value::IntList(im::vector![item])
-                }
-                (false, true) => Value::Integer(
-                    value
-                        .parse()
-                        .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?,
-                ),
-                (true, false) => {
-                    let item = E64::from_str(value)
-                        .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?;
-                    Value::FloatList(im::vector![item])
-                }
-                (false, false) => Value::Number(
-                    E64::from_str(value.as_str())
-                        .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?,
-                ),
-            }]),
-            Some(Value::TextList(value)) => Ok(vec![match (list, integer) {
-                (true, true) => {
-                    let items: Result<im::Vector<i64>, WorkflowError> = value
-                        .iter()
-                        .map(|it| {
-                            it.parse::<i64>()
-                                .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))
-                        })
-                        .collect();
-                    Value::IntList(items?)
-                }
-                (false, true) if value.len() == 1 => Value::Integer(
-                    value[0]
-                        .parse()
-                        .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?,
-                ),
-                (true, false) => {
-                    let items: Result<im::Vector<_>, WorkflowError> = value
-                        .iter()
-                        .map(|it| {
-                            E64::from_str(it)
-                                .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))
-                        })
-                        .collect();
-                    Value::FloatList(items?)
-                }
-                (false, false) if value.len() == 1 => Value::Number(
-                    E64::from_str(value[0].as_str())
-                        .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?,
-                ),
-                (false, _) => Err(WorkflowError::Conversion(
-                    "List must have exactly one value".into(),
-                ))?,
-            }]),
-            _ => unreachable!(),
-        }
-    }
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for Number {
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        assert_eq!(pin_id, 0);
-
-        let Self {
-            list,
-            integer,
-            i_value,
-            f_value,
-        } = self;
-
-        if remote.is_none() {
-            if *integer {
-                squelch(ui.add(egui::DragValue::new(i_value).update_while_editing(false)));
-                *f_value = E64::assert(*i_value as f64);
-            } else {
-                let mut inner = f_value.into_inner();
-                squelch(
-                    ui.add(
-                        egui::DragValue::new(&mut inner)
-                            .speed(0.1)
-                            .update_while_editing(false),
-                    ),
-                );
-                *f_value = E64::assert(inner);
-                *i_value = inner as i64;
-            }
-
-            self.list = false;
-        } else {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.toggle_value(list, BRACKETS_SQUARE)
-                .on_hover_text("list value");
-        }
-
-        ui.toggle_value(integer, NUMPAD)
-            .on_hover_text("integer value");
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
+        self.forward(inputs)
     }
 }
 
@@ -304,115 +134,7 @@ impl DynNode for Text {
         _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        use TextSplit::*;
-        let Self { value, delim, .. } = self;
-
-        let text = match &inputs[0] {
-            Some(Value::Text(text)) => text.clone(),
-            Some(Value::Message(message)) => Arc::new(message_text(message)),
-            None => value.clone(),
-            _ => unreachable!(),
-        };
-
-        match delim {
-            None => Ok(vec![Value::Text(text.clone())]),
-            Some(Lines) => Ok(vec![Value::TextList(
-                text.split("\n")
-                    .filter(|it| !it.is_empty())
-                    .map(|it| Arc::new(it.trim().to_string()))
-                    .collect(),
-            )]),
-            Some(Paragraphs) => Ok(vec![Value::TextList(
-                text.split("\n\n")
-                    .filter(|it| !it.is_empty())
-                    .map(|it| Arc::new(it.trim().to_string()))
-                    .collect(),
-            )]),
-            Some(Words) => Ok(vec![Value::TextList(
-                text.split_whitespace()
-                    .filter(|it| !it.is_empty())
-                    .map(|it| Arc::new(it.to_string()))
-                    .collect(),
-            )]),
-            Some(Documents) => Ok(vec![Value::TextList(
-                text.split("\n---\n")
-                    .filter(|it| !it.is_empty())
-                    .map(|it| Arc::new(it.trim().to_string()))
-                    .collect(),
-            )]),
-        }
-    }
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for Text {
-    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
-        other
-            .downcast_ref::<Self>()
-            .is_some_and(|other| self.value == other.value && self.delim == other.delim)
-    }
-
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        if remote.is_none() {
-            egui::Frame::new().inner_margin(4).show(ui, |ui| {
-                resizable_frame(&mut self.size, ui, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        let text = Arc::make_mut(&mut self.value);
-                        let widget = egui::TextEdit::multiline(text)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("Enter text \u{1F64B}");
-
-                        squelch(ui.add_sized(ui.available_size(), widget));
-                    });
-                });
-            });
-        } else {
-            ui.label("input");
-        }
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-
-    fn has_body(&self) -> bool {
-        true
-    }
-
-    fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
-        use TextSplit::*;
-        let Self { delim, .. } = self;
-
-        egui::ComboBox::from_label("split")
-            .selected_text(if delim.is_none() {
-                String::new()
-            } else {
-                format!("{:?}", delim.as_ref().unwrap())
-            })
-            .show_ui(ui, |ui| {
-                ui.selectable_value(delim, None, "");
-                ui.selectable_value(delim, Some(Lines), "Lines");
-                ui.selectable_value(delim, Some(Paragraphs), "Paragraphs")
-                    .on_hover_text("Paragraphs separated by blank lines");
-                ui.selectable_value(delim, Some(Words), "Words");
-                ui.selectable_value(delim, Some(Documents), "Documents")
-                    .on_hover_text("Documents separated by triple dash (---)");
-            });
-    }
-
-    fn show_output(
-        &mut self,
-        _ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-    ) -> egui_snarl::ui::PinInfo {
-        assert_eq!(pin_id, 0);
-
-        self.out_kind(pin_id).default_pin()
+        self.forward(inputs)
     }
 }
 
@@ -474,132 +196,7 @@ impl DynNode for Preview {
         _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        if let Some(value) = inputs.first().and_then(|it| it.as_ref()) {
-            ctx.previews.update(ctx.exec_id, self.uuid.0, value.clone());
-
-            let mut id_path = ctx
-                .id_stack
-                .iter()
-                .map(|(t, i)| format!("{t}#{i}"))
-                .chain(once(format!["{}.preview", &self.uuid]))
-                .join("/");
-
-            let title = if self.title.is_empty() {
-                "Preview"
-            } else {
-                &self.title
-            };
-            let mut title_path = ctx
-                .title_stack
-                .iter()
-                .map(|(t, i)| format!("{t}#{i}"))
-                .chain(once(format!["{title}.preview"]))
-                .join("/");
-
-            id_path.insert(0, '/');
-            title_path.insert(0, '/');
-            ctx.run_events.broadcast(json!({
-                "tags": im::ordset![
-                    // id_path, // Quite noisy
-                    title_path
-                ],
-                "data": serde_json::to_value(value).unwrap_or_default(),
-            }));
-        }
-
-        Ok(vec![])
-    }
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for Preview {
-    fn on_paste(&mut self) {
-        self.uuid = GraphId::new();
-    }
-
-    fn title_mut(&mut self) -> Option<&mut String> {
-        Some(&mut self.title)
-    }
-
-    fn has_body(&self) -> bool {
-        true
-    }
-
-    fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
-        let mut cache = CommonMarkCache::default();
-
-        egui::Frame::new().inner_margin(4).show(ui, |ui| {
-            resizable_frame(&mut self.size, ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink(false)
-                    .show(ui, |ui| {
-                        match &ctx
-                            .previews
-                            .value(ctx.exec_id.unwrap_or_default(), self.uuid.0)
-                            .unwrap_or_default()
-                        {
-                            Value::Text(text) => {
-                                ui.add(egui::Label::new(text.as_str()).wrap());
-                            }
-                            Value::Chat(history) => {
-                                ui.vertical(|ui| {
-                                    for entry in history.iter() {
-                                        if let ChatContent::Message(msg) = &entry.content {
-                                            render_message_width(ui, &mut cache, msg, Some(600.0));
-                                        }
-                                    }
-                                });
-                            }
-                            Value::Message(msg) => {
-                                render_message_width(ui, &mut cache, msg, Some(600.0));
-                            }
-                            Value::Json(value) => {
-                                if let Ok(text) = serde_json::to_string_pretty(value) {
-                                    let language = "json";
-                                    let theme =
-                                        egui_extras::syntax_highlighting::CodeTheme::from_memory(
-                                            ui.ctx(),
-                                            ui.style(),
-                                        );
-
-                                    {
-                                        let layout_job =
-                                            egui_extras::syntax_highlighting::highlight(
-                                                ui.ctx(),
-                                                ui.style(),
-                                                &theme,
-                                                &text,
-                                                language,
-                                            );
-                                        ui.add(egui::Label::new(layout_job).selectable(true).wrap())
-                                    };
-                                } else {
-                                    ui.add(egui::Label::new(format!("{:?}", value)).wrap());
-                                }
-                            }
-                            Value::Images(images) => {
-                                ui.vertical(|ui| {
-                                    ui.set_width(200.0);
-                                    ui.set_max_height(
-                                        3.0 * ui.available_width() * images.len() as f32,
-                                    );
-
-                                    for image in images {
-                                        let key = rig_image_to_egui(image);
-                                        let mut cache = IMAGE_CACHE.lock();
-                                        if let Some(image) = cache.get(&key) {
-                                            show_image(ui, image, 200.0);
-                                        }
-                                    }
-                                });
-                            }
-                            unk => {
-                                ui.add(egui::Label::new(format!("{unk:?}")).wrap());
-                            }
-                        }
-                    });
-            });
-        });
+        self.forward(ctx, inputs)
     }
 }
 
@@ -633,54 +230,7 @@ impl DynNode for OutputNode {
     ) -> Result<Vec<Value>, WorkflowError> {
         self.validate(&inputs)?;
 
-        if self.label.is_empty() {
-            Err(WorkflowError::Required(vec!["Label is required".into()]))?;
-        }
-        let output = inputs
-            .into_iter()
-            .find_map(identity)
-            .ok_or(WorkflowError::Required(vec![
-                "Output called with empty inputs".into(),
-            ]))?;
-
-        ctx.outputs
-            .sender()
-            .send((self.label.clone(), output))
-            .map_err(|err| WorkflowError::Unknown(format!("Couldn't send output: {err:?}")))?;
-
-        Ok(vec![])
-    }
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for OutputNode {
-    fn tooltip(&self) -> &str {
-        "Emits an output.\n\
-            It is up to the workflow runner to determine what to do with it."
-    }
-
-    fn has_body(&self) -> bool {
-        true
-    }
-
-    fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
-        if ctx.parent_id.is_some() && !ctx.disabled {
-            ctx.events
-                .insert(AppEvent::DisableNode(ctx.current_graph, ctx.current_node));
-        }
-
-        ui.vertical(|ui| {
-            ui.label("label:");
-            squelch(ui.text_edit_singleline(&mut self.label));
-        });
-    }
-
-    fn theme(&self, codex: &dyn crate::workflow::ThemeCodex) -> crate::workflow::NodeTheme {
-        codex.neutral_theme()
-    }
-
-    fn icon(&self) -> Option<&str> {
-        Some(egui_phosphor::regular::PACKAGE)
+        self.forward(ctx, inputs)
     }
 }
 
@@ -724,9 +274,506 @@ impl DynNode for Panic {
     }
 }
 
+#[cfg(feature = "native")]
+mod forward {
+    use itertools::Itertools as _;
+    use serde_json::json;
+    use std::{iter::once, str::FromStr as _};
+
+    use crate::{
+        utils::message_text,
+        workflow::{RunContext, WorkflowError},
+    };
+
+    use super::*;
+
+    impl Number {
+        pub fn forward(&mut self, inputs: Vec<Option<Value>>) -> Result<Vec<Value>, WorkflowError> {
+            let Self { list, integer, .. } = self;
+
+            match &inputs[0] {
+                None => {
+                    if self.integer {
+                        Ok(vec![Value::Integer(self.i_value)])
+                    } else {
+                        Ok(vec![Value::Number(self.f_value)])
+                    }
+                }
+                Some(Value::Integer(value)) => Ok(vec![match (list, integer) {
+                    (true, true) => Value::IntList(im::vector![*value]),
+                    (false, true) => Value::Integer(*value),
+                    (true, false) => Value::FloatList(im::vector![E64::assert(*value as f64)]),
+                    (false, false) => Value::Number(E64::assert(*value as f64)),
+                }]),
+                Some(Value::IntList(value)) => Ok(vec![match (list, integer) {
+                    (true, true) => Value::IntList(value.clone()),
+                    (false, true) if value.len() == 1 => Value::Integer(value[0]),
+                    (true, false) => {
+                        Value::FloatList(value.iter().map(|it| E64::assert(*it as f64)).collect())
+                    }
+                    (false, false) if value.len() == 1 => {
+                        Value::Number(E64::assert(value[0] as f64))
+                    }
+                    (false, _) => Err(WorkflowError::Conversion(
+                        "List must have exactly one value".into(),
+                    ))?,
+                }]),
+                Some(Value::Number(value)) => Ok(vec![match (list, integer) {
+                    (true, true) => Value::IntList(im::vector![value.into_inner() as i64]),
+                    (false, true) => Value::Integer(value.into_inner() as i64),
+                    (true, false) => Value::FloatList(im::vector![*value]),
+                    (false, false) => Value::Number(*value),
+                }]),
+                Some(Value::FloatList(value)) => Ok(vec![match (list, integer) {
+                    (true, true) => {
+                        Value::IntList(value.iter().map(|it| it.into_inner() as i64).collect())
+                    }
+                    (false, true) if value.len() == 1 => {
+                        Value::Integer(value[0].into_inner() as i64)
+                    }
+                    (true, false) => Value::FloatList(value.clone()),
+                    (false, false) if value.len() == 1 => Value::Number(value[0]),
+                    (false, _) => Err(WorkflowError::Conversion(
+                        "List must have exactly one value".into(),
+                    ))?,
+                }]),
+                Some(Value::Text(value)) => Ok(vec![match (list, integer) {
+                    (true, true) => {
+                        let item = value
+                            .parse::<i64>()
+                            .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?;
+                        Value::IntList(im::vector![item])
+                    }
+                    (false, true) => Value::Integer(
+                        value
+                            .parse()
+                            .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?,
+                    ),
+                    (true, false) => {
+                        let item = E64::from_str(value)
+                            .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?;
+                        Value::FloatList(im::vector![item])
+                    }
+                    (false, false) => Value::Number(
+                        E64::from_str(value.as_str())
+                            .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?,
+                    ),
+                }]),
+                Some(Value::TextList(value)) => Ok(vec![match (list, integer) {
+                    (true, true) => {
+                        let items: Result<im::Vector<i64>, WorkflowError> = value
+                            .iter()
+                            .map(|it| {
+                                it.parse::<i64>()
+                                    .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))
+                            })
+                            .collect();
+                        Value::IntList(items?)
+                    }
+                    (false, true) if value.len() == 1 => Value::Integer(
+                        value[0]
+                            .parse()
+                            .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?,
+                    ),
+                    (true, false) => {
+                        let items: Result<im::Vector<_>, WorkflowError> = value
+                            .iter()
+                            .map(|it| {
+                                E64::from_str(it)
+                                    .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))
+                            })
+                            .collect();
+                        Value::FloatList(items?)
+                    }
+                    (false, false) if value.len() == 1 => Value::Number(
+                        E64::from_str(value[0].as_str())
+                            .map_err(|e| WorkflowError::Conversion(format!("{e:?}")))?,
+                    ),
+                    (false, _) => Err(WorkflowError::Conversion(
+                        "List must have exactly one value".into(),
+                    ))?,
+                }]),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    impl Text {
+        pub fn forward(&mut self, inputs: Vec<Option<Value>>) -> Result<Vec<Value>, WorkflowError> {
+            use TextSplit::*;
+            let Self { value, delim, .. } = self;
+
+            let text = match &inputs[0] {
+                Some(Value::Text(text)) => text.clone(),
+                Some(Value::Message(message)) => Arc::new(message_text(message)),
+                None => value.clone(),
+                _ => unreachable!(),
+            };
+
+            match delim {
+                None => Ok(vec![Value::Text(text.clone())]),
+                Some(Lines) => Ok(vec![Value::TextList(
+                    text.split("\n")
+                        .filter(|it| !it.is_empty())
+                        .map(|it| Arc::new(it.trim().to_string()))
+                        .collect(),
+                )]),
+                Some(Paragraphs) => Ok(vec![Value::TextList(
+                    text.split("\n\n")
+                        .filter(|it| !it.is_empty())
+                        .map(|it| Arc::new(it.trim().to_string()))
+                        .collect(),
+                )]),
+                Some(Words) => Ok(vec![Value::TextList(
+                    text.split_whitespace()
+                        .filter(|it| !it.is_empty())
+                        .map(|it| Arc::new(it.to_string()))
+                        .collect(),
+                )]),
+                Some(Documents) => Ok(vec![Value::TextList(
+                    text.split("\n---\n")
+                        .filter(|it| !it.is_empty())
+                        .map(|it| Arc::new(it.trim().to_string()))
+                        .collect(),
+                )]),
+            }
+        }
+    }
+
+    impl OutputNode {
+        pub fn forward(
+            &mut self,
+            ctx: &RunContext,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            if self.label.is_empty() {
+                Err(WorkflowError::Required(vec!["Label is required".into()]))?;
+            }
+            let output = inputs.into_iter().find_map(std::convert::identity).ok_or(
+                WorkflowError::Required(vec!["Output called with empty inputs".into()]),
+            )?;
+
+            ctx.outputs
+                .sender()
+                .send((self.label.clone(), output))
+                .map_err(|err| WorkflowError::Unknown(format!("Couldn't send output: {err:?}")))?;
+
+            Ok(vec![])
+        }
+    }
+
+    impl Preview {
+        pub fn forward(
+            &mut self,
+            ctx: &RunContext,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            if let Some(value) = inputs.first().and_then(|it| it.as_ref()) {
+                ctx.previews.update(ctx.exec_id, self.uuid.0, value.clone());
+
+                let mut id_path = ctx
+                    .id_stack
+                    .iter()
+                    .map(|(t, i)| format!("{t}#{i}"))
+                    .chain(once(format!["{}.preview", &self.uuid]))
+                    .join("/");
+
+                let title = if self.title.is_empty() {
+                    "Preview"
+                } else {
+                    &self.title
+                };
+                let mut title_path = ctx
+                    .title_stack
+                    .iter()
+                    .map(|(t, i)| format!("{t}#{i}"))
+                    .chain(once(format!["{title}.preview"]))
+                    .join("/");
+
+                id_path.insert(0, '/');
+                title_path.insert(0, '/');
+                ctx.run_events.broadcast(json!({
+                    "tags": im::ordset![
+                        // id_path, // Quite noisy
+                        title_path
+                    ],
+                    "data": serde_json::to_value(value).unwrap_or_default(),
+                }));
+            }
+
+            Ok(vec![])
+        }
+    }
+}
+
 #[cfg(feature = "ui")]
-impl UiNode for Panic {
-    fn tooltip(&self) -> &str {
-        "Aborts run if the input is non-empty"
+mod gui {
+    use egui_commonmark::CommonMarkCache;
+    use egui_phosphor::regular::{BRACKETS_SQUARE, NUMPAD};
+
+    use crate::{
+        chat::ChatContent,
+        events::AppEvent,
+        ui::{render::render_message_width, resizable_frame, shortcuts::squelch},
+        utils::{IMAGE_CACHE, rig_image_to_egui, show_image},
+        workflow::{EditContext, UiNode},
+    };
+
+    use super::*;
+
+    impl UiNode for Number {
+        fn show_input(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+            remote: Option<Value>,
+        ) -> egui_snarl::ui::PinInfo {
+            assert_eq!(pin_id, 0);
+
+            let Self {
+                list,
+                integer,
+                i_value,
+                f_value,
+            } = self;
+
+            if remote.is_none() {
+                if *integer {
+                    squelch(ui.add(egui::DragValue::new(i_value).update_while_editing(false)));
+                    *f_value = E64::assert(*i_value as f64);
+                } else {
+                    let mut inner = f_value.into_inner();
+                    squelch(
+                        ui.add(
+                            egui::DragValue::new(&mut inner)
+                                .speed(0.1)
+                                .update_while_editing(false),
+                        ),
+                    );
+                    *f_value = E64::assert(inner);
+                    *i_value = inner as i64;
+                }
+
+                self.list = false;
+            } else {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.toggle_value(list, BRACKETS_SQUARE)
+                    .on_hover_text("list value");
+            }
+
+            ui.toggle_value(integer, NUMPAD)
+                .on_hover_text("integer value");
+
+            self.in_kinds(pin_id).first().unwrap().default_pin()
+        }
+    }
+
+    impl UiNode for Text {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other
+                .downcast_ref::<Self>()
+                .is_some_and(|other| self.value == other.value && self.delim == other.delim)
+        }
+
+        fn show_input(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+            remote: Option<Value>,
+        ) -> egui_snarl::ui::PinInfo {
+            if remote.is_none() {
+                egui::Frame::new().inner_margin(4).show(ui, |ui| {
+                    resizable_frame(&mut self.size, ui, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            let text = Arc::make_mut(&mut self.value);
+                            let widget = egui::TextEdit::multiline(text)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("Enter text \u{1F64B}");
+
+                            squelch(ui.add_sized(ui.available_size(), widget));
+                        });
+                    });
+                });
+            } else {
+                ui.label("input");
+            }
+
+            self.in_kinds(pin_id).first().unwrap().default_pin()
+        }
+
+        fn has_body(&self) -> bool {
+            true
+        }
+
+        fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
+            use TextSplit::*;
+            let Self { delim, .. } = self;
+
+            egui::ComboBox::from_label("split")
+                .selected_text(if delim.is_none() {
+                    String::new()
+                } else {
+                    format!("{:?}", delim.as_ref().unwrap())
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(delim, None, "");
+                    ui.selectable_value(delim, Some(Lines), "Lines");
+                    ui.selectable_value(delim, Some(Paragraphs), "Paragraphs")
+                        .on_hover_text("Paragraphs separated by blank lines");
+                    ui.selectable_value(delim, Some(Words), "Words");
+                    ui.selectable_value(delim, Some(Documents), "Documents")
+                        .on_hover_text("Documents separated by triple dash (---)");
+                });
+        }
+
+        fn show_output(
+            &mut self,
+            _ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+        ) -> egui_snarl::ui::PinInfo {
+            assert_eq!(pin_id, 0);
+
+            self.out_kind(pin_id).default_pin()
+        }
+    }
+
+    impl UiNode for Preview {
+        fn on_paste(&mut self) {
+            self.uuid = GraphId::new();
+        }
+
+        fn title_mut(&mut self) -> Option<&mut String> {
+            Some(&mut self.title)
+        }
+
+        fn has_body(&self) -> bool {
+            true
+        }
+
+        fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
+            let mut cache = CommonMarkCache::default();
+
+            egui::Frame::new().inner_margin(4).show(ui, |ui| {
+                resizable_frame(&mut self.size, ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink(false)
+                        .show(ui, |ui| {
+                            match &ctx
+                                .previews
+                                .value(ctx.exec_id.unwrap_or_default(), self.uuid.0)
+                                .unwrap_or_default()
+                            {
+                                Value::Text(text) => {
+                                    ui.add(egui::Label::new(text.as_str()).wrap());
+                                }
+                                Value::Chat(history) => {
+                                    ui.vertical(|ui| {
+                                        for entry in history.iter() {
+                                            if let ChatContent::Message(msg) = &entry.content {
+                                                render_message_width(
+                                                    ui,
+                                                    &mut cache,
+                                                    msg,
+                                                    Some(600.0),
+                                                );
+                                            }
+                                        }
+                                    });
+                                }
+                                Value::Message(msg) => {
+                                    render_message_width(ui, &mut cache, msg, Some(600.0));
+                                }
+                                Value::Json(value) => {
+                                    if let Ok(text) = serde_json::to_string_pretty(value) {
+                                        let language = "json";
+                                        let theme =
+                                        egui_extras::syntax_highlighting::CodeTheme::from_memory(
+                                            ui.ctx(),
+                                            ui.style(),
+                                        );
+
+                                        {
+                                            let layout_job =
+                                                egui_extras::syntax_highlighting::highlight(
+                                                    ui.ctx(),
+                                                    ui.style(),
+                                                    &theme,
+                                                    &text,
+                                                    language,
+                                                );
+                                            ui.add(
+                                                egui::Label::new(layout_job)
+                                                    .selectable(true)
+                                                    .wrap(),
+                                            )
+                                        };
+                                    } else {
+                                        ui.add(egui::Label::new(format!("{:?}", value)).wrap());
+                                    }
+                                }
+                                Value::Images(images) => {
+                                    ui.vertical(|ui| {
+                                        ui.set_width(200.0);
+                                        ui.set_max_height(
+                                            3.0 * ui.available_width() * images.len() as f32,
+                                        );
+
+                                        for image in images {
+                                            let key = rig_image_to_egui(image);
+                                            let mut cache = IMAGE_CACHE.lock();
+                                            if let Some(image) = cache.get(&key) {
+                                                show_image(ui, image, 200.0);
+                                            }
+                                        }
+                                    });
+                                }
+                                unk => {
+                                    ui.add(egui::Label::new(format!("{unk:?}")).wrap());
+                                }
+                            }
+                        });
+                });
+            });
+        }
+    }
+
+    impl UiNode for OutputNode {
+        fn tooltip(&self) -> &str {
+            "Emits an output.\n\
+            It is up to the workflow runner to determine what to do with it."
+        }
+
+        fn has_body(&self) -> bool {
+            true
+        }
+
+        fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
+            if ctx.parent_id.is_some() && !ctx.disabled {
+                ctx.events
+                    .insert(AppEvent::DisableNode(ctx.current_graph, ctx.current_node));
+            }
+
+            ui.vertical(|ui| {
+                ui.label("label:");
+                squelch(ui.text_edit_singleline(&mut self.label));
+            });
+        }
+
+        fn theme(&self, codex: &dyn crate::workflow::ThemeCodex) -> crate::workflow::NodeTheme {
+            codex.neutral_theme()
+        }
+
+        fn icon(&self) -> Option<&str> {
+            Some(egui_phosphor::regular::PACKAGE)
+        }
+    }
+
+    impl UiNode for Panic {
+        fn tooltip(&self) -> &str {
+            "Aborts run if the input is non-empty"
+        }
     }
 }

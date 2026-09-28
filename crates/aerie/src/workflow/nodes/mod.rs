@@ -1,14 +1,24 @@
 use delegate::delegate;
-#[cfg(feature = "ui")]
-use egui::Ui;
-use egui_snarl::NodeId;
-#[cfg(feature = "ui")]
-use egui_snarl::Snarl;
 use serde::{Deserialize, Serialize};
 use std::{
     hash::Hash,
     ops::{Deref, DerefMut},
 };
+
+#[cfg(feature = "native")]
+use egui_snarl::NodeId;
+
+#[cfg(feature = "ui")]
+use egui::Ui;
+#[cfg(feature = "ui")]
+use egui_snarl::Snarl;
+
+pub use crate::workflow::{DynNode, FlexNode, Value, ValueKind};
+#[cfg(feature = "native")]
+pub use crate::workflow::{RunContext, WorkflowError};
+
+#[cfg(feature = "ui")]
+pub use crate::workflow::{EditContext, UiNode};
 
 pub mod agent;
 pub mod chat;
@@ -32,18 +42,6 @@ pub use subgraph::*;
 
 pub const MIN_WIDTH: f32 = 128.0;
 pub const MIN_HEIGHT: f32 = 32.0;
-
-pub use crate::workflow::{DynNode, Value, ValueKind};
-use crate::workflow::{FlexNode, WorkflowError};
-
-#[cfg(feature = "ui")]
-pub use crate::workflow::UiNode;
-
-#[cfg(feature = "ui")]
-pub use crate::workflow::EditContext;
-
-#[cfg(feature = "native")]
-pub use crate::workflow::RunContext;
 
 // "serializing nested enums in YAML is not supported yet"
 // So we'll embed the enum into the node struct instead

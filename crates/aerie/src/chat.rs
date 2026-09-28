@@ -1,9 +1,6 @@
-use crate::rig::message::Message;
 use anyhow::anyhow;
 use arc_swap::ArcSwap;
-use cached::proc_macro::cached;
 use derive_builder::Builder;
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use serde_yaml_ng as serde_yml;
@@ -20,7 +17,12 @@ use std::{
 };
 use uuid::Uuid;
 
-use crate::utils::AtomicBuffer;
+#[cfg(feature = "native")]
+use cached::proc_macro::cached;
+#[cfg(feature = "native")]
+use itertools::Itertools;
+
+use crate::{rig::message::Message, utils::AtomicBuffer};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
 pub struct ChatSession {

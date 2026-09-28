@@ -1,15 +1,9 @@
-use crate::rig::{
-    self,
-    agent::AgentBuilder,
-    completion::CompletionModel,
-    tool::{Tool as RigTool, ToolContext, server::ToolServer},
-};
-use anyhow::Context as _;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use cached::proc_macro::cached;
 use either::Either;
 use im::OrdMap;
 use itertools::Itertools;
+use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -24,13 +18,10 @@ use std::{
 #[cfg(feature = "native")]
 use tokio::process::Command;
 
-use rmcp::{
-    Peer, ServiceExt as _,
-    model::{ClientInfo, Implementation, InitializeRequestParams, Tool},
-};
 #[cfg(feature = "native")]
 use rmcp::{
-    RoleClient,
+    Peer, RoleClient, ServiceExt as _,
+    model::{ClientInfo, Implementation, InitializeRequestParams},
     service::RunningService,
     transport::{
         ConfigureCommandExt, StreamableHttpClientTransport, TokioChildProcess,
@@ -38,10 +29,21 @@ use rmcp::{
     },
 };
 
-use crate::{config::Ternary, workflow::WorkflowError};
+use crate::{
+    config::Ternary,
+    rig::{
+        self,
+        agent::AgentBuilder,
+        tool::{Tool as RigTool, ToolContext},
+    },
+    workflow::WorkflowError,
+};
 
 #[cfg(feature = "native")]
-use crate::workflow::store::{WorkflowStore as _, WorkflowStoreDir};
+use crate::{
+    rig::{completion::CompletionModel, tool::server::ToolServer},
+    workflow::store::{WorkflowStore as _, WorkflowStoreDir},
+};
 
 #[cfg(not(feature = "native"))]
 use crate::workflow::store::WorkflowStoreStub;
@@ -480,6 +482,8 @@ impl ToolProvider {
                 McpClient::Stdio(Arc::new(client))
             }
             ToolSpec::HTTP { uri, auth_var, .. } => {
+                use anyhow::Context as _;
+
                 const API_KEY: &str = "{{api_key}}";
                 let auth_var = auth_var.as_ref().filter(|s| !s.is_empty());
                 let config = if uri.contains(API_KEY) {
@@ -559,6 +563,9 @@ impl Toolbox {
     pub fn without_provider(&self, name: &str) -> &Self {
         self.providers.rcu(|providers| {
             if let Some(provider) = providers.get(name) {
+                #[cfg(not(feature = "native"))]
+                let _ = provider;
+
                 #[cfg(feature = "native")]
                 if let ToolProvider::MCP { client, .. } = provider {
                     client.cancel();
@@ -777,6 +784,8 @@ impl ToolStore {
         vars: &std::collections::HashMap<String, String>,
     ) -> anyhow::Result<Toolbox> {
         use crate::storage::CachedDirStore as _;
+        use anyhow::Context as _;
+
         let Ok(spec) = self.load(name) else {
             anyhow::bail!("Could not load tool spec for {name}");
         };

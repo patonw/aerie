@@ -4,10 +4,6 @@ use downcast_rs::{Downcast, impl_downcast};
 use dyn_clone::DynClone;
 use dyn_eq::DynEq;
 use dyn_hash::DynHash;
-#[cfg(feature = "ui")]
-use egui::{Color32, Stroke};
-#[cfg(feature = "ui")]
-use egui_snarl::ui::{PinInfo, WireStyle};
 use egui_snarl::{InPinId, Node as SnarlNode, NodeId, NodePos, OutPinId, Snarl};
 use either::Either;
 use im::Vector;
@@ -22,18 +18,24 @@ use serde::{
 use serde_yaml_ng as serde_yml;
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
     fmt::{Debug, Display},
     hash::Hash,
     marker::PhantomData,
-    sync::{Arc, atomic::AtomicBool},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use thiserror::Error;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-use crate::toolbox::Toolbox;
+#[cfg(feature = "native")]
+use std::{collections::BTreeMap, sync::atomic::AtomicBool};
+
+#[cfg(feature = "ui")]
+use egui::{Color32, Stroke};
+#[cfg(feature = "ui")]
+use egui_snarl::ui::{PinInfo, WireStyle};
+
 #[cfg(feature = "wip")]
 use crate::{
     agent::AgentFactory,
@@ -45,19 +47,22 @@ use crate::{
     transmute::Transmuter,
     workflow::runner::{ExecState, NodeStateMap},
 };
+
 use crate::{
     chat::ChatHistory,
     config::{AgentSpec, ToolSelector},
-    events::{AppEvent, AppEvents},
+    events::AppEvents,
     rig::message::{Image, Message},
-    utils::{
-        AtomicBuffer, EPos2, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text,
-    },
+    toolbox::Toolbox,
+    utils::{EPos2, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
     workflow::{
         nodes::{Finish, Flavor, LoopControl, Start},
         runner::ExecId,
     },
 };
+
+#[cfg(feature = "native")]
+use crate::{events::AppEvent, utils::AtomicBuffer};
 
 pub mod nodes;
 pub mod runner;
@@ -1337,7 +1342,7 @@ pub trait DynNode {
                 if kinds.contains(&value.kind()) {
                     None::<String>
                 } else {
-                    Some(format!("{value:?} is not one of {kinds:?}"))
+                    Some(format!("[input #{i}] {value:?} is not one of {kinds:?}"))
                 }
             })
             .collect_vec();

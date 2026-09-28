@@ -2,19 +2,16 @@ use arc_swap::ArcSwap;
 use eframe::egui;
 use egui::WidgetText;
 use egui_commonmark::*;
-use egui_snarl::{InPinId, NodeId};
+use egui_snarl::NodeId;
 use egui_tiles::SimplificationOptions;
 use footnote::Footnote;
 use itertools::Itertools;
 use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
-use serde_yaml_ng as serde_yml;
 use std::{
     borrow::Cow,
     collections::VecDeque,
-    fs::OpenOptions,
     hash::Hash,
-    path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU16},
@@ -26,39 +23,45 @@ use typed_builder::TypedBuilder;
 use uuid::Uuid;
 use web_time::{Duration, SystemTime};
 
+#[cfg(feature = "native")]
+use egui_snarl::InPinId;
+#[cfg(feature = "native")]
+use serde_yaml_ng as serde_yml;
+#[cfg(feature = "native")]
+use std::fs::OpenOptions;
+#[cfg(feature = "native")]
+use std::path::Path;
+
 #[cfg(not(feature = "native"))]
 use crate::config::ConfigStateProxy;
 #[cfg(feature = "native")]
 use crate::config::ConfigStateStore;
-use crate::workflow::ShadowGraph;
-use crate::workflow::WorkNode;
+
 #[cfg(feature = "native")]
 use crate::workflow::store::{WorkflowStore, WorkflowStoreDir};
 #[cfg(not(feature = "native"))]
 use crate::workflow::store::{WorkflowStore, WorkflowStoreStub};
+
 #[cfg(feature = "wip")]
 use crate::{agent::AgentFactory, ui::tiles::messages::MessageGraph};
-use crate::{events::WorkflowEvent, workflow::CheckContext};
-use crate::{
-    toolbox::Toolbox,
-    ui::{
-        Pane,
-        workflow::{ProgressEntry, ViewStack, WorkflowViewer},
-    },
-};
 
-use crate::workflow::{EditContext, nodes::LoopControl};
+#[cfg(feature = "native")]
+use crate::{config::ConfigExt as _, ui::workflow::ProgressEntry, workflow::nodes::LoopControl};
+
 use crate::{
     chat::ChatSession,
-    config::{ConfigExt as _, Preferences, ToolSpec},
-    events::{AppEvent, AppEvents},
+    config::{Preferences, ToolSpec},
+    events::{AppEvent, AppEvents, WorkflowEvent},
     logging::LogEntry,
-    toolbox::ToolStore,
+    toolbox::{ToolStore, Toolbox},
     transmute::Transmuter,
-    ui::ShowHelp,
+    ui::{
+        Pane, ShowHelp,
+        workflow::{ViewStack, WorkflowViewer},
+    },
     utils::{ErrorDistiller as _, ErrorList},
     workflow::{
-        GraphId, PreviewData, Workflow,
+        CheckContext, EditContext, GraphId, PreviewData, ShadowGraph, WorkNode, Workflow,
         runner::{ExecId, NodeStateMap, WorkflowRun},
     },
 };
@@ -231,7 +234,7 @@ impl AppState {
     fn get_toolbox(&self) -> Toolbox {
         use crate::toolbox::ToolProvider;
 
-        let mut toolbox = Toolbox::default();
+        let toolbox = Toolbox::default();
 
         toolbox.with_provider(
             "chainer",
