@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{ops::Add, sync::Arc, time::Duration};
 
 use aerie::{
     client::{ActionData, ClientAction, ClientUpdate, StatePatch, UpdateData},
@@ -21,15 +21,19 @@ use ewebsock::{WsEvent, WsReceiver, WsSender};
 use footnote::Footnote;
 use struct_patch::{Patch as _, Status};
 use typed_builder::TypedBuilder;
+use web_time::Instant;
 
 // TODO: figure out how to manage different users
 // TODO: Save settings when changed
 // TODO: Ensure latest message is shown when autoscrolling
 
+const WATCHDOG_MS: u64 = 5_000;
+
 #[derive(TypedBuilder)]
 pub struct WebApp {
     sock: Option<(WsSender, WsReceiver)>,
     connected: bool,
+    watchdog: Instant,
     state: AppState,
     checkpoint: StatePatch,
     node_states: NodeStateMap,
@@ -61,11 +65,16 @@ impl WebApp {
         Self {
             sock: None,
             connected: false,
+            watchdog: Instant::now().add(Duration::from_millis(WATCHDOG_MS)),
             state,
             checkpoint,
             node_states,
             tile_tree: make_tile_tree(),
         }
+    }
+
+    pub fn feed_watchdog(&mut self) {
+        self.watchdog = Instant::now().add(Duration::from_millis(WATCHDOG_MS));
     }
 }
 
@@ -74,6 +83,8 @@ impl eframe::App for WebApp {
         ctx.style_mut(|style| style.visuals = Visuals::dark());
         let errors = self.state.errors.clone();
         let mut task_update = None;
+        let mut feed = false;
+
         if let Some((tx, rx)) = &mut self.sock {
             while let Some(event) = rx.try_recv() {
                 // log::info!("New event: {event:?}");
@@ -88,6 +99,7 @@ impl eframe::App for WebApp {
                         // Expect backend to send initial dump
                         self.connected = true;
                         ctx.request_repaint();
+                        feed |= true;
                     }
                     WsEvent::Closed => {
                         self.connected = false;
@@ -95,7 +107,8 @@ impl eframe::App for WebApp {
                     WsEvent::Message(ewebsock::WsMessage::Text(txt))
                         if let Ok(payload) = serde_json::from_str::<ClientUpdate>(&txt) =>
                     {
-                        tracing::debug!("received {} chars", txt.len());
+                        feed |= true;
+                        tracing::trace!("received {} chars", txt.len());
                         task_update = payload.task_count;
                         handle_update(
                             &mut self.state,
@@ -105,6 +118,7 @@ impl eframe::App for WebApp {
                         );
                     }
                     WsEvent::Message(ewebsock::WsMessage::Text(txt)) => {
+                        feed |= true;
                         let jd = &mut serde_json::Deserializer::from_str(&txt);
                         let result: Result<ClientUpdate, _> = serde_path_to_error::deserialize(jd);
                         if let Err(err) = result {
@@ -112,7 +126,8 @@ impl eframe::App for WebApp {
                         }
                     }
                     WsEvent::Message(ewebsock::WsMessage::Binary(bytes)) => {
-                        tracing::debug!("received {} bytes", bytes.len());
+                        feed |= true;
+                        tracing::trace!("received {} bytes", bytes.len());
                         match rmp_serde::from_slice::<ClientUpdate>(&bytes) {
                             Ok(payload) => {
                                 task_update = payload.task_count;
@@ -137,18 +152,24 @@ impl eframe::App for WebApp {
                         }
                     }
                     unk => {
-                        log::warn!("Got unknonwn message: {unk:?}");
+                        log::warn!("Got unknown message: {unk:?}");
                     }
                 }
             }
         } else {
             log::info!("Trying to connect");
-            self.sock = Some(
-                ewebsock::connect("ws://localhost:3000/ws", Default::default())
-                    .expect("Could not connect"),
-            );
+            feed |= true;
+            self.sock =
+                Some(ewebsock::connect("/ws", Default::default()).expect("Could not connect"));
+        }
 
-            log::info!("Connected");
+        if feed {
+            self.feed_watchdog();
+        }
+
+        if self.watchdog < Instant::now() {
+            tracing::warn!("Watchdog activated, resetting connection");
+            self.sock = None;
         }
 
         let content_rect = ctx.content_rect();
@@ -158,6 +179,16 @@ impl eframe::App for WebApp {
             let shadow = self.state.workflows.view_stack.root();
             self.state.workflows.cast_shadow(shadow);
         });
+
+        if !self.connected {
+            egui::Modal::new("Connecting".into()).show(ctx, |ui| {
+                ui.set_width(250f32.max(content_rect.width() * 0.5));
+                ui.set_height(content_rect.height() * 0.5);
+                ui.centered_and_justified(|ui| {
+                    ui.heading("Connecting...");
+                });
+            });
+        }
 
         // TODO: debounce events
         let mut events = Vec::new();
@@ -222,6 +253,7 @@ fn handle_update(
 ) -> bool {
     let errors = app_state.errors.clone();
     match update_data {
+        UpdateData::Poke => {}
         UpdateData::Dump(dump) => {
             app_state.tools = dump.tools;
             app_state.data = dump.app_data;
@@ -368,10 +400,35 @@ fn main() -> anyhow::Result<()> {
 fn main() {
     use eframe::egui::{Style, Visuals};
     use eframe::wasm_bindgen::JsCast as _;
+    use itertools::Itertools;
     use wasm_bindgen_futures::spawn_local;
 
+    let opts = web_sys::window()
+        .map(|w| w.location())
+        .and_then(|loc| loc.hash().ok())
+        .map(|s| {
+            s.trim_start_matches('#')
+                .split(",s")
+                .map(|s| s.trim().to_lowercase())
+                .collect_vec()
+        });
+
+    web_sys::console::log_1(&format!("{opts:?}").into());
+
+    let level = opts
+        .and_then(|v| {
+            v.iter()
+                .filter_map(|it| match it.as_str() {
+                    "console=trace" => Some(log::LevelFilter::Trace),
+                    "console=debug" => Some(log::LevelFilter::Debug),
+                    _ => None,
+                })
+                .next()
+        })
+        .unwrap_or(log::LevelFilter::Info);
+
     // Redirect `log` message to `console.log` and friends:
-    eframe::WebLogger::init(log::LevelFilter::Debug).ok();
+    eframe::WebLogger::init(level).ok();
 
     let web_options = eframe::WebOptions::default();
 

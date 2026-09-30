@@ -1,11 +1,15 @@
 use clap::Parser as _;
 use footnote::Footnote;
 use itertools::Itertools as _;
+use scopeguard::defer;
 use std::{
     net::SocketAddr,
     path::PathBuf,
     rc::Rc,
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use struct_patch::Patch;
@@ -27,10 +31,13 @@ use axum::{
         ConnectInfo, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
+    http::status::StatusCode,
     response::IntoResponse,
 };
 use axum_extra::{TypedHeader, headers};
 use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _};
+
+static CONNECTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone)]
 pub struct SharedState {
@@ -135,6 +142,15 @@ async fn ws_handler(
     tracing::info!("`{user_agent}` at {addr} connected.");
     // finalize the upgrade process by returning upgrade callback.
     // we can customize the callback by sending additional info such as address.
+    if CONNECTED.load(Ordering::Relaxed) {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Existing connection to this instance",
+        )
+            .into_response();
+    }
+
+    CONNECTED.store(true, Ordering::Relaxed);
 
     let factory = aerie::app::AppFactory::builder()
         .name("aerie")
@@ -147,11 +163,18 @@ async fn ws_handler(
     let app = factory.make_app().unwrap();
 
     ws.on_upgrade(move |socket| handle_socket(app, socket, addr))
+        .into_response()
 }
 
 // TODO: switch to binary serialization. Will require forking data types:
 // Must not use enum tags. Must not omit default fields.
-async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: SocketAddr) {
+async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, who: SocketAddr) {
+    defer! {
+        CONNECTED.store(false, Ordering::Relaxed);
+        tracing::info!("Bye, {who}");
+        // TODO: ensure tools are dropped after disconnect
+    }
+
     let dump_result = send_dump(&app, &mut socket).await;
     // let _ = send_switch(&app.app_state.workflows, &mut socket).await;
 
@@ -181,6 +204,13 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, _who: So
                 if waiting {
                     waiting = task_count.load(Ordering::Relaxed) > 0;
                     let _ = patch_all(&app, &mut socket, &mut note).await;
+                } else {
+                    let update = ClientUpdate::builder()
+                        .update(UpdateData::Poke)
+                        .build();
+                    if let Ok(bytes) = rmp_serde::to_vec_named(&update) {
+                        let _ = socket.send(Message::Binary(bytes.into())).await;
+                    }
                 }
             }
             _ = notify.notified() => {

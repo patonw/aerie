@@ -107,6 +107,7 @@ pub struct SwitchData {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UpdateData {
+    Poke,
     Dump(StateDump),
     Patch(StatePatch),
     Delta(StatePatchPatch), // TODO: some kind of consistency check
