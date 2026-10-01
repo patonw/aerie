@@ -8,7 +8,7 @@ pub mod state;
 pub mod tiles;
 pub mod workflow;
 
-use state::AppState;
+use crate::state::app::AppState;
 
 use crate::events::*;
 

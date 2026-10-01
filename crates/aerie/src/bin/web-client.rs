@@ -3,11 +3,11 @@ use std::{ops::Add, sync::Arc, time::Duration};
 use aerie::{
     client::{ActionData, ClientAction, ClientUpdate, StatePatch, UpdateData},
     config::ConfigStateProxy,
-    ui::{
-        Pane,
-        render::display_errors,
-        state::{AppData, AppState, WorkflowState},
+    state::{
+        app::{AppData, AppState},
+        workflow::WorkflowState,
     },
+    ui::{Pane, render::display_errors},
     utils::ErrorDistiller as _,
     workflow::{
         runner::{NodeStateMap, WorkflowRun},
@@ -27,12 +27,14 @@ use web_time::Instant;
 // TODO: Save settings when changed
 // TODO: Ensure latest message is shown when autoscrolling
 
-const WATCHDOG_MS: u64 = 5_000;
+const WATCHDOG_MS: u64 = 10_000;
 
 #[derive(TypedBuilder)]
 pub struct WebApp {
     sock: Option<(WsSender, WsReceiver)>,
     connected: bool,
+    disconnect: bool,
+    ready: bool,
     watchdog: Instant,
     state: AppState,
     checkpoint: StatePatch,
@@ -42,7 +44,7 @@ pub struct WebApp {
 
 impl WebApp {
     pub fn new(ctx: &egui::Context, node_states: NodeStateMap) -> Self {
-        egui_extras::install_image_loaders(&ctx);
+        egui_extras::install_image_loaders(ctx);
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         ctx.set_fonts(fonts);
@@ -65,6 +67,8 @@ impl WebApp {
         Self {
             sock: None,
             connected: false,
+            disconnect: false,
+            ready: false,
             watchdog: Instant::now().add(Duration::from_millis(WATCHDOG_MS)),
             state,
             checkpoint,
@@ -102,7 +106,9 @@ impl eframe::App for WebApp {
                         feed |= true;
                     }
                     WsEvent::Closed => {
+                        self.disconnect = true;
                         self.connected = false;
+                        self.ready = false;
                     }
                     WsEvent::Message(ewebsock::WsMessage::Text(txt))
                         if let Ok(payload) = serde_json::from_str::<ClientUpdate>(&txt) =>
@@ -139,6 +145,7 @@ impl eframe::App for WebApp {
                                 );
 
                                 if status {
+                                    tracing::trace!("#tasks: {:?}", payload.task_count);
                                     let action = ActionData::Checkpoint(self.checkpoint.get_note());
 
                                     let payload =
@@ -156,7 +163,7 @@ impl eframe::App for WebApp {
                     }
                 }
             }
-        } else {
+        } else if !self.disconnect {
             log::info!("Trying to connect");
             feed |= true;
             self.sock =
@@ -180,12 +187,35 @@ impl eframe::App for WebApp {
             self.state.workflows.cast_shadow(shadow);
         });
 
-        if !self.connected {
+        if self.disconnect {
+            egui::Modal::new("Disconnected".into()).show(ctx, |ui| {
+                ui.set_width(200f32);
+                // ui.set_width(250f32.max(content_rect.width() * 0.25));
+                // ui.set_height(content_rect.height() * 0.25);
+
+                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                    ui.heading("Disconnected");
+                    ui.add_space(32.0);
+
+                    if ui.button("reconnect").clicked() {
+                        self.disconnect = false;
+                    }
+                });
+            });
+        } else if !self.connected {
             egui::Modal::new("Connecting".into()).show(ctx, |ui| {
-                ui.set_width(250f32.max(content_rect.width() * 0.5));
-                ui.set_height(content_rect.height() * 0.5);
+                ui.set_width(250f32.max(content_rect.width() * 0.25));
+                ui.set_height(content_rect.height() * 0.25);
                 ui.centered_and_justified(|ui| {
                     ui.heading("Connecting...");
+                });
+            });
+        } else if !self.ready {
+            egui::Modal::new("Initializing".into()).show(ctx, |ui| {
+                ui.set_width(250f32.max(content_rect.width() * 0.25));
+                ui.set_height(content_rect.height() * 0.25);
+                ui.centered_and_justified(|ui| {
+                    ui.heading("Connected.\nInitializing...");
                 });
             });
         }
@@ -235,6 +265,10 @@ impl eframe::App for WebApp {
         }
 
         if let Some(task_count) = task_update {
+            if self.connected && task_count == 0 {
+                self.ready = true;
+            }
+
             // Hmm, still doesn't help with autoscroll
             self.state
                 .task_count
@@ -283,37 +317,43 @@ fn handle_update(
                 errors.distil(node_states.handle_event(event));
             }
         }
-        UpdateData::Event(ev) => {
+        UpdateData::Event(evs) => {
             use aerie::events::ExecEvent::*;
             use aerie::events::WorkflowEvent::*;
 
-            let runs = &mut app_state.workflows.outputs;
+            for ev in evs {
+                match ev {
+                    Exec(Start(_, name, started)) => {
+                        let runs = &mut app_state.workflows.outputs;
+                        let entry = WorkflowRun::builder()
+                            .started(started)
+                            .duration(Default::default())
+                            .workflow(name)
+                            .outputs(Default::default())
+                            .build();
 
-            match ev {
-                Exec(Start(_, name, started)) => {
-                    let entry = WorkflowRun::builder()
-                        .started(started)
-                        .duration(Default::default())
-                        .workflow(name)
-                        .outputs(Default::default())
-                        .build();
-
-                    runs.push_back(entry);
-                    if runs.len() > 128 {
-                        *runs = runs.skip(runs.len() - 128);
+                        runs.push_back(entry);
+                        if runs.len() > 128 {
+                            *runs = runs.skip(runs.len() - 128);
+                        }
                     }
-                }
-                Exec(Tick(_, millis)) | Exec(Finish(_, millis)) => {
-                    runs.back_mut()
-                        .unwrap()
-                        .duration
-                        .store(Arc::new(Duration::from_millis(millis)));
-                }
-                Exec(Output(_, label, value)) => {
-                    runs.back_mut()
-                        .unwrap()
-                        .outputs
-                        .rcu(|it| it.update(label.clone(), value.clone()));
+                    Exec(Tick(_, millis)) | Exec(Finish(_, millis)) => {
+                        let runs = &mut app_state.workflows.outputs;
+                        runs.back_mut()
+                            .unwrap()
+                            .duration
+                            .store(Arc::new(Duration::from_millis(millis)));
+                    }
+                    Exec(Output(_, label, value)) => {
+                        let runs = &mut app_state.workflows.outputs;
+                        runs.back_mut()
+                            .unwrap()
+                            .outputs
+                            .rcu(|it| it.update(label.clone(), value.clone()));
+                    }
+                    Progress(ev) => {
+                        app_state.workflows.handle_progress(&ev);
+                    }
                 }
             }
         }
@@ -331,10 +371,10 @@ fn patch_state(app_state: &mut AppState, patch: StatePatch) {
     app_state.data = patch.app_data;
     app_state.data.prefs.store(Arc::new(patch.prefs));
 
-    if let Some(prompt) = patch.prompt {
-        if prompt.is_empty() {
-            app_state.prompt.clear();
-        }
+    if let Some(prompt) = patch.prompt
+        && prompt.is_empty()
+    {
+        app_state.prompt.clear();
     }
 
     if let Some(images) = patch.images {

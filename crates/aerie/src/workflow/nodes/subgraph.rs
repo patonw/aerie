@@ -261,9 +261,12 @@ mod forward {
     };
     use uuid::Uuid;
 
-    use crate::workflow::{
-        RunContext, WorkflowError, min_instant,
-        runner::{ExecState, WorkflowRunner},
+    use crate::{
+        events::ProgressEvent,
+        workflow::{
+            RunContext, WorkflowError, min_instant,
+            runner::{ExecState, WorkflowRunner},
+        },
     };
 
     use super::*;
@@ -529,7 +532,9 @@ mod forward {
             let mut results = self.init_outputs();
 
             let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
-            ctx.event(AppEvent::ProgressBegin(graph_id.0, num_iters));
+            let progress = ProgressEvent::Begin(graph_id.0, num_iters as u64);
+            ctx.run_events.broadcast(progress.clone());
+            ctx.event(AppEvent::Progress(progress));
             for i in 0..num_iters {
                 let deadline = self
                     .timeout
@@ -582,14 +587,18 @@ mod forward {
                     }
                 }
 
-                ctx.event(AppEvent::ProgressAdd(graph_id.0, 1));
+                let progress = ProgressEvent::Add(graph_id.0, 1);
+                ctx.run_events.broadcast(progress.clone());
+                ctx.event(AppEvent::Progress(progress));
 
                 for (res, val) in results.iter_mut().zip(exec.outputs) {
                     push_values(res, val);
                 }
             }
 
-            ctx.event(AppEvent::ProgressEnd(graph_id.0));
+            let progress = ProgressEvent::End(graph_id.0);
+            ctx.run_events.broadcast(progress.clone());
+            ctx.event(AppEvent::Progress(progress));
             results.push(Value::Placeholder(ValueKind::Failure));
 
             Ok(results)
@@ -621,7 +630,9 @@ mod forward {
             let results = self.init_outputs();
 
             let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
-            ctx.event(AppEvent::ProgressBegin(graph_id.0, num_iters));
+            let progress = ProgressEvent::Begin(graph_id.0, num_iters as u64);
+            ctx.run_events.broadcast(progress.clone());
+            ctx.event(AppEvent::Progress(progress));
 
             ctx.run_events.broadcast(json!({
                 "exec-id": ctx.exec_id,
@@ -699,7 +710,9 @@ mod forward {
                         }
                     }
 
-                    ctx.event(AppEvent::ProgressAdd(graph_id.0, 1));
+                    let progress = ProgressEvent::Add(graph_id.0, 1);
+                    ctx.run_events.broadcast(progress.clone());
+                    ctx.event(AppEvent::Progress(progress));
                     Ok(exec.outputs)
                 })
                 .try_fold(
@@ -722,7 +735,9 @@ mod forward {
                 );
 
             let mut results = all_out?;
-            ctx.event(AppEvent::ProgressEnd(graph_id.0));
+            let progress = ProgressEvent::End(graph_id.0);
+            ctx.run_events.broadcast(progress.clone());
+            ctx.event(AppEvent::Progress(progress));
             results.push(Value::Placeholder(ValueKind::Failure));
 
             Ok(results)

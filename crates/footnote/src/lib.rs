@@ -44,7 +44,18 @@ mod demo {
     use struct_patch::Patch;
 
     #[allow(unused)]
-    #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Patch, Footnote)]
+    #[derive(
+        Clone,
+        Debug,
+        Default,
+        PartialEq,
+        Eq,
+        Hash,
+        serde::Serialize,
+        serde::Deserialize,
+        Patch,
+        Footnote,
+    )]
     #[patch(attribute(derive(Clone, Debug, Default, PartialEq, Eq, Hash)))]
     pub struct Dummy {
         one: Vec<u8>,
@@ -62,7 +73,30 @@ mod demo {
     pub struct Dumber {
         a: u64,
 
+        // Nest patches and notes so `DumberNote::b` is a `DummyNote`
         #[patch(nesting)]
+        b: Dummy,
+    }
+
+    #[allow(unused)]
+    #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Patch, Footnote)]
+    #[patch(attribute(derive(Clone, Debug, Default, PartialEq, Eq, Hash)))]
+    pub struct Dumbest {
+        a: u64,
+
+        // Entire `b` field is hashed and patched
+        b: Dummy,
+    }
+
+    #[allow(unused)]
+    #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Patch, Footnote)]
+    #[patch(attribute(derive(Clone, Debug, Default, PartialEq, Eq, Hash)))]
+    pub struct Clopping {
+        #[note(copied)]
+        a: u64,
+
+        // DummyNote::b is just a copy of Dummy, without hashing
+        #[note(cloned)]
         b: Dummy,
     }
 
@@ -113,6 +147,61 @@ mod demo {
             assert_eq!(delta.a, Some(7));
             assert_eq!(delta.b.one, None);
             assert_eq!(delta.b.two, Some(66));
+        }
+
+        #[test]
+        fn test_blob() {
+            let dummy = Dummy {
+                one: vec![1, 2, 3],
+                two: 64,
+                three: true,
+            };
+
+            let mut dumbest = Dumbest {
+                a: 24,
+                b: dummy.clone(),
+            };
+
+            let hashes = dumbest.get_note();
+            // println!("{hashes:?}");
+            dumbest.a = 7;
+            dumbest.b.two = 66;
+
+            let changes = dumbest.check_note(&hashes);
+            assert_eq!(changes, vec![DumbestField::A, DumbestField::B]);
+
+            let delta = dumbest.make_patch(&hashes);
+            // println!("Delta {delta:?}");
+            assert_eq!(delta.a, Some(7));
+            assert_eq!(delta.b, Some(Dummy { two: 66, ..dummy }));
+        }
+
+        #[test]
+        fn test_clop() {
+            let dummy = Dummy {
+                one: vec![1, 2, 3],
+                two: 64,
+                three: true,
+            };
+
+            let mut clop = Clopping {
+                a: 24,
+                b: dummy.clone(),
+            };
+
+            let hashes = clop.get_note();
+
+            assert_eq!(clop.a, hashes.a);
+            assert_eq!(clop.b, hashes.b);
+
+            // println!("{hashes:?}");
+            clop.a = 7;
+            clop.b.two = 66;
+
+            let delta = clop.make_patch(&hashes);
+            // println!("Delta {delta:?}");
+            assert_eq!(delta.a, Some(7));
+            assert_eq!(delta.b, Some(Dummy { two: 66, ..dummy }));
         }
     }
 }

@@ -1,14 +1,16 @@
 #[cfg(feature = "native")]
 pub mod agent;
-#[cfg(all(feature = "native", feature = "ui"))]
+#[cfg(all(feature = "native", feature = "app"))]
 pub mod app;
 pub mod chat;
-#[cfg(feature = "ui")]
+#[cfg(feature = "app")]
 pub mod client;
 pub mod config;
+pub mod core;
 pub mod events;
 pub mod logging;
 pub mod pipeline;
+pub mod state;
 #[cfg(feature = "native")]
 pub mod storage;
 pub mod toolbox;

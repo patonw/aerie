@@ -18,7 +18,7 @@ required-features = ["web-ui"]
 
 [[bin]]
 name = "runner"
-required-features = []
+required-features = ["native"]
 
 [[bin]]
 name = "migrate-workflow"
@@ -31,6 +31,7 @@ axum = { version = "0.8.8", optional = true }
 axum-extra = { version = "0.12.6", features = [
   "typed-header",
 ], optional = true }
+tower-http = { version = "0.7.1", optional = true, features = ["fs"] }
 base64 = "0.22.1"
 cached = { version = "4.0.0", default-features = false, features = [
   "proc_macro",
@@ -140,6 +141,7 @@ footnote-macro = { path = "../footnote-macro" }
 struct-patch.workspace = true
 
 [features]
+app = []
 native = [
   "wip",
   "cached/redb_store",
@@ -159,7 +161,7 @@ runner-mcp = ["native", "dep:axum", "dep:schemars"]
 migration = ["dep:saphyr"]
 scripting = ["dep:rhai"]
 fetch-image = ["dep:reqwest", "dep:url"]
-desktop = ["native", "ui", "dep:egui_graphs"]
+desktop = ["app", "native", "ui", "dep:egui_graphs"]
 web-ui = [
   "ui",
   "dep:ewebsock",
@@ -171,14 +173,15 @@ web-ui = [
   "dep:url",
 ]
 backend = [
+  "app",
   "native",
-  "ui",
-  "dep:egui_graphs",
   "axum/ws",
   "dep:axum-extra",
+  "dep:tower-http",
   "dep:rmp-serde",
 ] # TODO: remove dep:egui_graphs
 ui = [
+  "app",
   "dep:colorous",
   "dep:eframe",
   "dep:egui",

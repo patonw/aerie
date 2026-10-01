@@ -317,7 +317,7 @@ impl super::AppState {
                     let interrupting = self.workflows.interrupt.load(Ordering::Relaxed);
                     ui.add_enabled_ui(!interrupting, |ui| {
                         if ui.add(stop_button(interrupting)).clicked() {
-                            self.workflows.interrupt.store(true, Ordering::Relaxed);
+                            self.events.insert(AppEvent::InterruptWorkflow);
                         }
                     });
                 } else if ui.add_enabled(!busy, play_button()).clicked() {

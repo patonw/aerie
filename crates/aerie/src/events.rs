@@ -15,6 +15,13 @@ use crate::{
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, Kinded)]
+pub enum ProgressEvent {
+    Begin(Uuid, u64),
+    Add(Uuid, u64),
+    End(Uuid),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, Kinded)]
 pub enum AppEvent {
     DiscardErrors,
 
@@ -47,6 +54,7 @@ pub enum AppEvent {
     RenameWorkflow(String, String),
     // User requested to run the current workflow
     UserRunWorkflow,
+    InterruptWorkflow,
 
     ToolsChanged,
     ImportTools(String, Vec<u8>),
@@ -66,9 +74,7 @@ pub enum AppEvent {
     Undo,
     Redo,
 
-    ProgressBegin(Uuid, usize),
-    ProgressAdd(Uuid, usize),
-    ProgressEnd(Uuid),
+    Progress(ProgressEvent),
 
     UpdatePreferences(Arc<Preferences>),
     ClearModels,
@@ -137,6 +143,7 @@ pub enum GraphEditEvent {}
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum WorkflowEvent {
     Exec(ExecEvent),
+    Progress(ProgressEvent),
     // NodeState(NodeStateEvent),
     // GraphEdit(GraphEditEvent),
 }

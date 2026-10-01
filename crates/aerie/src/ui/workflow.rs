@@ -2,10 +2,11 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     iter,
-    sync::{Arc, atomic::AtomicUsize},
+    sync::Arc,
 };
 
 use anyhow::Context as _;
+use arc_swap::ArcSwap;
 use cached::proc_macro::cached;
 use egui::{Color32, Hyperlink, RichText, Sense, Ui, emath::TSTransform};
 use egui_phosphor::regular::{
@@ -19,10 +20,10 @@ use im::vector;
 use itertools::{Itertools, izip};
 use serde_yaml_ng as serde_yml;
 use typed_builder::TypedBuilder;
-use uuid::Uuid;
 
 use crate::{
     events::AppEvents,
+    state::workflow::ProgressMap,
     ui::shortcuts::{ShortcutHandler, squelch},
     utils::ErrorDistiller as _,
     workflow::{
@@ -412,11 +413,6 @@ impl<'a> Iterator for &'a ViewStack {
     }
 }
 
-#[derive(Default, Clone, Debug)]
-pub struct ProgressEntry(pub usize, pub Arc<AtomicUsize>);
-
-pub type ProgressMap = im::OrdMap<Uuid, ProgressEntry>;
-
 #[derive(Clone, TypedBuilder)]
 pub struct WorkflowViewer {
     #[builder(default = egui::Id::new("default_viewer"))]
@@ -436,7 +432,7 @@ pub struct WorkflowViewer {
     pub node_state: NodeStateMap,
 
     #[builder(default)]
-    pub progress: ProgressMap,
+    pub progress: Arc<ArcSwap<ProgressMap>>,
 
     #[builder(default)]
     pub running: bool,
@@ -720,12 +716,12 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                 },
             );
 
+            let guard = self.progress.load();
             if let Some(uuid) = snarl[node].as_dyn().uuid()
-                && let Some(progress) = self.progress.get(&uuid)
+                && let Some(progress) = guard.get(&uuid)
                 && progress.0 > 0
             {
-                let ratio = progress.1.load(std::sync::atomic::Ordering::Relaxed) as f32
-                    / progress.0 as f32;
+                let ratio = progress.1 as f32 / progress.0 as f32;
 
                 ui.add(
                     egui::ProgressBar::new(ratio)

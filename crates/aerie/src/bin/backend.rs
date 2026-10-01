@@ -1,4 +1,3 @@
-use clap::Parser as _;
 use footnote::Footnote;
 use itertools::Itertools as _;
 use scopeguard::defer;
@@ -15,6 +14,7 @@ use std::{
 use struct_patch::Patch;
 use tokio::sync::broadcast::error::TryRecvError;
 use tokio_util::sync::CancellationToken;
+use tower_http::services::ServeDir;
 use tracing::instrument;
 
 use aerie::{
@@ -23,8 +23,10 @@ use aerie::{
         StatePatchNote, SwitchData, UpdateData,
     },
     config::Args,
+    events::WorkflowEvent,
+    state::workflow::WorkflowState,
     storage::CachedDirStore as _,
-    ui::state::WorkflowState,
+    workflow::runner::{RunEventCast, RunEventData},
 };
 use axum::{
     extract::{
@@ -35,9 +37,20 @@ use axum::{
     response::IntoResponse,
 };
 use axum_extra::{TypedHeader, headers};
+use clap::Parser;
 use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 static CONNECTED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Parser, Clone, Debug)]
+#[command(version, about, long_about = None)]
+pub struct ServerArgs {
+    #[command(flatten)]
+    core_args: Args,
+
+    #[arg(long, short)]
+    listen: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub struct SharedState {
@@ -56,7 +69,9 @@ fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let args = Args::parse();
+    let server_args = ServerArgs::parse();
+    let args = server_args.core_args;
+    let port = server_args.listen.unwrap_or("0.0.0.0:3000".into());
 
     let settings_path = args.config.clone().unwrap_or(
         dirs::config_dir()
@@ -100,7 +115,7 @@ fn main() -> anyhow::Result<()> {
     // build our application with some routes
     use axum::routing::*;
     let router = Router::new()
-        // .fallback_service(ServeDir::new(assets_dir).append_index_html_on_directories(true))
+        .fallback_service(ServeDir::new("dist").append_index_html_on_directories(true))
         .route("/ws", any(ws_handler))
         // logging so we can see what's going on
         // .layer(
@@ -111,9 +126,7 @@ fn main() -> anyhow::Result<()> {
 
     rt.block_on(async {
         let _guard = rt.enter();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind(port).await.unwrap();
         tracing::debug!("listening on {}", listener.local_addr().unwrap());
         axum::serve(
             listener,
@@ -142,7 +155,7 @@ async fn ws_handler(
     tracing::info!("`{user_agent}` at {addr} connected.");
     // finalize the upgrade process by returning upgrade callback.
     // we can customize the callback by sending additional info such as address.
-    if CONNECTED.load(Ordering::Relaxed) {
+    if CONNECTED.load(Ordering::Acquire) {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "Existing connection to this instance",
@@ -150,16 +163,19 @@ async fn ws_handler(
             .into_response();
     }
 
-    CONNECTED.store(true, Ordering::Relaxed);
+    CONNECTED.store(true, Ordering::Release);
 
     let factory = aerie::app::AppFactory::builder()
         .name("aerie")
         .args(shared.args.clone())
         .rt(shared.rt.clone())
         .settings_path(shared.settings_path.clone())
-        .min_size(egui::vec2(800.0, 400.0))
-        .logging_init(Rc::new(|_| {}))
-        .build();
+        .logging_init(Rc::new(|_| {}));
+
+    #[cfg(feature = "ui")]
+    let factory = factory.min_size(egui::vec2(800.0, 400.0));
+
+    let factory = factory.build();
     let app = factory.make_app().unwrap();
 
     ws.on_upgrade(move |socket| handle_socket(app, socket, addr))
@@ -170,7 +186,7 @@ async fn ws_handler(
 // Must not use enum tags. Must not omit default fields.
 async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, who: SocketAddr) {
     defer! {
-        CONNECTED.store(false, Ordering::Relaxed);
+        CONNECTED.store(false, Ordering::Release);
         tracing::info!("Bye, {who}");
         // TODO: ensure tools are dropped after disconnect
     }
@@ -182,6 +198,19 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, who: Soc
 
     let mut node_rx = app.app_state.workflows.node_state.subscribe();
     let mut flow_rx = app.app_state.workflows.subscribe();
+
+    let (run_tx, mut run_rx) = RunEventCast::new();
+    app.app_state.run_cast = Some(run_tx);
+
+    let flow_tx = app.app_state.workflows.broadcast.clone();
+    app.app_state.rt.spawn(async move {
+        // Relay progress events to workflow broadcaster
+        while let Ok(ev) = run_rx.recv().await {
+            if let RunEventData::Progress(progress) = ev.data {
+                let _ = flow_tx.send(WorkflowEvent::Progress(progress));
+            }
+        }
+    });
 
     let mut waiting = true;
     let mut interval = tokio::time::interval(Duration::from_millis(1000));
@@ -202,21 +231,22 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, who: Soc
             // Probably don't need the interval when using the notifier
             _ = interval.tick() => {
                 if waiting {
-                    waiting = task_count.load(Ordering::Relaxed) > 0;
+                    waiting = task_count.load(Ordering::Acquire) > 0;
                     let _ = patch_all(&app, &mut socket, &mut note).await;
                 } else {
                     let update = ClientUpdate::builder()
                         .update(UpdateData::Poke)
                         .build();
-                    if let Ok(bytes) = rmp_serde::to_vec_named(&update) {
-                        let _ = socket.send(Message::Binary(bytes.into())).await;
-                    }
+                    if let Ok(bytes) = rmp_serde::to_vec_named(&update)
+                        && let Err(err) = socket.send(Message::Binary(bytes.into())).await {
+                            tracing::debug!(?err, "problem sending keep alive");
+                        }
                 }
             }
             _ = notify.notified() => {
                 app.app_state.handle_events();
 
-                let num_tasks = task_count.load(Ordering::Relaxed);
+                let num_tasks = task_count.load(Ordering::Acquire);
                 tracing::debug!("Wake-up with {num_tasks} tasks.");
 
                 if waiting && num_tasks == 0 {
@@ -246,15 +276,15 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, who: Soc
                 }
 
                 if !events.is_empty() {
-                    tracing::debug!(?events, "Sending NodeState events");
+                    tracing::trace!(?events, "Sending NodeState events");
 
                     let update = ClientUpdate::builder().update(
                         UpdateData::NodeState(events)
                     )
-                    .task_count(task_count.load(Ordering::Relaxed))
+                    .task_count(task_count.load(Ordering::Acquire))
                     .build();
 
-                    waiting = task_count.load(Ordering::Relaxed) > 0;
+                    waiting = task_count.load(Ordering::Acquire) > 0;
 
                     let _ = socket
                         .send(Message::Text(
@@ -264,23 +294,38 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, who: Soc
                 }
             }
             ev = flow_rx.recv() => {
+                let mut events = vec![];
                 match ev {
                     Ok(ev) => {
-                        let update = ClientUpdate::builder()
-                            .update(UpdateData::Event(ev))
-                            .task_count(task_count.load(Ordering::Relaxed))
-                            .build();
-
-                        waiting = task_count.load(Ordering::Relaxed) > 0;
-                        let _ = socket
-                            .send(Message::Text(
-                                serde_json::to_string(&update).unwrap().into(),
-                            ))
-                        .await;
+                        events.push(ev);
                     }
                     Err(err) => {
                         tracing::warn!(?err, "Failed while receiving workflow event");
                     }
+                }
+
+                loop {
+                    // Pull any other available events into the batch, ignoring lagged.
+                    match flow_rx.try_recv() {
+                        Ok(ev) => events.push(ev),
+                        Err(TryRecvError::Lagged(n)) => tracing::warn!("Workflow Event channel lagged by {n}"),
+                        _ => break,
+                    }
+                }
+
+                if !events.is_empty() {
+                    tracing::debug!(?events, "Sending workflow events");
+                    let update = ClientUpdate::builder()
+                        .update(UpdateData::Event(events))
+                        .task_count(task_count.load(Ordering::Acquire))
+                        .build();
+
+                    waiting = task_count.load(Ordering::Acquire) > 0;
+                    let _ = socket
+                        .send(Message::Text(
+                            serde_json::to_string(&update).unwrap().into(),
+                        ))
+                    .await;
                 }
             }
             res = socket.recv() => {
@@ -327,7 +372,7 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, who: Soc
 
                                         app.app_state.handle_events();
 
-                                        let num_tasks = task_count.load(Ordering::Relaxed);
+                                        let num_tasks = task_count.load(Ordering::Acquire);
                                         tracing::debug!("Handled client events. Waiting for {num_tasks} tasks.");
 
                                         if need_patch {
@@ -343,13 +388,19 @@ async fn handle_socket(mut app: aerie::app::App, mut socket: WebSocket, who: Soc
                             }
                         }
                     }
-                    None => { break;}
+                    None => {
+                        // Socket closed, no more messages
+                        tracing::info!("Socket closed. Terminating instance.");
+                        break;
+                    }
                 }
             }
         }
 
         app.post_update();
     }
+
+    tracing::info!("Finished websocket backend loop");
     // while let Some(msg) = socket.recv().await {}
 }
 
@@ -393,11 +444,11 @@ async fn send_dump(app: &aerie::app::App, socket: &mut WebSocket) -> Result<(), 
         .tools(tool_store)
         .workflows(workflows)
         .prompt(app.app_state.prompt.clone())
-        .task_count(app.app_state.task_count.load(Ordering::Relaxed))
+        .task_count(app.app_state.task_count.load(Ordering::Acquire))
         .build();
     let update = ClientUpdate::builder()
         .update(UpdateData::Dump(state))
-        .task_count(app.task_count.load(Ordering::Relaxed))
+        .task_count(app.task_count.load(Ordering::Acquire))
         .build();
 
     socket
@@ -440,6 +491,8 @@ async fn patch_all(
         .name(app.app_state.workflows.editing.clone())
         .shadow(shadow)
         .baseline(baseline)
+        .running(app.app_state.workflows.running.load(Ordering::Acquire))
+        .interrupt(app.app_state.workflows.interrupt.load(Ordering::Acquire))
         .build();
 
     let previews = app.app_state.workflows.previews.into_vec();
@@ -480,7 +533,7 @@ async fn patch_all(
 
     let update = ClientUpdate::builder()
         .update(UpdateData::Delta(delta))
-        .task_count(app.task_count.load(Ordering::Relaxed))
+        .task_count(app.task_count.load(Ordering::Acquire))
         .build();
 
     match rmp_serde::to_vec_named(&update) {

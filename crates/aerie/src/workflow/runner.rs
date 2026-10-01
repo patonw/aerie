@@ -29,7 +29,7 @@ use crate::workflow::{
     nodes::{Fallback, Flavor, Select},
 };
 use crate::{
-    events::NodeStateEvent,
+    events::{NodeStateEvent, ProgressEvent},
     utils::ImmutableMapExt as _,
     workflow::{GraphId, Value, WorkflowError},
 };
@@ -473,6 +473,8 @@ impl<T: Ord> Ord for Prioritized<T> {
 
 #[derive(Debug, Clone, Serialize)]
 pub enum RunEventData {
+    Progress(ProgressEvent),
+
     #[serde(untagged)]
     Json(serde_json::Value),
 }
@@ -533,6 +535,16 @@ impl<D: Into<RunEventData>> From<D> for RunEvent {
     }
 }
 
+impl From<ProgressEvent> for RunEvent {
+    fn from(data: ProgressEvent) -> Self {
+        Self {
+            tags: vec!["progress".into()],
+            data: RunEventData::Progress(data),
+            elapsed: Default::default(),
+        }
+    }
+}
+
 impl From<serde_json::Value> for RunEvent {
     fn from(mut data: serde_json::Value) -> Self {
         use serde_json::Value;
@@ -564,7 +576,7 @@ pub struct RunEventCast(pub async_broadcast::Sender<RunEvent>);
 
 impl Default for RunEventCast {
     fn default() -> Self {
-        let (mut tx, _) = async_broadcast::broadcast(1);
+        let (mut tx, _) = async_broadcast::broadcast(128);
         tx.set_overflow(true);
         Self(tx)
     }
@@ -572,7 +584,7 @@ impl Default for RunEventCast {
 
 impl RunEventCast {
     pub fn new() -> (Self, async_broadcast::Receiver<RunEvent>) {
-        let (mut tx, rx) = async_broadcast::broadcast(1);
+        let (mut tx, rx) = async_broadcast::broadcast(128);
         tx.set_overflow(true);
         (Self(tx), rx)
     }

@@ -7,7 +7,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields, PathArguments, parse_macro_input};
 
-#[proc_macro_derive(Footnote, attributes(patch))]
+#[proc_macro_derive(Footnote, attributes(patch, note))]
 pub fn derive_footnote(input: TokenStream) -> TokenStream {
     // let input = proc_macro2::TokenStream::from(input);
     let input = parse_macro_input!(input as DeriveInput);
@@ -41,6 +41,40 @@ pub fn derive_footnote(input: TokenStream) -> TokenStream {
         })
         .collect();
 
+    let copied: HashMap<_, _> = fields
+        .iter()
+        .filter(|field| {
+            field.attrs.iter().any(|attr| {
+                attr.path().is_ident("note") && {
+                    let mut tp = false;
+                    let _ = attr.parse_nested_meta(|meta| {
+                        tp = meta.path.is_ident("copied");
+                        Ok(())
+                    });
+                    tp
+                }
+            })
+        })
+        .filter_map(|field| field.ident.clone().map(|id| (id, field.ty.clone())))
+        .collect();
+
+    let cloned: HashMap<_, _> = fields
+        .iter()
+        .filter(|field| {
+            field.attrs.iter().any(|attr| {
+                attr.path().is_ident("note") && {
+                    let mut tp = false;
+                    let _ = attr.parse_nested_meta(|meta| {
+                        tp = meta.path.is_ident("cloned");
+                        Ok(())
+                    });
+                    tp
+                }
+            })
+        })
+        .filter_map(|field| field.ident.clone().map(|id| (id, field.ty.clone())))
+        .collect();
+
     let nested: HashSet<_> = fields
         .iter()
         .filter(|field| {
@@ -69,7 +103,15 @@ pub fn derive_footnote(input: TokenStream) -> TokenStream {
     let mut nest_types = HashMap::new();
     let fieldy = fields.iter().map(|field| {
         let name = field.ident.as_ref().unwrap();
-        if nested.contains(name) {
+        if let Some(ty) = copied.get(name) {
+            quote! {
+                #name: #ty
+            }
+        } else if let Some(ty) = cloned.get(name) {
+            quote! {
+                #name: #ty
+            }
+        } else if nested.contains(name) {
             let sub_ty = match &field.ty {
                 // syn::Type::Verbatim(ty) => ty.clone(),
                 syn::Type::Path(tp) => {
@@ -100,7 +142,15 @@ pub fn derive_footnote(input: TokenStream) -> TokenStream {
 
     let hashy = fields.iter().map(|field| {
         let name = field.ident.as_ref().unwrap();
-        if nested.contains(name) {
+        if copied.contains_key(name) {
+            quote! {
+                #name: self.#name
+            }
+        } else if cloned.contains_key(name) {
+            quote! {
+                #name: self.#name.clone()
+            }
+        } else if nested.contains(name) {
             quote! {
                 #name: self.#name.get_note()
             }
@@ -115,18 +165,20 @@ pub fn derive_footnote(input: TokenStream) -> TokenStream {
 
     let checky = fields.iter().map(|field| {
         let name = field.ident.as_ref().unwrap();
-        if nested.contains(name) {
-            let pascal = format_ident!("{}", format!("{name}").to_pascal_case());
-
+        let pascal = format_ident!("{}", format!("{name}").to_pascal_case());
+        if copied.contains_key(name) || cloned.contains_key(name) {
+            quote! {
+                if note.#name != self.#name {
+                    changed.push(#enum_name::#pascal);
+                }
+            }
+        } else if nested.contains(name) {
             quote! {
                 if !self.#name.check_note(&note.#name).is_empty()  {
                     changed.push(#enum_name::#pascal);
                 }
             }
         } else {
-            // let hashed = calc_hash(quote!(self.#name));
-            let pascal = format_ident!("{}", format!("{name}").to_pascal_case());
-
             quote! {
                 if note.#name != #origin::calc_hash(&self.#name) {
                     changed.push(#enum_name::#pascal);
@@ -137,13 +189,27 @@ pub fn derive_footnote(input: TokenStream) -> TokenStream {
 
     let patchy = fields.iter().map(|field| {
         let name = field.ident.as_ref().unwrap();
-        if nested.contains(name) {
+        if copied.contains_key(name) {
+            quote! {
+                #name: if note.#name == self.#name {
+                    None
+                } else {
+                    Some(self.#name)
+                }
+            }
+        } else if cloned.contains_key(name) {
+            quote! {
+                #name: if note.#name == self.#name {
+                    None
+                } else {
+                    Some(self.#name.clone())
+                }
+            }
+        } else if nested.contains(name) {
             quote! {
                 #name: self.#name.make_patch(&note.#name)
             }
         } else {
-            // let hashed = calc_hash(quote!(self.#name));
-
             quote! {
                 #name: if note.#name == #origin::calc_hash(&self.#name) {
                     None

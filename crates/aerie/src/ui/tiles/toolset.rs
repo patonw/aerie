@@ -7,7 +7,8 @@ use std::path::PathBuf;
 
 use crate::{
     config::ToolSpec,
-    ui::{AppEvent, state::ToolEditorState, toggled_field},
+    state::app::ToolEditorState,
+    ui::{AppEvent, toggled_field},
     utils::{ErrorDistiller as _, spawn_wherever},
 };
 

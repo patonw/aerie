@@ -1,9 +1,6 @@
 use typed_builder::TypedBuilder;
 
 use arc_swap::{ArcSwap, ArcSwapOption};
-use eframe::{NativeOptions, egui};
-use egui_commonmark::*;
-use egui_tiles::{LinearDir, TileId, Tree};
 use std::{
     convert::identity,
     path::{Path, PathBuf},
@@ -24,22 +21,28 @@ use crate::{
     config::{Args, ConfigExt, ConfigStateStore, Preferences},
     events::{AppEvent, AppEvents},
     logging::{LogChannelLayer, LogEntry},
+    state::{
+        app::{AppData, AppState},
+        workflow::WorkflowState,
+    },
     storage::CachedDirStore as _,
     toolbox::ToolStore,
-    ui::{
-        Pane,
-        render::display_errors,
-        shortcuts::SHORTCUT_QUIT,
-        state::{AppData, AppState, WorkflowState},
-    },
-    utils::{ErrorDistiller as _, ErrorList, MAX_IMAGE_DIM, prune_image_cache},
+    utils::{ErrorDistiller as _, ErrorList, MAX_IMAGE_DIM},
     workflow::store::WorkflowStoreDir,
 };
 
-// TODO: emit an App that impl eframe::App
-// also omit the customizers
+#[cfg(feature = "ui")]
+use eframe::{NativeOptions, egui};
+#[cfg(feature = "ui")]
+use egui_commonmark::CommonMarkCache;
+#[cfg(feature = "ui")]
+use egui_tiles::{LinearDir, TileId, Tree};
 
-const APP_NAME: &str = "aerie";
+#[cfg(feature = "ui")]
+use crate::{
+    ui::{Pane, render::display_errors, shortcuts::SHORTCUT_QUIT},
+    utils::prune_image_cache,
+};
 
 // A bunch of hooks instead of sensible refactoring.
 // Not sure how customizable this will be in practice yet.
@@ -58,9 +61,11 @@ pub struct AppFactory {
     #[builder(default, setter(strip_option))]
     state_path: Option<std::path::PathBuf>,
 
+    #[cfg(feature = "ui")]
     #[builder(default, setter(strip_option))]
     min_size: Option<egui::Vec2>,
 
+    #[cfg(feature = "ui")]
     #[builder(default, setter(strip_option))]
     max_size: Option<egui::Vec2>,
 
@@ -94,10 +99,12 @@ pub struct AppFactory {
     session_fn: Rc<dyn Fn(ChatSession) -> ChatSession>,
 
     /// Override the eframe window options
+    #[cfg(feature = "ui")]
     #[builder(default=Rc::new(identity))]
     eframe_opts_fn: Rc<dyn Fn(NativeOptions) -> NativeOptions>,
 
     /// Customize the initial UI tab tree structure
+    #[cfg(feature = "ui")]
     #[builder(default=Rc::new(identity))]
     ui_tree_fn: Rc<dyn Fn(Tree<Pane>) -> Tree<Pane>>,
 }
@@ -108,19 +115,23 @@ pub struct App {
 
     pub app_state: AppState,
 
-    pub tile_tree: Tree<Pane>,
-
     pub stored_settings: Arc<Preferences>,
 
     #[builder(default=Instant::now() + Duration::from_secs(1))]
     debounce: Instant,
 
+    #[cfg(feature = "ui")]
+    pub tile_tree: Tree<Pane>,
+
+    #[cfg(feature = "ui")]
     #[builder(default)]
     min_size: Option<egui::Vec2>,
 
+    #[cfg(feature = "ui")]
     #[builder(default)]
     max_size: Option<egui::Vec2>,
 
+    #[cfg(feature = "ui")]
     #[builder(default=egui::Rect::from_pos(egui::pos2(200.0, 200.0)))]
     max_rect: egui::Rect,
 
@@ -171,6 +182,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "ui")]
     fn show(&mut self, ctx: &egui::Context) {
         let content_rect = ctx.content_rect();
 
@@ -267,6 +279,7 @@ impl App {
     }
 }
 
+#[cfg(feature = "ui")]
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.show(ctx);
@@ -279,6 +292,7 @@ impl eframe::App for App {
 impl AppFactory {
     pub fn make_app(&self) -> anyhow::Result<App> {
         let app_state = self.build_state()?;
+        #[cfg(feature = "ui")]
         let tile_tree = self.make_tile_tree();
         let settings_path = self.resolve_settings();
         let settings_ = app_state.data.prefs.clone();
@@ -309,24 +323,29 @@ impl AppFactory {
             }
         });
 
-        Ok(App::builder()
+        let builder = App::builder()
             .app_state(app_state)
             .next_workflow(next_workflow)
             .next_prompt(next_prompt)
             .next_images(next_images)
             .task_count(task_count)
+            .settings_path(settings_path)
+            .stored_settings(stored_settings);
+
+        #[cfg(feature = "ui")]
+        let builder = builder
             .tile_tree(tile_tree)
             .min_size(self.min_size)
-            .max_size(self.max_size)
-            .settings_path(settings_path)
-            .stored_settings(stored_settings)
-            .build())
+            .max_size(self.max_size);
+
+        Ok(builder.build())
     }
 
+    #[cfg(feature = "ui")]
     pub fn run_ui(&self) -> Result<(), anyhow::Error> {
         let app = self.make_app().unwrap();
         eframe::run_native(
-            APP_NAME,
+            "aerie",
             self.ui_options(),
             Box::new(move |cc| {
                 let ctx = &cc.egui_ctx;
@@ -343,6 +362,7 @@ impl AppFactory {
         Ok(())
     }
 
+    #[cfg(feature = "ui")]
     fn ui_options(&self) -> NativeOptions {
         (self.eframe_opts_fn)(eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
@@ -353,6 +373,7 @@ impl AppFactory {
         })
     }
 
+    #[cfg(feature = "ui")]
     fn make_tile_tree(&self) -> Tree<Pane> {
         let mut tiles = egui_tiles::Tiles::default();
         let tabs: Vec<TileId> = vec![
@@ -461,7 +482,10 @@ impl AppFactory {
         let preferences = Arc::new(ArcSwap::from_pointee(preferences));
         let log_history: Arc<arc_swap::ArcSwapAny<Arc<im::Vector<LogEntry>>>> =
             Arc::new(ArcSwap::from_pointee(im::Vector::<LogEntry>::new()));
+
+        #[cfg(feature = "ui")]
         let cache = CommonMarkCache::default();
+
         let log_history_ = log_history.clone();
         rt.spawn(async move {
             while let Ok(entry) = log_rx.recv_async().await {
@@ -524,22 +548,23 @@ impl AppFactory {
             .session_names(session_names)
             .build();
 
-        let app_state = (self.appstate_fn)(
-            AppState::builder()
-                .notify(notify)
-                .data(data)
-                .state(config_state)
-                .tools(tool_store)
-                .log_history(log_history.clone())
-                .task_count(task_count.clone())
-                .events(events.clone())
-                .errors(errors.clone())
-                .cache(cache)
-                .rt(rt.clone())
-                .agent_factory(agent_factory)
-                .workflows(flow_state)
-                .build(),
-        );
+        let app_state = AppState::builder()
+            .notify(notify)
+            .data(data)
+            .state(config_state)
+            .tools(tool_store)
+            .log_history(log_history.clone())
+            .task_count(task_count.clone())
+            .events(events.clone())
+            .errors(errors.clone())
+            .rt(rt.clone())
+            .agent_factory(agent_factory)
+            .workflows(flow_state);
+
+        #[cfg(feature = "ui")]
+        let app_state = app_state.cache(cache);
+
+        let app_state = (self.appstate_fn)(app_state.build());
         Ok(app_state)
     }
 }

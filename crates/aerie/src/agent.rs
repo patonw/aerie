@@ -307,10 +307,10 @@ impl AgentFactory {
         let toolbox = self.toolbox.clone();
 
         if let Some(tool_store) = self.tools.clone() {
-            task_count.fetch_add(1, Ordering::Relaxed);
+            task_count.fetch_add(1, Ordering::AcqRel);
 
             defer! {
-                task_count.fetch_sub(1, Ordering::Relaxed);
+                task_count.fetch_sub(1, Ordering::AcqRel);
             };
 
             tool_store.load_provider(toolbox, name, &self.env).await?;

@@ -10,11 +10,11 @@ use uuid::Uuid;
 use crate::{
     config::{ConfigState, Preferences},
     events::{AppEvent, NodeStateEvent, WorkflowEvent},
-    toolbox::ToolStore,
-    ui::{
-        state::{AppData, AppDataNote, AppDataPatch},
+    state::{
+        app::{AppData, AppDataNote, AppDataPatch},
         workflow::ViewStack,
     },
+    toolbox::ToolStore,
     workflow::{ShadowMeta, Value, Workflow, runner::ExecId},
 };
 
@@ -62,6 +62,14 @@ pub struct EditorPatch {
 
     #[builder(default)]
     pub stack: Option<ViewStack>,
+
+    #[builder(default)]
+    #[note(copied)]
+    pub running: bool,
+
+    #[builder(default)]
+    #[note(copied)]
+    pub interrupt: bool,
 }
 
 // Eventually we'll want to just put Footnote/Patch on AppState and bypass this.
@@ -113,7 +121,7 @@ pub enum UpdateData {
     Delta(StatePatchPatch), // TODO: some kind of consistency check
     Switch(SwitchData),
     NodeState(Vec<NodeStateEvent>),
-    Event(WorkflowEvent),
+    Event(Vec<WorkflowEvent>),
 }
 
 /// Some serialization formats need a top-level object to wrap the enum

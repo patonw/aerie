@@ -11,6 +11,11 @@ result is more predictable and debuggable than purely agent-driven systems.
 
 ## Installation
 
+You have the option of running aerie as a desktop app or as a websocket-based
+web application.
+
+### Desktop app
+
 Download the AppImage from the [releases page](https://github.com/patonw/aerie/releases):
 
 ```bash
@@ -23,6 +28,57 @@ The AppImage also runs on Windows via
 Nix or source builds, see the [installation
 guide](https://patonw.github.io/aerie/user_start.html#installation) and
 [development guide](https://patonw.github.io/aerie/dev_start.html).
+
+### Containerized web app
+
+To launch the web app via container, load the image archive:
+
+> TODO: Need to update CI to create an image artifact
+
+Then run using docker, podman or a compatible container host:
+
+```bash
+podman run -it --network podman -p 3000:3000 aerie
+```
+
+Or, mounting local stores to an ephemeral container:
+
+```bash
+podman run -it --rm \
+  --network podman \
+  -p 3000:3000 \
+  -v ~/.config/aerie:/root/.config/aerie \
+  -v ~/.local/share/aerie:/root/.local/share/aerie \
+  aerie
+```
+
+#### Custom build
+
+You can use docker or podman to build the project and a container.
+
+Unless your build machine has system libraries compatible with the `debian:slim`
+base image, building in a container is recommended.
+Compile the back-end using a `rust` container:
+
+```bash
+podman run -it --rm -v .:/work -w /work --userns=keep-id rust \
+  cargo build --release --bin backend \
+  --no-default-features -F backend,fetch-image,scripting,nesting
+```
+
+Use trunk to build the front-end into the `dist` folder:
+
+```bash
+cd crates/aerie
+trunk build --release --dist ../../dist/
+cd -
+```
+
+Finally, to bundle them together (flavors: slim, nodepy, nix):
+
+```bash
+podman build --build-arg flavor=nix -t aerie .
+```
 
 ## Workflows
 

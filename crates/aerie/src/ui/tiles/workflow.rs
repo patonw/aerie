@@ -17,7 +17,6 @@ use crate::{
         ShowHelp,
         runner::{play_button, stop_button},
         shortcuts::{SHORTCUT_HELP, SHORTCUT_RUN, ShortcutHandler, show_shortcuts, squelch},
-        state::MetaEdit,
         workflow::get_snarl_style,
     },
     utils::spawn_wherever,
@@ -101,7 +100,7 @@ impl super::AppState {
                 .default_size(egui::vec2(200.0, 100.0))
                 .movable(true)
                 .show(ui.ctx(), |ui| {
-                    use MetaEdit::*;
+                    use crate::state::workflow::MetaEdit::*;
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.selectable_value(
@@ -454,7 +453,7 @@ impl super::AppState {
                     let interrupting = self.workflows.interrupt.load(Ordering::Relaxed);
                     ui.add_enabled_ui(!interrupting, |ui| {
                         if ui.add(stop_button(interrupting)).clicked() {
-                            self.workflows.interrupt.store(true, Ordering::Relaxed);
+                            self.events.insert(AppEvent::InterruptWorkflow);
                         }
                     });
                 } else if ui.add_enabled(!busy, play_button()).clicked() {
