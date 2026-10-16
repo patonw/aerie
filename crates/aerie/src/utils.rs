@@ -47,7 +47,9 @@ impl From<EVec2> for NodePos {
         }
     }
 }
-#[derive(Clone)]
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct AtomicBuffer<T>(pub Arc<ArcSwap<im::Vector<Arc<ArcSwap<T>>>>>);
 
 impl<T> std::default::Default for AtomicBuffer<T> {
@@ -139,6 +141,38 @@ impl<T: Ord + std::fmt::Debug> PriorityQueue<T> {
         self.retain(|item| !f(item))
     }
 }
+
+pub trait ArcVecExt<T: Clone> {
+    fn extend<I>(&self, iter: I)
+    where
+        I: IntoIterator<Item = T>;
+
+    fn remove(&self, idx: usize);
+}
+
+impl<T: Clone> ArcVecExt<T> for ArcSwap<im::Vector<T>> {
+    fn extend<I>(&self, iter: I)
+    where
+        I: IntoIterator<Item = T>,
+    {
+        let items: im::Vector<_> = iter.into_iter().collect();
+
+        self.rcu(|data| {
+            let mut data = im::Vector::clone(data);
+            data.extend(items.clone());
+            Arc::new(data)
+        });
+    }
+
+    fn remove(&self, idx: usize) {
+        self.rcu(|items| {
+            let mut items = im::Vector::clone(items);
+            items.remove(idx);
+            Arc::new(items)
+        });
+    }
+}
+
 pub trait CowExt<'a, T: Clone, E> {
     /// Flat map for cows.
     ///
@@ -398,6 +432,7 @@ pub fn canonicalize_msg(msg: Message) -> Result<Message, Vec<anyhow::Error>> {
         Message::User { content } => {
             let items = content.iter().map(|content| -> anyhow::Result<_> {
                 match &content {
+                    // TODO: client proxy
                     UserContent::Image(image) => {
                         let image = ImageResolver::default().preprocess(image)?;
                         Ok(Cow::Owned(UserContent::Image(image.into_owned())))
@@ -444,6 +479,7 @@ pub fn extract_user_content(content: &UserContent) -> Vec<(Cow<'_, str>, FormatO
                 _ => None,
             })
             .collect_vec(),
+        // TODO: client proxy
         #[cfg(feature = "ui")]
         UserContent::Image(img) => {
             let key = rig_image_to_egui(img);
@@ -465,6 +501,7 @@ pub fn extract_agent_content(content: &AssistantContent) -> Vec<(Cow<'_, str>, F
         AssistantContent::Reasoning(reasoning) => {
             vec![(Cow::Owned(reasoning.display_text()), FormatOpts::Reasoning)]
         }
+        // TODO: client proxy
         #[cfg(feature = "ui")]
         AssistantContent::Image(img) => {
             let key = rig_image_to_egui(img);
@@ -623,6 +660,24 @@ pub mod ui {
             }
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn spawn_wherever<F>(future: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    let handle = tokio::runtime::Handle::current();
+    handle.spawn(future);
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn spawn_wherever<F>(future: F)
+where
+    F: Future<Output = ()> + 'static,
+{
+    use wasm_bindgen_futures::spawn_local;
+    spawn_local(future);
 }
 
 #[cfg(test)]

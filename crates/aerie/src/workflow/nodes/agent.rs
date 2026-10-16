@@ -1,33 +1,15 @@
-use anyhow::Context as _;
 use decorum::E64;
-#[cfg(feature = "ui")]
-use egui::{Color32, RichText, TextEdit, collapsing_header::CollapsingState};
-use egui_snarl::NodeId;
-#[cfg(feature = "ui")]
-use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use std::{borrow::Cow, str::FromStr as _, sync::Arc};
-#[cfg(feature = "ui")]
-use strum::IntoEnumIterator as _;
+use std::{borrow::Cow, sync::Arc};
+
+#[cfg(feature = "native")]
+use crate::workflow::{CheckContext, GraphId};
 
 use crate::{
-    ToolSelector,
-    config::{ModelRole, Ternary},
-    rig::message::Message,
-    toolbox::{ChainBreaker, ChainTool},
-    utils::message_text,
-    workflow::{
-        CheckContext, DynNode, FlexNode, GraphId, RunContext, Value, ValueKind, WorkflowError,
-        with_deadline,
-    },
-};
-
-#[cfg(feature = "ui")]
-use crate::{
-    ToolProvider,
-    ui::{resizable_frame, resizable_frame_opt, shortcuts::squelch},
-    workflow::{EditContext, NodeTheme, ThemeCodex, UiNode},
+    config::{ModelRole, Ternary, ToolSelector},
+    toolbox::ChainBreaker,
+    workflow::{DynNode, FlexNode, Value, ValueKind},
 };
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,7 +48,11 @@ impl DynNode for Tools {
         Value::Tools(self.toolset.clone())
     }
 
-    fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
+    #[cfg(feature = "native")]
+    fn check(
+        &self,
+        ctx: &CheckContext,
+    ) -> im::OrdMap<(GraphId, egui_snarl::NodeId), Cow<'static, str>> {
         let missing = ctx.toolbox.missing_tools(&self.toolset);
         if !missing.is_empty() {
             im::ordmap!(ctx.id() => Cow::Owned(format!("Missing tools: {}", missing.join(", "))))
@@ -75,360 +61,390 @@ impl DynNode for Tools {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
-        ctx: &RunContext,
+        ctx: &super::RunContext,
         node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        use crate::rig::tool::Tool as _;
-        let _ = (ctx, node_id, inputs);
-        let toolbox = &ctx.agent_factory.toolbox;
-        let mut toolset = self.toolset.as_ref().clone();
-        if ctx.is_subgraph {
-            toolset = toolbox.toggle_provider(&toolset, ChainTool::NAME, Ternary::None);
-        } else {
-            let providers = toolbox.providers.load();
-            if let Some(chainer) = providers.get(ChainTool::NAME) {
-                for tool in chainer.all_tool_names() {
-                    if tool != ChainBreaker::NAME && !ctx.metadata.chain.contains(&*tool) {
-                        toolset = toolbox.toggle_tool(&toolset, ChainTool::NAME, &tool, false);
-                    }
-                }
-            }
-        }
+    ) -> Result<Vec<Value>, super::WorkflowError> {
+        self.forward(ctx, node_id, inputs)
+    }
+}
 
-        Ok(vec![Value::Tools(Arc::new(toolset))])
+#[skip_serializing_none]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
+pub struct RoleAgent {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+
+    pub role: Option<ModelRole>,
+
+    pub preamble: Option<String>,
+
+    pub temperature: Option<E64>,
+
+    pub size: Option<crate::utils::EVec2>,
+}
+
+#[typetag::serde]
+impl FlexNode for RoleAgent {}
+
+impl DynNode for RoleAgent {
+    fn title(&self) -> &str {
+        if self.name.is_empty() {
+            "Agent"
+        } else {
+            &self.name
+        }
+    }
+
+    fn inputs(&self) -> usize {
+        5
+    }
+
+    fn outputs(&self) -> usize {
+        1
+    }
+
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
+            0 => &[ValueKind::Agent],
+            1 => &[ValueKind::Text],
+            2 => &[ValueKind::Number],
+            3 => &[ValueKind::Tools],
+            4 => &[ValueKind::Text],
+            _ => ValueKind::all(),
+        })
+    }
+
+    fn out_kind(&self, out_pin: usize) -> ValueKind {
+        match out_pin {
+            0 => ValueKind::Agent,
+            _ => unreachable!(),
+        }
+    }
+
+    #[cfg(feature = "native")]
+    fn execute(
+        &mut self,
+        ctx: &super::RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, super::WorkflowError> {
+        self.validate(&inputs)?;
+
+        self.forward(ctx, inputs)
+    }
+}
+
+#[skip_serializing_none]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
+pub struct ChatContext {
+    pub context_doc: Arc<String>,
+
+    pub size: Option<crate::utils::EVec2>,
+}
+
+#[typetag::serde]
+impl FlexNode for ChatContext {}
+
+impl DynNode for ChatContext {
+    fn title(&self) -> &str {
+        "Context"
+    }
+
+    fn inputs(&self) -> usize {
+        2
+    }
+
+    fn outputs(&self) -> usize {
+        1
+    }
+
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        use ValueKind::*;
+        Cow::Borrowed(match in_pin {
+            0 => &[Agent],
+            1 => &[Text, TextList, Message, Json],
+            _ => ValueKind::all(),
+        })
+    }
+
+    fn out_kind(&self, out_pin: usize) -> ValueKind {
+        match out_pin {
+            0 => ValueKind::Agent,
+            _ => unreachable!(),
+        }
+    }
+
+    #[cfg(feature = "native")]
+    fn execute(
+        &mut self,
+        _ctx: &super::RunContext,
+        _node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, super::WorkflowError> {
+        self.validate(&inputs)?;
+
+        self.forward(inputs)
+    }
+}
+
+#[skip_serializing_none]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
+pub struct InvokeTool {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tool_name: String,
+
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub arguments: String,
+
+    #[serde(default)]
+    pub size: Option<crate::utils::EVec2>,
+}
+
+#[typetag::serde]
+impl FlexNode for InvokeTool {}
+
+impl DynNode for InvokeTool {
+    fn title(&self) -> &str {
+        "Invoke Tool"
+    }
+
+    fn inputs(&self) -> usize {
+        4
+    }
+
+    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+        Cow::Borrowed(match in_pin {
+            0 => &[ValueKind::Chat],
+            1 => &[ValueKind::Tools],
+            2 => &[ValueKind::Text],
+            3 => &[ValueKind::Json],
+            _ => ValueKind::all(),
+        })
+    }
+
+    fn outputs(&self) -> usize {
+        4
+    }
+
+    fn out_kind(&self, out_pin: usize) -> ValueKind {
+        match out_pin {
+            0 => ValueKind::Chat,
+            1 => ValueKind::Message,
+            2 => ValueKind::Text,
+            3 => ValueKind::Failure,
+            _ => unreachable!(),
+        }
+    }
+
+    #[cfg(feature = "native")]
+    fn execute(
+        &mut self,
+        ctx: &super::RunContext,
+        node_id: egui_snarl::NodeId,
+        inputs: Vec<Option<Value>>,
+    ) -> Result<Vec<Value>, super::WorkflowError> {
+        let _ = (node_id,);
+        let rt = ctx.runtime.clone();
+        rt.block_on(self.forward(ctx, inputs))
     }
 }
 
 #[cfg(feature = "ui")]
-impl UiNode for Tools {
-    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
-        other
-            .downcast_ref::<Self>()
-            .is_some_and(|other| self.toolset == other.toolset)
-    }
+mod gui {
+    use super::*;
 
-    fn title_mut(&mut self) -> Option<&mut String> {
-        Some(&mut self.name)
-    }
+    use egui::{Color32, RichText, TextEdit, collapsing_header::CollapsingState};
+    use itertools::Itertools as _;
+    use strum::IntoEnumIterator as _;
 
-    fn has_body(&self) -> bool {
-        true
-    }
+    use crate::{
+        toolbox::ToolProvider,
+        ui::{resizable_frame, resizable_frame_opt, shortcuts::squelch},
+        workflow::{EditContext, NodeTheme, ThemeCodex, UiNode, nodes::json},
+    };
 
-    fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
-        let dsize = Some(egui::vec2(250., 250.0));
-        resizable_frame_opt(dsize, &mut self.size, ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.vertical(|ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        if ui.selectable_label(self.toolset.is_all(), "all").clicked() {
-                            self.toolset = Arc::new(ToolSelector::all());
-                        }
+    impl UiNode for Tools {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other
+                .downcast_ref::<Self>()
+                .is_some_and(|other| self.toolset == other.toolset)
+        }
 
-                        if ui
-                            .selectable_label(self.toolset.is_empty(), "none")
-                            .clicked()
-                        {
-                            self.toolset = Arc::new(ToolSelector::empty());
-                        }
-                    });
+        fn title_mut(&mut self) -> Option<&mut String> {
+            Some(&mut self.name)
+        }
 
-                    ui.separator();
+        fn has_body(&self) -> bool {
+            true
+        }
 
-                    let missing = ctx.toolbox.missing_tools(&self.toolset);
-                    if !missing.is_empty() {
-                        egui::Frame::default()
-                            .stroke((4.0, Color32::RED))
-                            .corner_radius(8.0)
-                            .show(ui, |ui| {
-                                let chunks = missing
-                                    .iter()
-                                    .map(|s| s.split_once("/").unwrap_or((s, "")))
-                                    .chunk_by(|(p, _)| *p);
-                                ui.vertical_centered(|ui| {
-                                    ui.label(RichText::new("missing").color(Color32::RED).strong());
-                                });
-
-                                for (provider, tools) in &chunks {
-                                    let tools = tools.map(|(_, tool)| tool).collect_vec();
-
-                                    CollapsingState::load_with_default_open(
-                                        ui.ctx(),
-                                        ui.id().with("missing tools").with(provider),
-                                        false,
-                                    )
-                                    .show_header(ui, |ui| {
-                                        let mut checked = true;
-                                        if ui.checkbox(&mut checked, provider).clicked() {
-                                            let toolset = tools.iter().fold(
-                                                self.toolset.as_ref().clone(),
-                                                |ts, tool| {
-                                                    ctx.toolbox
-                                                        .toggle_tool(&ts, provider, tool, false)
-                                                },
-                                            );
-
-                                            self.toolset = Arc::new(toolset);
-                                        }
-                                    })
-                                    .body(|ui| {
-                                        for tool in &tools {
-                                            ui.label(*tool);
-                                        }
-                                    });
-                                }
-                            });
-                    }
-
-                    for (name, provider) in ctx.toolbox.providers.load().iter() {
-                        if matches!(provider, ToolProvider::Chainer { .. })
-                            && (ctx.parent_id.is_some() || ctx.metadata.chain.is_empty())
-                        {
-                            continue;
-                        }
-                        let select_some =
-                            matches!(self.toolset.provider_selection(name), Ternary::Some(_));
-
-                        egui::collapsing_header::CollapsingState::load_with_default_open(
-                            ui.ctx(),
-                            ui.id().with(name),
-                            select_some,
-                        )
-                        .show_header(ui, |ui| {
-                            let (mut checked, maybe) = {
-                                match self.toolset.provider_selection(name) {
-                                    Ternary::None => (false, false),
-                                    Ternary::Some(_) => (false, true),
-                                    Ternary::All => (true, false),
-                                }
-                            };
-
-                            let widget =
-                                egui::Checkbox::new(&mut checked, name).indeterminate(maybe);
+        fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
+            let dsize = Some(egui::vec2(250., 250.0));
+            resizable_frame_opt(dsize, &mut self.size, ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.selectable_label(self.toolset.is_all(), "all").clicked() {
+                                self.toolset = Arc::new(ToolSelector::all());
+                            }
 
                             if ui
-                                .add(widget)
-                                .on_hover_text(provider.description())
+                                .selectable_label(self.toolset.is_empty(), "none")
                                 .clicked()
                             {
-                                self.toolset = Arc::new(ctx.toolbox.toggle_provider(
-                                    &self.toolset,
-                                    name,
-                                    if checked { Ternary::All } else { Ternary::None },
-                                ));
-                            }
-                        })
-                        .body(|ui| match provider {
-                            ToolProvider::MCP { tools, .. } => {
-                                for tool in tools {
-                                    let mut active = self.toolset.apply(name, &tool.name);
-
-                                    let desc = provider.tool_description(&tool.name);
-
-                                    let checkbox = ui
-                                        .checkbox(&mut active, tool.name.as_ref())
-                                        .on_hover_text(desc);
-                                    if checkbox.clicked() {
-                                        self.toolset = Arc::new(ctx.toolbox.toggle_tool(
-                                            &self.toolset,
-                                            name,
-                                            &tool.name,
-                                            active,
-                                        ));
-                                    }
-                                }
-                            }
-                            ToolProvider::Chainer { .. } => {
-                                use crate::rig::tool::Tool as _;
-                                for tool in provider.all_tool_names() {
-                                    if tool != ChainBreaker::NAME
-                                        && !ctx.metadata.chain.contains(&*tool)
-                                    {
-                                        continue;
-                                    }
-
-                                    let mut active = self.toolset.apply(name, &tool);
-                                    let desc = provider.tool_description(&tool);
-
-                                    let checkbox =
-                                        ui.checkbox(&mut active, tool.as_ref()).on_hover_text(desc);
-
-                                    if checkbox.clicked() {
-                                        self.toolset = Arc::new(ctx.toolbox.toggle_tool(
-                                            &self.toolset,
-                                            name,
-                                            &tool,
-                                            active,
-                                        ));
-                                    }
-                                }
+                                self.toolset = Arc::new(ToolSelector::empty());
                             }
                         });
-                    }
+
+                        ui.separator();
+
+                        let missing = ctx.toolbox.missing_tools(&self.toolset);
+                        if !missing.is_empty() {
+                            egui::Frame::default()
+                                .stroke((4.0, Color32::RED))
+                                .corner_radius(8.0)
+                                .show(ui, |ui| {
+                                    let chunks = missing
+                                        .iter()
+                                        .map(|s| s.split_once("/").unwrap_or((s, "")))
+                                        .chunk_by(|(p, _)| *p);
+                                    ui.vertical_centered(|ui| {
+                                        ui.label(
+                                            RichText::new("missing").color(Color32::RED).strong(),
+                                        );
+                                    });
+
+                                    for (provider, tools) in &chunks {
+                                        let tools = tools.map(|(_, tool)| tool).collect_vec();
+
+                                        CollapsingState::load_with_default_open(
+                                            ui.ctx(),
+                                            ui.id().with("missing tools").with(provider),
+                                            false,
+                                        )
+                                        .show_header(ui, |ui| {
+                                            let mut checked = true;
+                                            if ui.checkbox(&mut checked, provider).clicked() {
+                                                let toolset = tools.iter().fold(
+                                                    self.toolset.as_ref().clone(),
+                                                    |ts, tool| {
+                                                        ctx.toolbox
+                                                            .toggle_tool(&ts, provider, tool, false)
+                                                    },
+                                                );
+
+                                                self.toolset = Arc::new(toolset);
+                                            }
+                                        })
+                                        .body(|ui| {
+                                            for tool in &tools {
+                                                ui.label(*tool);
+                                            }
+                                        });
+                                    }
+                                });
+                        }
+
+                        for (name, provider) in ctx.toolbox.providers.load().iter() {
+                            if matches!(provider, ToolProvider::Chainer { .. })
+                                && (ctx.parent_id.is_some() || ctx.metadata.chain.is_empty())
+                            {
+                                continue;
+                            }
+                            let select_some =
+                                matches!(self.toolset.provider_selection(name), Ternary::Some(_));
+
+                            egui::collapsing_header::CollapsingState::load_with_default_open(
+                                ui.ctx(),
+                                ui.id().with(name),
+                                select_some,
+                            )
+                            .show_header(ui, |ui| {
+                                let (mut checked, maybe) = {
+                                    match self.toolset.provider_selection(name) {
+                                        Ternary::None => (false, false),
+                                        Ternary::Some(_) => (false, true),
+                                        Ternary::All => (true, false),
+                                    }
+                                };
+
+                                let widget =
+                                    egui::Checkbox::new(&mut checked, name).indeterminate(maybe);
+
+                                if ui
+                                    .add(widget)
+                                    .on_hover_text(provider.description())
+                                    .clicked()
+                                {
+                                    self.toolset = Arc::new(ctx.toolbox.toggle_provider(
+                                        &self.toolset,
+                                        name,
+                                        if checked { Ternary::All } else { Ternary::None },
+                                    ));
+                                }
+                            })
+                            .body(|ui| match provider {
+                                ToolProvider::MCP { tools, .. } => {
+                                    for tool in tools {
+                                        let mut active = self.toolset.apply(name, &tool.name);
+
+                                        let desc = provider.tool_description(&tool.name);
+
+                                        let checkbox = ui
+                                            .checkbox(&mut active, tool.name.as_ref())
+                                            .on_hover_text(desc);
+                                        if checkbox.clicked() {
+                                            self.toolset = Arc::new(ctx.toolbox.toggle_tool(
+                                                &self.toolset,
+                                                name,
+                                                &tool.name,
+                                                active,
+                                            ));
+                                        }
+                                    }
+                                }
+                                ToolProvider::Chainer { .. } => {
+                                    use crate::rig::tool::Tool as _;
+                                    for tool in provider.all_tool_names() {
+                                        if tool != ChainBreaker::NAME
+                                            && !ctx.metadata.chain.contains(&*tool)
+                                        {
+                                            continue;
+                                        }
+
+                                        let mut active = self.toolset.apply(name, &tool);
+                                        let desc = provider.tool_description(&tool);
+
+                                        let checkbox = ui
+                                            .checkbox(&mut active, tool.as_ref())
+                                            .on_hover_text(desc);
+
+                                        if checkbox.clicked() {
+                                            self.toolset = Arc::new(ctx.toolbox.toggle_tool(
+                                                &self.toolset,
+                                                name,
+                                                &tool,
+                                                active,
+                                            ));
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    });
                 });
             });
-        });
-    }
-}
-
-impl Tools {
-    pub async fn forward(
-        &mut self,
-        _ctx: &RunContext,
-        _inputs: Vec<Option<Value>>,
-    ) -> Result<(), WorkflowError> {
-        Ok(())
-    }
-}
-
-#[allow(deprecated)]
-mod legacy {
-    use std::str::FromStr as _;
-
-    use super::*;
-    #[deprecated = "Use TaggedAgent"]
-    #[skip_serializing_none]
-    #[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
-    pub struct AgentNode {
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        pub name: String,
-
-        pub model: Option<String>,
-
-        pub preamble: Option<String>,
-
-        pub temperature: Option<E64>,
-
-        pub size: Option<crate::utils::EVec2>,
-    }
-
-    #[typetag::serde]
-    impl FlexNode for AgentNode {}
-
-    impl DynNode for AgentNode {
-        fn title(&self) -> &str {
-            if self.name.is_empty() {
-                "Agent (Deprecated)"
-            } else {
-                &self.name
-            }
-        }
-
-        fn inputs(&self) -> usize {
-            5
-        }
-
-        fn outputs(&self) -> usize {
-            1
-        }
-
-        fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
-            Cow::Borrowed(match in_pin {
-                0 => &[ValueKind::Agent],
-                1 => &[ValueKind::Text],
-                2 => &[ValueKind::Number],
-                3 => &[ValueKind::Tools],
-                4 => &[ValueKind::Text],
-                _ => ValueKind::all(),
-            })
-        }
-
-        fn out_kind(&self, out_pin: usize) -> ValueKind {
-            match out_pin {
-                0 => ValueKind::Agent,
-                _ => unreachable!(),
-            }
-        }
-
-        fn execute(
-            &mut self,
-            ctx: &RunContext,
-            _node_id: egui_snarl::NodeId,
-            inputs: Vec<Option<Value>>,
-        ) -> Result<Vec<Value>, WorkflowError> {
-            self.validate(&inputs)?;
-
-            let agent = match &inputs[0] {
-                Some(Value::Agent(spec)) => Some(spec.clone()),
-                None => None,
-                _ => unreachable!(),
-            };
-
-            let model = match &inputs[1] {
-                Some(Value::Text(name)) => Some((**name).clone()),
-                None => self.model.clone(),
-                _ => unreachable!(),
-            };
-
-            if agent.is_none() && model.is_none() {
-                return Err(WorkflowError::Required(vec![
-                    "Either model name or an existing agent is required.".into(),
-                ]));
-            }
-
-            let temperature = match &inputs[2] {
-                Some(Value::Number(temp)) => Some(*temp),
-                None => self.temperature,
-                _ => unreachable!(),
-            };
-
-            let toolset = match &inputs[3] {
-                Some(Value::Tools(tools)) => Some(tools.clone()),
-                None => None,
-                _ => unreachable!(),
-            };
-
-            let preamble = match &inputs[4] {
-                Some(Value::Text(text)) => Some((**text).clone()),
-                None => self.preamble.clone(),
-                _ => unreachable!(),
-            };
-
-            let mut agent = agent.unwrap_or_default();
-            let builder = Arc::make_mut(&mut agent);
-
-            if let Some(model) = model {
-                let Ok(role) = ModelRole::from_str(&model);
-                let model = match role {
-                    ModelRole::Custom(name) => name,
-                    _ => ctx
-                        .models
-                        .get(&role)
-                        .or_else(|| ctx.models.get(&ModelRole::Default))
-                        .with_context(|| format!("Could not resolve model for role {role}"))?
-                        .to_owned(),
-                };
-
-                tracing::debug!("Building agent with model {model}");
-                builder.model(model);
-            }
-
-            if let Some(temp) = temperature {
-                tracing::debug!("Setting agent temperature {temp}");
-                builder.temperature(temp);
-            }
-
-            if let Some(preamble) = &preamble {
-                tracing::debug!("Setting agent preamble {preamble}");
-                builder.preamble(preamble.clone());
-            }
-
-            if let Some(tools) = toolset {
-                builder.tools(tools);
-            }
-
-            Ok(vec![Value::Agent(agent)])
         }
     }
 
-    #[cfg(feature = "ui")]
-    impl UiNode for AgentNode {
+    impl UiNode for RoleAgent {
         fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
             other.downcast_ref::<Self>().is_some_and(|other| {
-                self.model == other.model
+                self.role == other.role
                     && self.preamble == other.preamble
                     && self.temperature == other.temperature
             })
@@ -480,12 +496,22 @@ mod legacy {
                         crate::ui::toggled_field(
                             ui,
                             "M",
-                            Some("model"),
-                            &mut self.model,
+                            Some("role used to resolve model from settings"),
+                            &mut self.role,
                             |ui, value| {
-                                squelch(ui.add(
-                                    TextEdit::singleline(value).hint_text("provider/model:tag"),
-                                ));
+                                egui::ComboBox::from_id_salt("Profile")
+                                    .selected_text(value.to_string())
+                                    .show_ui(ui, |ui| {
+                                        for key in ModelRole::iter() {
+                                            if !matches!(key, ModelRole::Custom(_)) {
+                                                ui.selectable_value(
+                                                    value,
+                                                    key.clone(),
+                                                    key.to_string(),
+                                                );
+                                            }
+                                        }
+                                    });
                             },
                         );
                     } else {
@@ -554,655 +580,706 @@ mod legacy {
             self.in_kinds(pin_id).first().unwrap().default_pin()
         }
     }
-}
 
-#[skip_serializing_none]
-#[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
-pub struct RoleAgent {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub name: String,
-
-    pub role: Option<ModelRole>,
-
-    pub preamble: Option<String>,
-
-    pub temperature: Option<E64>,
-
-    pub size: Option<crate::utils::EVec2>,
-}
-
-#[typetag::serde]
-impl FlexNode for RoleAgent {}
-
-impl DynNode for RoleAgent {
-    fn title(&self) -> &str {
-        if self.name.is_empty() {
-            "Agent"
-        } else {
-            &self.name
+    impl UiNode for ChatContext {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other
+                .downcast_ref::<Self>()
+                .is_some_and(|other| self.context_doc == other.context_doc)
         }
-    }
 
-    fn inputs(&self) -> usize {
-        5
-    }
-
-    fn outputs(&self) -> usize {
-        1
-    }
-
-    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
-        Cow::Borrowed(match in_pin {
-            0 => &[ValueKind::Agent],
-            1 => &[ValueKind::Text],
-            2 => &[ValueKind::Number],
-            3 => &[ValueKind::Tools],
-            4 => &[ValueKind::Text],
-            _ => ValueKind::all(),
-        })
-    }
-
-    fn out_kind(&self, out_pin: usize) -> ValueKind {
-        match out_pin {
-            0 => ValueKind::Agent,
-            _ => unreachable!(),
+        fn tooltip(&self) -> &str {
+            "Provide background context in the chat"
         }
-    }
 
-    fn execute(
-        &mut self,
-        ctx: &RunContext,
-        _node_id: egui_snarl::NodeId,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        self.validate(&inputs)?;
+        fn preview(&self, _out_pin: usize) -> Value {
+            Value::Placeholder(ValueKind::Agent)
+        }
 
-        let agent = match &inputs[0] {
-            Some(Value::Agent(spec)) => Some(spec.clone()),
-            None => None,
-            _ => unreachable!(),
-        };
+        fn show_output(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    ui.label("agent");
+                }
+                _ => unreachable!(),
+            }
+            self.out_kind(pin_id).default_pin()
+        }
 
-        let role = match &inputs[1] {
-            Some(Value::Text(name)) => Some(
-                ModelRole::from_str(name.as_str())
-                    .map_err(|_| WorkflowError::Conversion(format!("Unknown role: {name}")))?,
-            ),
-            None if self.role.is_some() => self.role.clone(),
-            None if agent.is_none() => Some(Default::default()),
-            None => None,
-            _ => unreachable!(),
-        };
+        fn show_input(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+            remote: Option<Value>,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                // TODO: Toggle enabling each field to override existing. If no agent input connected,
+                // do not allow toggling
+                0 => {
+                    ui.label("agent").on_hover_text(
+                        "An existing agent to modify.\nNOTE: tools cannot be carried over.",
+                    );
+                }
+                1 => {
+                    return ui
+                        .vertical(|ui| {
+                            if remote.is_none() {
+                                resizable_frame(&mut self.size, ui, |ui| {
+                                    egui::ScrollArea::vertical().auto_shrink(false).show(
+                                        ui,
+                                        |ui| {
+                                            let buffer = Arc::make_mut(&mut self.context_doc);
+                                            let widget = egui::TextEdit::multiline(buffer)
+                                                .id_salt("context")
+                                                .desired_width(f32::INFINITY)
+                                                .hint_text("context");
 
-        let temperature = match &inputs[2] {
-            Some(Value::Number(temp)) => Some(*temp),
-            None => self.temperature,
-            _ => unreachable!(),
-        };
-
-        let toolset = match &inputs[3] {
-            Some(Value::Tools(tools)) => Some(tools.clone()),
-            None => None,
-            _ => unreachable!(),
-        };
-
-        let preamble = match &inputs[4] {
-            Some(Value::Text(text)) => Some((**text).clone()),
-            None => self.preamble.clone(),
-            _ => unreachable!(),
-        };
-
-        let mut agent = agent.unwrap_or_default();
-        let builder = Arc::make_mut(&mut agent);
-
-        if let Some(role) = role {
-            let resolved = match &role {
-                ModelRole::Custom(name) => name,
-                _ => ctx
-                    .models
-                    .get(&role)
-                    .or_else(|| ctx.models.get(&ModelRole::Default))
-                    .with_context(|| format!("Could not resolve model for role {role:?}"))?,
+                                            squelch(
+                                                ui.add_sized(ui.available_size(), widget)
+                                                    .on_hover_text("Background context"),
+                                            );
+                                        },
+                                    );
+                                });
+                                self.ghost_pin(ValueKind::Text.color())
+                            } else {
+                                ui.label("context");
+                                ValueKind::Text.default_pin()
+                            }
+                        })
+                        .inner;
+                }
+                _ => unreachable!(),
             };
 
-            tracing::debug!("Resolved role {role:?} to model {resolved}");
+            self.in_kinds(pin_id).first().unwrap().default_pin()
+        }
+    }
 
-            builder.model(resolved.to_owned());
+    impl UiNode for InvokeTool {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other.downcast_ref::<Self>().is_some_and(|other| {
+                self.tool_name == other.tool_name && self.arguments == other.arguments
+            })
         }
 
-        if let Some(temp) = temperature {
-            tracing::debug!("Setting agent temperature {temp}");
-            builder.temperature(temp);
+        fn show_output(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    ui.label("history");
+                }
+                1 => {
+                    ui.label("response");
+                }
+                2 => {
+                    ui.label("output");
+                }
+                3 => {
+                    ui.label("failure");
+                }
+                _ => unreachable!(),
+            }
+            self.out_kind(pin_id).default_pin()
         }
 
-        if let Some(preamble) = &preamble {
-            tracing::debug!("Setting agent preamble {preamble}");
-            builder.preamble(preamble.clone());
+        fn show_input(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+            remote: Option<Value>,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    ui.label("history");
+                }
+                1 => {
+                    ui.label("tools");
+                }
+                2 => {
+                    if remote.is_none() {
+                        squelch(
+                            ui.add(
+                                TextEdit::singleline(&mut self.tool_name).hint_text("tool name"),
+                            ),
+                        );
+                    } else {
+                        ui.label("tool name");
+                    }
+                }
+                3 => {
+                    if remote.is_none() {
+                        resizable_frame(&mut self.size, ui, |ui| {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                json::json_editor(ui, &mut self.arguments, Some("arguments"));
+                            });
+                        });
+                    } else {
+                        ui.label("arguments");
+                    }
+                }
+                _ => unreachable!(),
+            };
+
+            self.in_kinds(pin_id).first().unwrap().default_pin()
         }
 
-        if let Some(tools) = toolset {
-            builder.tools(tools);
+        fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+            codex.remote_theme()
         }
 
-        Ok(vec![Value::Agent(agent)])
+        fn icon(&self) -> Option<&str> {
+            Some(egui_phosphor::regular::WRENCH)
+        }
     }
 }
 
-#[cfg(feature = "ui")]
-impl UiNode for RoleAgent {
-    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
-        other.downcast_ref::<Self>().is_some_and(|other| {
-            self.role == other.role
-                && self.preamble == other.preamble
-                && self.temperature == other.temperature
-        })
-    }
+#[cfg(feature = "native")]
+mod forward {
+    use std::str::FromStr as _;
 
-    fn title_mut(&mut self) -> Option<&mut String> {
-        Some(&mut self.name)
-    }
+    use anyhow::Context as _;
+    use egui_snarl::NodeId;
 
-    fn tooltip(&self) -> &str {
-        "Create or modify an LLM Agent."
-    }
+    use super::*;
 
-    fn preview(&self, _out_pin: usize) -> Value {
-        Value::Placeholder(ValueKind::Agent)
-    }
+    use crate::{
+        rig::message::Message,
+        toolbox::ChainTool,
+        utils::message_text,
+        workflow::{RunContext, WorkflowError, with_deadline},
+    };
 
-    fn show_output(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                ui.label("agent");
+    impl Tools {
+        pub fn forward(
+            &mut self,
+            ctx: &RunContext,
+            node_id: NodeId,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            use crate::rig::tool::Tool as _;
+            let _ = (ctx, node_id, inputs);
+            let toolbox = &ctx.agent_factory.toolbox;
+            let mut toolset = self.toolset.as_ref().clone();
+            if ctx.is_subgraph {
+                toolset = toolbox.toggle_provider(&toolset, ChainTool::NAME, Ternary::None);
+            } else {
+                let providers = toolbox.providers.load();
+                if let Some(chainer) = providers.get(ChainTool::NAME) {
+                    for tool in chainer.all_tool_names() {
+                        if tool != ChainBreaker::NAME && !ctx.metadata.chain.contains(&*tool) {
+                            toolset = toolbox.toggle_tool(&toolset, ChainTool::NAME, &tool, false);
+                        }
+                    }
+                }
             }
-            _ => unreachable!(),
+
+            Ok(vec![Value::Tools(Arc::new(toolset))])
         }
-        self.out_kind(pin_id).default_pin()
     }
 
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            // TODO: Toggle enabling each field to override existing. If no agent input connected,
-            // do not allow toggling
-            0 => {
-                ui.label("Agent")
-                    .on_hover_text("An existing agent to modify.");
-            }
-            1 => {
-                if remote.is_none() {
-                    crate::ui::toggled_field(
-                        ui,
-                        "M",
-                        Some("role used to resolve model from settings"),
-                        &mut self.role,
-                        |ui, value| {
-                            egui::ComboBox::from_id_salt("Profile")
-                                .selected_text(value.to_string())
-                                .show_ui(ui, |ui| {
-                                    for key in ModelRole::iter() {
-                                        if !matches!(key, ModelRole::Custom(_)) {
-                                            ui.selectable_value(
-                                                value,
-                                                key.clone(),
-                                                key.to_string(),
-                                            );
-                                        }
-                                    }
-                                });
-                        },
-                    );
-                } else {
-                    ui.label("model");
-                }
-            }
-            2 => {
-                if remote.is_none() {
-                    crate::ui::toggled_field(
-                        ui,
-                        "T",
-                        Some("temperature"),
-                        &mut self.temperature,
-                        |ui, value| {
-                            let mut temp = value.into_inner();
+    impl RoleAgent {
+        pub fn forward(
+            &mut self,
+            ctx: &RunContext,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            let agent = match &inputs[0] {
+                Some(Value::Agent(spec)) => Some(spec.clone()),
+                None => None,
+                _ => unreachable!(),
+            };
 
-                            let widget = egui::Slider::new(&mut temp, 0.0..=1.0);
-                            ui.add(widget);
-                            *value = E64::assert(temp);
-                        },
-                    );
-                } else {
-                    ui.label("temperature");
+            let role = match &inputs[1] {
+                Some(Value::Text(name)) => Some(
+                    ModelRole::from_str(name.as_str())
+                        .map_err(|_| WorkflowError::Conversion(format!("Unknown role: {name}")))?,
+                ),
+                None if self.role.is_some() => self.role.clone(),
+                None if agent.is_none() => Some(Default::default()),
+                None => None,
+                _ => unreachable!(),
+            };
+
+            let temperature = match &inputs[2] {
+                Some(Value::Number(temp)) => Some(*temp),
+                None => self.temperature,
+                _ => unreachable!(),
+            };
+
+            let toolset = match &inputs[3] {
+                Some(Value::Tools(tools)) => Some(tools.clone()),
+                None => None,
+                _ => unreachable!(),
+            };
+
+            let preamble = match &inputs[4] {
+                Some(Value::Text(text)) => Some((**text).clone()),
+                None => self.preamble.clone(),
+                _ => unreachable!(),
+            };
+
+            let mut agent = agent.unwrap_or_default();
+            let builder = Arc::make_mut(&mut agent);
+
+            if let Some(role) = role {
+                let resolved = match &role {
+                    ModelRole::Custom(name) => name,
+                    _ => ctx
+                        .models
+                        .get(&role)
+                        .or_else(|| ctx.models.get(&ModelRole::Default))
+                        .with_context(|| format!("Could not resolve model for role {role:?}"))?,
+                };
+
+                tracing::debug!("Resolved role {role:?} to model {resolved}");
+
+                builder.model(resolved.to_owned());
+            }
+
+            if let Some(temp) = temperature {
+                tracing::debug!("Setting agent temperature {temp}");
+                builder.temperature(temp);
+            }
+
+            if let Some(preamble) = &preamble {
+                tracing::debug!("Setting agent preamble {preamble}");
+                builder.preamble(preamble.clone());
+            }
+
+            if let Some(tools) = toolset {
+                builder.tools(tools);
+            }
+
+            Ok(vec![Value::Agent(agent)])
+        }
+    }
+
+    impl ChatContext {
+        pub fn forward(&mut self, inputs: Vec<Option<Value>>) -> Result<Vec<Value>, WorkflowError> {
+            let mut agent_spec = match &inputs[0] {
+                Some(Value::Agent(spec)) => spec.clone(),
+                None => Err(WorkflowError::Required(vec!["Agent is required".into()]))?,
+                _ => unreachable!(),
+            };
+
+            use itertools::Itertools;
+            let context_doc = match &inputs[1] {
+                Some(Value::Text(text)) => text.clone(),
+                Some(Value::TextList(texts)) => {
+                    let value: String =
+                        Itertools::intersperse(texts.iter().map(|s| s.as_str()), "\n\n---\n\n")
+                            .collect();
+                    Arc::new(value)
                 }
+                Some(Value::Message(value)) => Arc::new(message_text(value)),
+                Some(Value::Json(value)) => {
+                    let data = serde_json::to_string(value)
+                        .map_err(|e| WorkflowError::Conversion(format!("Invalid JSON: {e:?}")))?;
+                    Arc::new(data)
+                }
+                None => self.context_doc.clone(),
+                _ => unreachable!(),
+            };
+
+            Arc::make_mut(&mut agent_spec).context_doc(context_doc);
+
+            Ok(vec![Value::Agent(agent_spec)])
+        }
+    }
+
+    impl InvokeTool {
+        pub async fn forward(
+            &mut self,
+            run_ctx: &RunContext,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            self.validate(&inputs)?;
+
+            let chat = match &inputs[0] {
+                Some(Value::Chat(history)) => Some(history),
+                None => None,
+                _ => unreachable!(),
+            };
+
+            let toolset = match &inputs[1] {
+                Some(Value::Tools(spec)) => spec.clone(),
+                None => Err(WorkflowError::Required(vec!["Toolset is required".into()]))?,
+                _ => unreachable!(),
+            };
+
+            let rig_tools = run_ctx.agent_factory.toolbox.get_tools(&toolset).run();
+            let tool_defs = rig_tools.get_tool_defs(None).await.unwrap_or_default();
+            tracing::debug!("Tool definitions {:?}", &tool_defs);
+
+            let single_tool = if let [tool] = tool_defs.as_slice() {
+                Some(tool.name.clone())
+            } else {
+                None
+            };
+
+            // TODO: infer if only one tool on the agent
+            let tool_name = match &inputs[2] {
+                Some(Value::Text(text)) => text.as_str(),
+                None if !self.tool_name.is_empty() => self.tool_name.as_str(),
+                None if single_tool.is_some() => single_tool.as_ref().unwrap(),
+                None => Err(WorkflowError::Required(vec!["Tool name required".into()]))?,
+                _ => unreachable!(),
+            };
+
+            let args = match &inputs[3] {
+                Some(Value::Json(value)) => value.clone(),
+                None if !self.arguments.is_empty() => Arc::new(
+                    serde_json::from_str(&self.arguments)
+                        .map_err(|e| WorkflowError::Conversion(format!("Invalid JSON: {e:?}")))?,
+                ),
+                None => Arc::new(serde_json::Value::Object(Default::default())),
+                _ => unreachable!(),
+            };
+
+            let mut tool_ctx = Default::default();
+            let tool_args = serde_json::to_string(&args)
+                .map_err(|e| anyhow::anyhow!("Could not serialize args: {e:?}"))?;
+            let future = rig_tools.execute(tool_name, &tool_args, &mut tool_ctx);
+            let timeout = run_ctx.agent_factory.toolbox.timeout(&toolset, tool_name);
+            let tool_result = with_deadline(future, timeout, run_ctx.deadline).await?;
+
+            let Some(tool_output) = tool_result.output().as_text() else {
+                return Err(WorkflowError::Unknown("Could not get tool output".into()));
+            };
+            let msg = Arc::new(Message::tool_result(tool_name, tool_output));
+
+            let history = if let Some(chat) = chat {
+                let chat = chat.extend(vec![Ok(msg.clone()).into()])?;
+                Value::Chat(Arc::new(chat.into_owned()))
+            } else {
+                Value::Placeholder(ValueKind::Chat)
+            };
+
+            Ok(vec![
+                history,
+                Value::Message(msg),
+                Value::Text(Arc::new(tool_output.to_string())),
+                Value::Placeholder(ValueKind::Failure),
+            ])
+        }
+    }
+}
+
+#[allow(deprecated)]
+mod legacy {
+    #[cfg(feature = "native")]
+    use crate::workflow::{RunContext, WorkflowError};
+
+    use super::*;
+
+    #[deprecated = "Use TaggedAgent"]
+    #[skip_serializing_none]
+    #[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
+    pub struct AgentNode {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        pub name: String,
+
+        pub model: Option<String>,
+
+        pub preamble: Option<String>,
+
+        pub temperature: Option<E64>,
+
+        pub size: Option<crate::utils::EVec2>,
+    }
+
+    #[typetag::serde]
+    impl FlexNode for AgentNode {}
+
+    impl DynNode for AgentNode {
+        fn title(&self) -> &str {
+            if self.name.is_empty() {
+                "Agent (Deprecated)"
+            } else {
+                &self.name
             }
-            3 => {
-                ui.label("Tools");
+        }
+
+        fn inputs(&self) -> usize {
+            5
+        }
+
+        fn outputs(&self) -> usize {
+            1
+        }
+
+        fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
+            Cow::Borrowed(match in_pin {
+                0 => &[ValueKind::Agent],
+                1 => &[ValueKind::Text],
+                2 => &[ValueKind::Number],
+                3 => &[ValueKind::Tools],
+                4 => &[ValueKind::Text],
+                _ => ValueKind::all(),
+            })
+        }
+
+        fn out_kind(&self, out_pin: usize) -> ValueKind {
+            match out_pin {
+                0 => ValueKind::Agent,
+                _ => unreachable!(),
             }
-            4 => {
-                if remote.is_none() {
-                    let help = "system message\n\
+        }
+
+        #[cfg(feature = "native")]
+        fn execute(
+            &mut self,
+            ctx: &RunContext,
+            _node_id: egui_snarl::NodeId,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            self.validate(&inputs)?;
+
+            self.fun_name(ctx, inputs)
+        }
+    }
+
+    #[cfg(feature = "native")]
+    mod forward {
+        use super::*;
+
+        use std::str::FromStr as _;
+
+        use crate::workflow::WorkflowError;
+
+        impl AgentNode {
+            pub fn fun_name(
+                &mut self,
+                ctx: &super::RunContext,
+                inputs: Vec<Option<Value>>,
+            ) -> Result<Vec<Value>, super::WorkflowError> {
+                let agent = match &inputs[0] {
+                    Some(Value::Agent(spec)) => Some(spec.clone()),
+                    None => None,
+                    _ => unreachable!(),
+                };
+
+                let model = match &inputs[1] {
+                    Some(Value::Text(name)) => Some((**name).clone()),
+                    None => self.model.clone(),
+                    _ => unreachable!(),
+                };
+
+                if agent.is_none() && model.is_none() {
+                    return Err(WorkflowError::Required(vec![
+                        "Either model name or an existing agent is required.".into(),
+                    ]));
+                }
+
+                let temperature = match &inputs[2] {
+                    Some(Value::Number(temp)) => Some(*temp),
+                    None => self.temperature,
+                    _ => unreachable!(),
+                };
+
+                let toolset = match &inputs[3] {
+                    Some(Value::Tools(tools)) => Some(tools.clone()),
+                    None => None,
+                    _ => unreachable!(),
+                };
+
+                let preamble = match &inputs[4] {
+                    Some(Value::Text(text)) => Some((**text).clone()),
+                    None => self.preamble.clone(),
+                    _ => unreachable!(),
+                };
+
+                let mut agent = agent.unwrap_or_default();
+                let builder = Arc::make_mut(&mut agent);
+
+                if let Some(model) = model {
+                    use anyhow::Context as _;
+
+                    let Ok(role) = ModelRole::from_str(&model);
+                    let model = match role {
+                        ModelRole::Custom(name) => name,
+                        _ => ctx
+                            .models
+                            .get(&role)
+                            .or_else(|| ctx.models.get(&ModelRole::Default))
+                            .with_context(|| format!("Could not resolve model for role {role}"))?
+                            .to_owned(),
+                    };
+
+                    tracing::debug!("Building agent with model {model}");
+                    builder.model(model);
+                }
+
+                if let Some(temp) = temperature {
+                    tracing::debug!("Setting agent temperature {temp}");
+                    builder.temperature(temp);
+                }
+
+                if let Some(preamble) = &preamble {
+                    tracing::debug!("Setting agent preamble {preamble}");
+                    builder.preamble(preamble.clone());
+                }
+
+                if let Some(tools) = toolset {
+                    builder.tools(tools);
+                }
+
+                Ok(vec![Value::Agent(agent)])
+            }
+        }
+    }
+
+    #[cfg(feature = "ui")]
+    mod gui {
+        use super::*;
+
+        use egui::TextEdit;
+
+        use crate::{
+            ui::{resizable_frame, shortcuts::squelch},
+            workflow::{EditContext, UiNode},
+        };
+
+        impl UiNode for AgentNode {
+            fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+                other.downcast_ref::<Self>().is_some_and(|other| {
+                    self.model == other.model
+                        && self.preamble == other.preamble
+                        && self.temperature == other.temperature
+                })
+            }
+
+            fn title_mut(&mut self) -> Option<&mut String> {
+                Some(&mut self.name)
+            }
+
+            fn tooltip(&self) -> &str {
+                "Create or modify an LLM Agent."
+            }
+
+            fn preview(&self, _out_pin: usize) -> Value {
+                Value::Placeholder(ValueKind::Agent)
+            }
+
+            fn show_output(
+                &mut self,
+                ui: &mut egui::Ui,
+                _ctx: &EditContext,
+                pin_id: usize,
+            ) -> egui_snarl::ui::PinInfo {
+                match pin_id {
+                    0 => {
+                        ui.label("agent");
+                    }
+                    _ => unreachable!(),
+                }
+                self.out_kind(pin_id).default_pin()
+            }
+
+            fn show_input(
+                &mut self,
+                ui: &mut egui::Ui,
+                _ctx: &EditContext,
+                pin_id: usize,
+                remote: Option<Value>,
+            ) -> egui_snarl::ui::PinInfo {
+                match pin_id {
+                    // TODO: Toggle enabling each field to override existing. If no agent input connected,
+                    // do not allow toggling
+                    0 => {
+                        ui.label("Agent")
+                            .on_hover_text("An existing agent to modify.");
+                    }
+                    1 => {
+                        if remote.is_none() {
+                            crate::ui::toggled_field(
+                                ui,
+                                "M",
+                                Some("model"),
+                                &mut self.model,
+                                |ui, value| {
+                                    squelch(ui.add(
+                                        TextEdit::singleline(value).hint_text("provider/model:tag"),
+                                    ));
+                                },
+                            );
+                        } else {
+                            ui.label("model");
+                        }
+                    }
+                    2 => {
+                        if remote.is_none() {
+                            crate::ui::toggled_field(
+                                ui,
+                                "T",
+                                Some("temperature"),
+                                &mut self.temperature,
+                                |ui, value| {
+                                    let mut temp = value.into_inner();
+
+                                    let widget = egui::Slider::new(&mut temp, 0.0..=1.0);
+                                    ui.add(widget);
+                                    *value = E64::assert(temp);
+                                },
+                            );
+                        } else {
+                            ui.label("temperature");
+                        }
+                    }
+                    3 => {
+                        ui.label("Tools");
+                    }
+                    4 => {
+                        if remote.is_none() {
+                            let help = "system message\n\
                         \n\
                         Instructions to the agent outside the flow of conversation.\n\
                         Can include hints about its role, personality or formatting requirements.";
-                    crate::ui::toggled_field(
-                        ui,
-                        "S",
-                        Some(help),
-                        &mut self.preamble,
-                        |ui, value| {
-                            resizable_frame(&mut self.size, ui, |ui| {
-                                egui::ScrollArea::vertical()
-                                    .auto_shrink(false)
-                                    .show(ui, |ui| {
-                                        let widget = egui::TextEdit::multiline(value)
-                                            .id_salt("sysmesg")
-                                            .desired_width(f32::INFINITY)
-                                            .hint_text("system message");
+                            crate::ui::toggled_field(
+                                ui,
+                                "S",
+                                Some(help),
+                                &mut self.preamble,
+                                |ui, value| {
+                                    resizable_frame(&mut self.size, ui, |ui| {
+                                        egui::ScrollArea::vertical().auto_shrink(false).show(
+                                            ui,
+                                            |ui| {
+                                                let widget = egui::TextEdit::multiline(value)
+                                                    .id_salt("sysmesg")
+                                                    .desired_width(f32::INFINITY)
+                                                    .hint_text("system message");
 
-                                        squelch(
-                                            ui.add_sized(ui.available_size(), widget)
-                                                .on_hover_text(help),
+                                                squelch(
+                                                    ui.add_sized(ui.available_size(), widget)
+                                                        .on_hover_text(help),
+                                                );
+                                            },
                                         );
                                     });
-                            });
-                        },
-                    );
-                } else {
-                    ui.label("preamble");
-                }
-            }
-            _ => unreachable!(),
-        };
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-}
-
-#[skip_serializing_none]
-#[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
-pub struct ChatContext {
-    pub context_doc: Arc<String>,
-
-    pub size: Option<crate::utils::EVec2>,
-}
-
-#[typetag::serde]
-impl FlexNode for ChatContext {}
-
-impl DynNode for ChatContext {
-    fn title(&self) -> &str {
-        "Context"
-    }
-
-    fn inputs(&self) -> usize {
-        2
-    }
-
-    fn outputs(&self) -> usize {
-        1
-    }
-
-    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
-        use ValueKind::*;
-        Cow::Borrowed(match in_pin {
-            0 => &[Agent],
-            1 => &[Text, TextList, Message, Json],
-            _ => ValueKind::all(),
-        })
-    }
-
-    fn out_kind(&self, out_pin: usize) -> ValueKind {
-        match out_pin {
-            0 => ValueKind::Agent,
-            _ => unreachable!(),
-        }
-    }
-
-    fn execute(
-        &mut self,
-        _ctx: &RunContext,
-        _node_id: egui_snarl::NodeId,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        self.validate(&inputs)?;
-
-        let mut agent_spec = match &inputs[0] {
-            Some(Value::Agent(spec)) => spec.clone(),
-            None => Err(WorkflowError::Required(vec!["Agent is required".into()]))?,
-            _ => unreachable!(),
-        };
-
-        use itertools::Itertools;
-        let context_doc = match &inputs[1] {
-            Some(Value::Text(text)) => text.clone(),
-            Some(Value::TextList(texts)) => {
-                let value: String =
-                    Itertools::intersperse(texts.iter().map(|s| s.as_str()), "\n\n---\n\n")
-                        .collect();
-                Arc::new(value)
-            }
-            Some(Value::Message(value)) => Arc::new(message_text(value)),
-            Some(Value::Json(value)) => {
-                let data = serde_json::to_string(value)
-                    .map_err(|e| WorkflowError::Conversion(format!("Invalid JSON: {e:?}")))?;
-                Arc::new(data)
-            }
-            None => self.context_doc.clone(),
-            _ => unreachable!(),
-        };
-
-        Arc::make_mut(&mut agent_spec).context_doc(context_doc);
-
-        Ok(vec![Value::Agent(agent_spec)])
-    }
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for ChatContext {
-    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
-        other
-            .downcast_ref::<Self>()
-            .is_some_and(|other| self.context_doc == other.context_doc)
-    }
-
-    fn tooltip(&self) -> &str {
-        "Provide background context in the chat"
-    }
-
-    fn preview(&self, _out_pin: usize) -> Value {
-        Value::Placeholder(ValueKind::Agent)
-    }
-
-    fn show_output(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                ui.label("agent");
-            }
-            _ => unreachable!(),
-        }
-        self.out_kind(pin_id).default_pin()
-    }
-
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            // TODO: Toggle enabling each field to override existing. If no agent input connected,
-            // do not allow toggling
-            0 => {
-                ui.label("agent").on_hover_text(
-                    "An existing agent to modify.\nNOTE: tools cannot be carried over.",
-                );
-            }
-            1 => {
-                return ui
-                    .vertical(|ui| {
-                        if remote.is_none() {
-                            resizable_frame(&mut self.size, ui, |ui| {
-                                egui::ScrollArea::vertical()
-                                    .auto_shrink(false)
-                                    .show(ui, |ui| {
-                                        let buffer = Arc::make_mut(&mut self.context_doc);
-                                        let widget = egui::TextEdit::multiline(buffer)
-                                            .id_salt("context")
-                                            .desired_width(f32::INFINITY)
-                                            .hint_text("context");
-
-                                        squelch(
-                                            ui.add_sized(ui.available_size(), widget)
-                                                .on_hover_text("Background context"),
-                                        );
-                                    });
-                            });
-                            self.ghost_pin(ValueKind::Text.color())
+                                },
+                            );
                         } else {
-                            ui.label("context");
-                            ValueKind::Text.default_pin()
+                            ui.label("preamble");
                         }
-                    })
-                    .inner;
+                    }
+                    _ => unreachable!(),
+                };
+
+                self.in_kinds(pin_id).first().unwrap().default_pin()
             }
-            _ => unreachable!(),
-        };
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-}
-
-#[skip_serializing_none]
-#[derive(Default, Debug, Clone, Deserialize, Serialize, Hash, PartialEq, Eq)]
-pub struct InvokeTool {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub tool_name: String,
-
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub arguments: String,
-
-    #[serde(default)]
-    pub size: Option<crate::utils::EVec2>,
-}
-
-#[typetag::serde]
-impl FlexNode for InvokeTool {}
-
-impl DynNode for InvokeTool {
-    fn title(&self) -> &str {
-        "Invoke Tool"
-    }
-
-    fn inputs(&self) -> usize {
-        4
-    }
-
-    fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
-        Cow::Borrowed(match in_pin {
-            0 => &[ValueKind::Chat],
-            1 => &[ValueKind::Tools],
-            2 => &[ValueKind::Text],
-            3 => &[ValueKind::Json],
-            _ => ValueKind::all(),
-        })
-    }
-
-    fn outputs(&self) -> usize {
-        4
-    }
-
-    fn out_kind(&self, out_pin: usize) -> ValueKind {
-        match out_pin {
-            0 => ValueKind::Chat,
-            1 => ValueKind::Message,
-            2 => ValueKind::Text,
-            3 => ValueKind::Failure,
-            _ => unreachable!(),
         }
-    }
-
-    fn execute(
-        &mut self,
-        ctx: &RunContext,
-        node_id: egui_snarl::NodeId,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        let _ = (node_id,);
-        let rt = ctx.runtime.clone();
-        rt.block_on(self.forward(ctx, inputs))
-    }
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for InvokeTool {
-    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
-        other.downcast_ref::<Self>().is_some_and(|other| {
-            self.tool_name == other.tool_name && self.arguments == other.arguments
-        })
-    }
-
-    fn show_output(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                ui.label("history");
-            }
-            1 => {
-                ui.label("response");
-            }
-            2 => {
-                ui.label("output");
-            }
-            3 => {
-                ui.label("failure");
-            }
-            _ => unreachable!(),
-        }
-        self.out_kind(pin_id).default_pin()
-    }
-
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                ui.label("history");
-            }
-            1 => {
-                ui.label("tools");
-            }
-            2 => {
-                if remote.is_none() {
-                    squelch(
-                        ui.add(TextEdit::singleline(&mut self.tool_name).hint_text("tool name")),
-                    );
-                } else {
-                    ui.label("tool name");
-                }
-            }
-            3 => {
-                if remote.is_none() {
-                    resizable_frame(&mut self.size, ui, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            super::json::json_editor(ui, &mut self.arguments, Some("arguments"));
-                        });
-                    });
-                } else {
-                    ui.label("arguments");
-                }
-            }
-            _ => unreachable!(),
-        };
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-
-    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
-        codex.remote_theme()
-    }
-
-    fn icon(&self) -> Option<&str> {
-        Some(egui_phosphor::regular::WRENCH)
-    }
-}
-
-impl InvokeTool {
-    pub async fn forward(
-        &mut self,
-        run_ctx: &RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        self.validate(&inputs)?;
-
-        let chat = match &inputs[0] {
-            Some(Value::Chat(history)) => Some(history),
-            None => None,
-            _ => unreachable!(),
-        };
-
-        let toolset = match &inputs[1] {
-            Some(Value::Tools(spec)) => spec.clone(),
-            None => Err(WorkflowError::Required(vec!["Toolset is required".into()]))?,
-            _ => unreachable!(),
-        };
-
-        let rig_tools = run_ctx.agent_factory.toolbox.get_tools(&toolset).run();
-        let tool_defs = rig_tools.get_tool_defs(None).await.unwrap_or_default();
-        tracing::debug!("Tool definitions {:?}", &tool_defs);
-
-        let single_tool = if let [tool] = tool_defs.as_slice() {
-            Some(tool.name.clone())
-        } else {
-            None
-        };
-
-        // TODO: infer if only one tool on the agent
-        let tool_name = match &inputs[2] {
-            Some(Value::Text(text)) => text.as_str(),
-            None if !self.tool_name.is_empty() => self.tool_name.as_str(),
-            None if single_tool.is_some() => single_tool.as_ref().unwrap(),
-            None => Err(WorkflowError::Required(vec!["Tool name required".into()]))?,
-            _ => unreachable!(),
-        };
-
-        let args = match &inputs[3] {
-            Some(Value::Json(value)) => value.clone(),
-            None if !self.arguments.is_empty() => Arc::new(
-                serde_json::from_str(&self.arguments)
-                    .map_err(|e| WorkflowError::Conversion(format!("Invalid JSON: {e:?}")))?,
-            ),
-            None => Arc::new(serde_json::Value::Object(Default::default())),
-            _ => unreachable!(),
-        };
-
-        let mut tool_ctx = Default::default();
-        let tool_args = serde_json::to_string(&args)
-            .map_err(|e| anyhow::anyhow!("Could not serialize args: {e:?}"))?;
-        let future = rig_tools.execute(tool_name, &tool_args, &mut tool_ctx);
-        let timeout = run_ctx.agent_factory.toolbox.timeout(&toolset, tool_name);
-        let tool_result = with_deadline(future, timeout, run_ctx.deadline).await?;
-
-        let Some(tool_output) = tool_result.output().as_text() else {
-            return Err(WorkflowError::Unknown("Could not get tool output".into()));
-        };
-        let msg = Arc::new(Message::tool_result(tool_name, tool_output));
-
-        let history = if let Some(chat) = chat {
-            let chat = chat.extend(vec![Ok(msg.clone()).into()])?;
-            Value::Chat(Arc::new(chat.into_owned()))
-        } else {
-            Value::Placeholder(ValueKind::Chat)
-        };
-
-        Ok(vec![
-            history,
-            Value::Message(msg),
-            Value::Text(Arc::new(tool_output.to_string())),
-            Value::Placeholder(ValueKind::Failure),
-        ])
     }
 }

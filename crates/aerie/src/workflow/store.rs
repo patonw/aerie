@@ -1,27 +1,27 @@
-use std::{
-    borrow::Cow,
-    collections::BTreeMap,
-    fs::OpenOptions,
-    hash::DefaultHasher,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::SystemTime,
-};
+#![cfg_attr(feature = "web-ui", allow(unused))]
 
 use arc_swap::ArcSwap;
-use itertools::Itertools;
-use serde_yaml_ng as serde_yml;
+use std::{borrow::Cow, collections::BTreeMap, path::PathBuf, sync::Arc, time::SystemTime};
 
-use crate::{
-    storage::CachedDirStore,
-    workflow::{GraphId, Workflow},
-};
+#[cfg(feature = "native")]
+use itertools::Itertools;
+#[cfg(feature = "native")]
+use serde_yaml_ng as serde_yml;
+#[cfg(feature = "native")]
+use std::{fs::OpenOptions, hash::DefaultHasher, path::Path};
+
+#[cfg(feature = "native")]
+use crate::storage::CachedDirStore;
+use crate::workflow::{GraphId, ShadowMeta, Workflow};
 
 pub trait WorkflowStore {
     fn load(&self, name: &str) -> anyhow::Result<Workflow>;
     fn save(&mut self, name: &str, value: Workflow) -> anyhow::Result<()>;
     fn names(&self) -> impl Iterator<Item = Cow<'_, str>>;
-    fn exists(&self, key: &str) -> bool;
+    fn exists(&self, key: &str) -> bool {
+        self.names().any(|n| n.as_ref() == key)
+    }
+
     fn description(&'_ self, key: &str) -> Cow<'_, str>;
     fn schema(&'_ self, key: &str) -> Cow<'_, str>;
 
@@ -50,6 +50,7 @@ pub struct WorkflowStoreFile {
     workflows: BTreeMap<String, Workflow>,
 }
 
+#[cfg(feature = "native")]
 impl WorkflowStoreFile {
     #[deprecated]
     /// Loads all workflows into memory
@@ -95,6 +96,7 @@ impl WorkflowStoreFile {
     }
 }
 
+#[cfg(feature = "native")]
 impl WorkflowStore for WorkflowStoreFile {
     // type Graph = WorkGraph;
 
@@ -195,6 +197,7 @@ pub struct WorkflowStoreDir {
     cache: Arc<ArcSwap<im::OrdMap<String, (SystemTime, Workflow)>>>,
 }
 
+#[cfg(feature = "native")]
 impl WorkflowStoreDir {
     pub fn init(dir: impl AsRef<Path>, tutorial: bool) -> anyhow::Result<Self> {
         let path = dir.as_ref().to_path_buf();
@@ -204,18 +207,18 @@ impl WorkflowStoreDir {
             cache: Default::default(),
         };
 
-        let names = CachedDirStore::names(&this).collect_vec();
+        let names = CachedDirStore::scan_names(&this).collect_vec();
         tracing::info!("Discovered workflows: {names:?}");
 
         if tutorial && names.iter().all(|n| n == "__default__") {
             let bytes = include_bytes!("../../../../examples/workflows/beginner/basic.yml");
             if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
-                let _ = CachedDirStore::save(&this, "basic", graph);
+                let _ = CachedDirStore::save(&this, "basic", &graph);
             }
 
             let bytes = include_bytes!("../../../../examples/workflows/beginner/chatty.yml");
             if let Ok(graph) = serde_yml::from_slice::<Workflow>(bytes) {
-                let _ = CachedDirStore::save(&this, "chatty", graph);
+                let _ = CachedDirStore::save(&this, "chatty", &graph);
             }
         }
 
@@ -226,6 +229,7 @@ impl WorkflowStoreDir {
     }
 }
 
+#[cfg(feature = "native")]
 impl CachedDirStore<Workflow> for WorkflowStoreDir {
     const EXT: &'static str = "yml";
 
@@ -250,6 +254,7 @@ impl CachedDirStore<Workflow> for WorkflowStoreDir {
     }
 }
 
+#[cfg(feature = "native")]
 impl WorkflowStore for WorkflowStoreDir {
     // type Graph = WorkGraph;
 
@@ -261,12 +266,12 @@ impl WorkflowStore for WorkflowStoreDir {
         if name.is_empty() || name == "__default__" {
             Ok(())
         } else {
-            CachedDirStore::save(self, name, value)
+            CachedDirStore::save(self, name, &value)
         }
     }
 
     fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
-        CachedDirStore::names(self)
+        CachedDirStore::scan_names(self)
     }
 
     fn exists(&self, key: &str) -> bool {
@@ -305,11 +310,12 @@ impl WorkflowStore for WorkflowStoreDir {
         CachedDirStore::rename(self, old_name, new_name)
     }
 
+    #[tracing::instrument(skip(self))]
     fn backup(&self, name: &str) -> anyhow::Result<()> {
         use std::hash::{Hash, Hasher};
 
         tracing::info!("Creating backup for {name}");
-        if let Some(graph) = self.cache.load().get(name)
+        if let Some((_, graph)) = self.cache.load().get(name)
             && let Some(dir) = self.path.parent()
         {
             let dir = dir.join("backups");
@@ -334,5 +340,81 @@ impl WorkflowStore for WorkflowStoreDir {
         }
 
         Ok(())
+    }
+}
+
+// TODO: dispatch load/save calls to server via actions
+/// Client-side representation of the workflow store
+#[derive(Default, Debug, Clone)]
+pub struct WorkflowStoreStub {
+    pub metadata: BTreeMap<String, ShadowMeta>,
+}
+
+impl WorkflowStoreStub {
+    pub fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
+        self.metadata.keys().map(|s| Cow::Borrowed(s.as_str()))
+    }
+
+    pub fn description(&'_ self, key: &str) -> Cow<'_, str> {
+        if let Some(item) = self.metadata.get(key) {
+            Cow::Borrowed(&item.description)
+        } else {
+            Cow::Borrowed("")
+        }
+    }
+
+    pub fn schema(&'_ self, key: &str) -> Cow<'_, str> {
+        if let Some(item) = self.metadata.get(key) {
+            Cow::Borrowed(&item.schema)
+        } else {
+            Cow::Borrowed("")
+        }
+    }
+}
+
+impl WorkflowStore for WorkflowStoreStub {
+    fn load(&self, _name: &str) -> anyhow::Result<Workflow> {
+        todo!()
+    }
+
+    fn save(&mut self, _name: &str, _value: Workflow) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
+        self.names()
+    }
+
+    fn exists(&self, key: &str) -> bool {
+        self.names().any(|n| n.as_ref() == key)
+    }
+
+    fn description(&'_ self, key: &str) -> Cow<'_, str> {
+        self.description(key)
+    }
+
+    fn schema(&'_ self, key: &str) -> Cow<'_, str> {
+        self.schema(key)
+    }
+
+    fn remove(&mut self, _key: &str) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    fn rename(&mut self, _old_name: &str, _new_name: &str) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    fn backup(&self, _name: &str) -> anyhow::Result<()> {
+        // TODO: send event
+        Ok(())
+    }
+
+    fn get(&self, _key: &str) -> Option<Workflow> {
+        todo!()
+    }
+
+    fn put(&mut self, _key: &str, _value: Workflow) {
+        todo!()
     }
 }

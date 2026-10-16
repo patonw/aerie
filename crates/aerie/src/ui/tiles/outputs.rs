@@ -1,8 +1,12 @@
-use std::{fs::OpenOptions, io::Cursor, sync::atomic::Ordering, time::Duration};
+use std::{io::Cursor, sync::atomic::Ordering, time::Duration};
 
 use egui_phosphor::regular::FLOPPY_DISK;
 
-use crate::{config::ConfigExt as _, utils::ErrorDistiller as _, workflow::write_value};
+use crate::{
+    config::ConfigExt as _,
+    utils::{ErrorDistiller as _, spawn_wherever},
+    workflow::write_value,
+};
 
 impl super::AppState {
     pub fn outputs_ui(&mut self, ui: &mut egui::Ui) {
@@ -10,7 +14,7 @@ impl super::AppState {
         let mut trash_idx = None;
 
         let scroll_bottom =
-            self.task_count.load(Ordering::Relaxed) > 0 && self.prefs.view(|s| s.autoscroll);
+            self.task_count.load(Ordering::Relaxed) > 0 && self.data.prefs.view(|s| s.autoscroll);
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -68,22 +72,22 @@ impl super::AppState {
                                     ui,
                                     |ui| ui.label(k),
                                     |ui| {
-                                        if ui.button(FLOPPY_DISK).on_hover_text("Save").clicked()
-                                            && let Some(path) = rfd::FileDialog::new()
-                                                .set_directory(&self.state.output_dir)
-                                                .set_file_name(k)
-                                                .save_file()
-                                            && let Some(mut fh) = errors.distil(
-                                                OpenOptions::new()
-                                                    .write(true)
-                                                    .create(true)
-                                                    .truncate(true)
-                                                    .open(path.as_path())
-                                                    .map_err(|e| e.into()),
-                                            )
-                                        {
-                                            self.state.set_output_dir(path.parent());
-                                            errors.distil(write_value(&mut fh, v));
+                                        if ui.button(FLOPPY_DISK).on_hover_text("Save").clicked() {
+                                            let name = k.clone();
+                                            let value = v.clone();
+                                            let errors = errors.clone();
+                                            spawn_wherever(async move {
+                                                if let Some(fh) = rfd::AsyncFileDialog::new()
+                                                    // .set_directory(&self.state.output_dir)
+                                                    .set_file_name(name)
+                                                    .save_file()
+                                                    .await
+                                                {
+                                                    let mut bytes = Vec::with_capacity(256);
+                                                    errors.distil(write_value(&mut bytes, &value));
+                                                    fh.write(&bytes).await.unwrap();
+                                                }
+                                            });
                                         }
                                     },
                                 );

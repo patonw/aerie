@@ -6,11 +6,19 @@ default-run = "aerie"
 
 [[bin]]
 name = "aerie"
-required-features = ["ui"]
+required-features = ["desktop"]
+
+[[bin]]
+name = "backend"
+required-features = ["backend"]
+
+[[bin]]
+name = "web-client"
+required-features = ["web-ui"]
 
 [[bin]]
 name = "runner"
-required-features = []
+required-features = ["native"]
 
 [[bin]]
 name = "migrate-workflow"
@@ -20,8 +28,15 @@ required-features = ["migration"]
 anyhow = "1.0.100"
 arc-swap = { version = "1.7.1", features = ["serde"] }
 axum = { version = "0.8.8", optional = true }
+axum-extra = { version = "0.12.6", features = [
+  "typed-header",
+], optional = true }
+tower-http = { version = "0.7.1", optional = true, features = ["fs"] }
 base64 = "0.22.1"
-cached = { version = "0.59.0", features = ["disk_store"] }
+cached = { version = "4.0.0", default-features = false, features = [
+  "proc_macro",
+  "time_stores",
+] }
 clap = { version = "4.5.48", features = ["env", "derive"] }
 decorum = "0.4.0"
 delegate = "0.13.5"
@@ -44,7 +59,7 @@ env_logger = "0.11.8"
 flume = { version = "0.12", features = ["async"] }
 glob = "0.3.3"
 im = { version = "15.1.0", features = ["serde", "debug"] }
-image = { version = "0.25.8", features = ["png"] }
+image = { version = "0.25.8", features = ["jpeg", "png"] }
 itertools = "0.14.0"
 kinded = "0.5.0"
 log = "0.4.28"
@@ -53,18 +68,16 @@ petgraph = { version = "0.8", default-features = false, features = [
   "stable_graph",
 ], optional = true }
 regex = "1.12.2"
-# rig-dynclient = { path = "/code/rust/rig-dynclient", features = ["rmcp"] }
-rig-dynclient = { git = "https://github.com/patonw/rig-dynclient.git", tag = "v0.41.0", features = [
-  "rmcp",
-] }
+# rig-dynclient = { path = "/code/rust/rig-dynclient", features = [] }
+rig-dynclient = { git = "https://github.com/patonw/rig-dynclient.git", tag = "v0.41.0" }
 rpds = { version = "1.2.0", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.145", features = ["preserve_order"] }
 serde_with = "3.15.0"
 thiserror = "2.0.17"
-tokio = { version = "1.51.1", features = ["full"] }
+tokio = { version = "1.51.1", features = ["macros"] }
 tokio-util = { version = "0.7.18", features = ["rt"] }
-tracing = "0.1.41"
+tracing = { version = "0.1.41", features = ["log"] }
 tracing-subscriber = { version = "0.3.20", features = [
   "env-filter",
   "fmt",
@@ -72,13 +85,13 @@ tracing-subscriber = { version = "0.3.20", features = [
   "registry",
 ] }
 typed-builder = "0.23.1"
-uuid = { version = "1.18.1", features = ["serde", "v4"] }
+uuid = { version = "1.18.1", features = ["serde", "v7"] }
 colorous = { version = "1.0.16", optional = true }
 derive_builder = "0.20.2"
 jaq-core = "2.2.1"
 jaq-json = { version = "1.1.3", features = ["serde_json"] }
 jaq-std = "2.1.2"
-jsonschema = "0.44"
+jsonschema = { version = "0.44", default-features = false }
 rfd = { version = "0.17.2", default-features = false, features = [
   "xdg-portal",
 ], optional = true }
@@ -112,36 +125,77 @@ strum = { version = "0.28.0", features = ["derive"] }
 postcard = { version = "1.1.3", features = ["alloc"] }
 sled = "0.34.7"
 struson = { version = "0.7.2", features = ["serde"] }
-rmcp = { version = "2.2.0", optional = true, features = [
-  "macros",
-  "transport-io",
-  "transport-child-process",
-  "transport-streamable-http-server",
-  "client-side-sse",
-] }
+rmcp = { version = "2.2.0", features = [] }
 schemars = { version = "1.2.1", optional = true }
 tokio-stream = "0.1.18"
 async-stream = "0.3.6"
 async-broadcast = "0.7.2"
+ewebsock = { version = "0.8.0", optional = true }
+rmp-serde = { version = "1.3.1", optional = true }
+web-time = { version = "1.1.0", features = ["serde"] }
+gloo-timers = { version = "0.4.0", optional = true }
+sha3 = "0.12.0"
+serde_path_to_error = "0.1.20"
+footnote = { path = "../footnote" }
+footnote-macro = { path = "../footnote-macro" }
+struct-patch.workspace = true
 
 [features]
+app = []
+native = [
+  "wip",
+  "cached/redb_store",
+  "rig-dynclient/rmcp",
+  "tokio/full",
+  "jsonschema/default",
+  "rmcp/macros",
+  "rmcp/transport-io",
+  "rmcp/transport-child-process",
+  "rmcp/transport-streamable-http-server",
+  "rmcp/client-side-sse",
+]
 debug-ui = []
-default = ["fetch-image", "runner-http", "runner-mcp", "scripting"]
-runner-http = ["dep:axum"]
-runner-mcp = ["dep:axum", "dep:rmcp", "dep:schemars"]
+default = ["fetch-image", "runner-http", "runner-mcp", "scripting", "nesting"]
+runner-http = ["native", "dep:axum"]
+runner-mcp = ["native", "dep:axum", "dep:schemars"]
 migration = ["dep:saphyr"]
 scripting = ["dep:rhai"]
 fetch-image = ["dep:reqwest", "dep:url"]
+desktop = ["app", "native", "ui", "dep:egui_graphs"]
+web-ui = [
+  "ui",
+  "dep:ewebsock",
+  # "cached/wasm",
+  "uuid/js",
+  "dep:rmp-serde",
+  "dep:gloo-timers",
+  "dep:rfd",
+  "dep:url",
+]
+backend = [
+  "app",
+  "native",
+  "axum/ws",
+  "dep:axum-extra",
+  "dep:tower-http",
+  "dep:rmp-serde",
+] # TODO: remove dep:egui_graphs
 ui = [
+  "app",
   "dep:colorous",
   "dep:eframe",
   "dep:egui",
   "dep:egui-phosphor",
   "dep:egui_commonmark",
   "dep:egui_extras",
-  "dep:egui_graphs",
   "dep:egui_tiles",
   "dep:petgraph",
   "dep:rfd",
   "egui-snarl/ui",
 ]
+wip = []
+nesting = [] # Bypass silliness in struct-patch-derive
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4.76"
+web-sys = "0.3.103"

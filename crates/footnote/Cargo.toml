@@ -1,0 +1,19 @@
+[package]
+name = "footnote"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+footnote-macro = { path = "../footnote-macro" }
+struct-patch.workspace = true
+rmp-serde = { version = "1.3.1" }
+serde = { version = "1.0.228", features = [
+  "derive",
+] } # Nope, only here until support pass-thru attrs
+seahash = { version = "4.1.0", features = ["use_std"] }
+
+[dev-dependencies]
+
+[features]
+default = ["nesting"]
+nesting = []

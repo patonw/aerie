@@ -1,9 +1,6 @@
-use crate::rig::message::Message;
 use anyhow::anyhow;
 use arc_swap::ArcSwap;
-use cached::proc_macro::cached;
 use derive_builder::Builder;
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use serde_yaml_ng as serde_yml;
@@ -12,15 +9,22 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fs::OpenOptions,
+    hash::Hash,
+    io::Write as _,
     ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use uuid::Uuid;
 
-use crate::utils::AtomicBuffer;
+#[cfg(feature = "native")]
+use cached::proc_macro::cached;
+#[cfg(feature = "native")]
+use itertools::Itertools;
 
-#[derive(Clone, Builder)]
+use crate::{rig::message::Message, utils::AtomicBuffer};
+
+#[derive(Debug, Clone, Serialize, Deserialize, Builder)]
 pub struct ChatSession {
     pub directory: PathBuf,
     pub path: Arc<Option<PathBuf>>,
@@ -30,7 +34,42 @@ pub struct ChatSession {
     pub scratch: AtomicBuffer<Result<Message, String>>,
 }
 
+impl Default for ChatSession {
+    fn default() -> Self {
+        Self::transient().build().unwrap()
+    }
+}
+
+impl Hash for ChatSession {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.directory.hash(state);
+        self.path.hash(state);
+        self.history.load().hash(state);
+        // self.scratch.0.load().hash(state);
+    }
+}
+
+impl PartialEq for ChatSession {
+    fn eq(&self, other: &Self) -> bool {
+        self.directory == other.directory
+            && self.path == other.path
+            && self.history.load().as_ref() == other.history.load().as_ref()
+        //&& self.scratch == other.scratch
+    }
+}
+
+impl Eq for ChatSession {}
+
 impl ChatSession {
+    pub fn transient() -> ChatSessionBuilder {
+        let mut builder = ChatSessionBuilder::default();
+        builder
+            .directory(Default::default())
+            .path(Arc::new(None))
+            .history(Arc::new(ArcSwap::from_pointee(Default::default())));
+        builder
+    }
+
     pub fn from_dir_name(dir: impl AsRef<Path>, name: Option<&str>) -> ChatSessionBuilder {
         let dir = dir.as_ref().to_path_buf();
         let session_path = name.map(|s| dir.join(s).with_extension("yml"));
@@ -63,7 +102,8 @@ impl ChatSession {
             .and_then(|p| p.file_stem().map(|s| s.display().to_string()))
     }
 
-    /// List all sessions in the session directory
+    #[cfg(feature = "native")]
+    /// List all sessions in the session directory using cached values
     pub fn list(&self) -> Vec<String> {
         // self.path
         //     .as_ref()
@@ -71,7 +111,13 @@ impl ChatSession {
         //     .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         //     .map(list_sessions)
         //     .unwrap_or_default()
-        list_sessions(self.directory.clone())
+        list_sessions(self.directory.clone(), false)
+    }
+
+    #[cfg(feature = "native")]
+    /// List all sessions in the session directory, refreshing cache
+    pub fn relist(&self) -> Vec<String> {
+        list_sessions(self.directory.clone(), true)
     }
 
     /// Switch to another session in the same directory
@@ -117,43 +163,56 @@ impl ChatSession {
             .as_deref()
             .ok_or_else(|| anyhow!("No session path set"))?;
 
-        let file = std::fs::OpenOptions::new()
+        let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .open(path)?;
 
-        serde_yml::to_writer(file, history)?;
+        serde_yml::to_writer(&file, history)?;
+        file.flush()?;
 
         Ok(())
     }
 
+    #[cfg(feature = "native")]
     pub fn import(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+        use std::io::Read;
+
         let path = path.as_ref();
         if !path.is_file() {
             anyhow::bail!("Invalid file: {path:?}");
         }
 
+        let mut bytes = Vec::new();
+        let mut reader = OpenOptions::new().read(true).open(path)?;
+        reader.read_to_end(&mut bytes)?;
+
         let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or("session".into());
+        self.import_bytes(&name, &bytes)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "native")]
+    pub fn import_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), anyhow::Error> {
+        tracing::info!(?name, size = bytes.len(), "Importing session bytes");
+        let data: ChatHistory = serde_yml::from_slice(bytes)?;
+        let name = Path::new(name)
             .file_stem()
             .and_then(|s| s.to_os_string().into_string().ok())
             .unwrap_or_default();
-
         let datetime = chrono::offset::Local::now();
         let timestamp = datetime.format("%Y-%m-%dT%H:%M:%S").to_string();
-
         let name = if name.is_empty() || self.list().contains(&name) {
             std::iter::chain([name], [timestamp]).join("-")
         } else {
             name
         };
-
-        let reader = OpenOptions::new().read(true).open(path)?;
-        let data: ChatHistory = serde_yml::from_reader(reader)?;
-
         self.path = Arc::new(Some(self.directory.join(&name).with_extension("yml")));
         self.history = Arc::new(ArcSwap::from_pointee(data));
-
         self.save()?;
         Ok(())
     }
@@ -169,6 +228,15 @@ impl ChatSession {
         serde_yml::to_writer(writer, history.as_ref())?;
 
         Ok(())
+    }
+
+    pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        let mut bytes = Vec::with_capacity(256);
+
+        let history = self.history.load();
+
+        serde_yml::to_writer(&mut bytes, history.as_ref())?;
+        Ok(bytes)
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
@@ -218,14 +286,17 @@ impl ChatSession {
     }
 }
 
-#[cached(time = 5)]
-pub fn list_sessions(dir: PathBuf) -> Vec<String> {
-    tracing::info!("listing sessions for {dir:?}");
-    glob::glob(&dir.join("*.yml").display().to_string())
+#[cfg(feature = "native")]
+#[cached(ttl_secs = 5, force_refresh = { refresh })]
+pub fn list_sessions(dir: PathBuf, refresh: bool) -> Vec<String> {
+    let _ = refresh;
+    let items = glob::glob(&dir.join("*.yml").display().to_string())
         .unwrap()
         .filter_map(|p| p.ok())
         .filter_map(|p| p.file_stem().map(|stem| stem.display().to_string()))
-        .collect_vec()
+        .collect_vec();
+    tracing::info!("listing sessions for {dir:?}: {items:?}");
+    items
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -370,7 +441,7 @@ impl ChatHistory {
                 result.head_branch()
             };
 
-            let id = Uuid::new_v4();
+            let id = Uuid::now_v7();
             let entry = ChatEntry {
                 id,
                 parent,
@@ -396,7 +467,7 @@ impl ChatHistory {
         let mut last: Option<Uuid> = None;
 
         for content in contents {
-            let id = Uuid::new_v4();
+            let id = Uuid::now_v7();
             let entry = ChatEntry {
                 id,
                 parent: last,

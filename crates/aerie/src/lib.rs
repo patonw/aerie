@@ -1,10 +1,17 @@
+#[cfg(feature = "native")]
 pub mod agent;
+#[cfg(all(feature = "native", feature = "app"))]
 pub mod app;
 pub mod chat;
+#[cfg(feature = "app")]
+pub mod client;
 pub mod config;
+pub mod core;
 pub mod events;
 pub mod logging;
 pub mod pipeline;
+pub mod state;
+#[cfg(feature = "native")]
 pub mod storage;
 pub mod toolbox;
 pub mod transmute;
@@ -12,13 +19,6 @@ pub mod transmute;
 pub mod ui;
 pub mod utils;
 pub mod workflow;
-
-pub use agent::AgentFactory;
-pub use chat::{ChatContent, ChatEntry, ChatHistory, ChatSession};
-pub use config::{Preferences, ToolSelector, ToolSpec};
-pub use logging::{LogChannelLayer, LogEntry};
-pub use pipeline::{Pipeline, Workstep};
-pub use toolbox::{ToolProvider, Toolbox};
 
 // Re-exports for custom projects
 pub use anyhow;
@@ -29,8 +29,15 @@ pub use egui;
 pub use egui_snarl as snarl;
 pub use im;
 pub use inventory;
-pub use rig_dynclient::{self, rig, rmcp};
+#[cfg(feature = "wip")]
+pub use rig_dynclient::{self, rig_agent, rig_core, rmcp};
 pub use serde;
 pub use serde_json;
 pub use tracing;
 pub use typetag;
+
+pub mod rig {
+    pub use rig_dynclient::rig::*;
+    pub use rig_dynclient::rig_agent::agent;
+    pub use rig_dynclient::rig_core;
+}

@@ -10,8 +10,6 @@ use crate::rig::{
 };
 use anyhow::anyhow;
 use arc_swap::{ArcSwap, ArcSwapOption};
-use decorum::E64;
-use derive_builder::Builder;
 use futures_util::{Stream, StreamExt as _};
 use itertools::Itertools;
 use rig_dynclient::{
@@ -22,7 +20,6 @@ use scopeguard::defer;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    hash::Hash,
     sync::{
         Arc,
         atomic::{AtomicU16, Ordering},
@@ -32,15 +29,12 @@ use tokio::task::JoinSet;
 use typed_builder::TypedBuilder;
 
 use crate::{
-    config::ConfigExt as _, storage::CachedDirStore as _, toolbox::ToolStore, utils::ErrorList,
+    config::{AgentSpec, ConfigExt as _, Preferences},
+    storage::CachedDirStore as _,
+    toolbox::{ToolProvider, ToolStore, Toolbox},
+    utils::ErrorList,
     workflow::store::WorkflowStoreDir,
 };
-
-pub use super::chat::{ChatContent, ChatEntry, ChatHistory, ChatSession};
-pub use super::config::{Preferences, ToolSelector, ToolSpec};
-pub use super::logging::{LogChannelLayer, LogEntry};
-pub use super::pipeline::{Pipeline, Workstep};
-pub use super::toolbox::{ToolProvider, Toolbox};
 
 #[allow(deprecated)]
 pub type AgentBuilderT = AgentBuilder<CompletionModelHandle<'static>>;
@@ -237,7 +231,7 @@ impl AgentFactory {
 
     #[allow(deprecated)]
     pub fn agent_builder(&self, provider_model: &str) -> anyhow::Result<AgentBuilderT> {
-        let temperature = self.prefs.view(|s| s.temperature);
+        let temperature = self.prefs.view(|s| s.temperature.into_inner());
 
         let (provider, model) = self.parse_model(provider_model)?;
 
@@ -313,10 +307,10 @@ impl AgentFactory {
         let toolbox = self.toolbox.clone();
 
         if let Some(tool_store) = self.tools.clone() {
-            task_count.fetch_add(1, Ordering::Relaxed);
+            task_count.fetch_add(1, Ordering::AcqRel);
 
             defer! {
-                task_count.fetch_sub(1, Ordering::Relaxed);
+                task_count.fetch_sub(1, Ordering::AcqRel);
             };
 
             tool_store.load_provider(toolbox, name, &self.env).await?;
@@ -352,32 +346,5 @@ impl AgentFactory {
         }
 
         joiner.join_all().await
-    }
-}
-
-#[derive(Builder)]
-#[builder(
-    name = "AgentSpec",
-    derive(Debug, Hash, PartialEq, Eq, Serialize),
-    field(public)
-)]
-// For use via the derived builder, not directly
-pub struct _AgentSpec_ {
-    pub model: String,
-
-    pub temperature: E64,
-
-    pub preamble: String,
-
-    pub context_doc: Arc<String>,
-
-    pub tools: Arc<ToolSelector>,
-
-    pub schema: Arc<serde_json::Value>,
-}
-
-impl AgentSpec {
-    pub fn tool_selection(&self) -> Arc<ToolSelector> {
-        self.tools.clone().unwrap_or_default()
     }
 }

@@ -10,7 +10,7 @@ use std::time::Duration;
 use egui_extras::{Size, StripBuilder};
 
 use crate::config::ConfigExt;
-use crate::ui::AppEvent;
+use crate::events::AppEvent;
 use crate::ui::ShowHelp;
 use crate::ui::runner::play_button;
 use crate::ui::runner::stop_button;
@@ -42,6 +42,7 @@ impl super::AppState {
             // Snarl will draw our persisted positions and sizes.
             let mut snarl = self.workflows.view_stack.leaf_snarl().unwrap();
 
+            let exec_id = self.workflows.view_stack.exec_id().map(uuid::Uuid::from);
             let shadow = self.workflows.view_stack.leaf();
             let viewer = self.workflow_viewer();
 
@@ -66,9 +67,11 @@ impl super::AppState {
             if cfg!(feature = "debug-ui") {
                 let egui::Pos2 { x, y } = ui.max_rect().right_top();
                 let over_rect =
-                    egui::Rect::from_two_pos(egui::pos2(x - 64.0, y), egui::pos2(x, y + 20.0));
-                let scale_debug =
-                    egui::Label::new(format!("Scale: {:.02}", viewer.transform.scaling));
+                    egui::Rect::from_two_pos(egui::pos2(x - 200.0, y), egui::pos2(x, y + 20.0));
+                let scale_debug = egui::Label::new(format!(
+                    "Scale: {:.02}\n{exec_id:?}",
+                    viewer.transform.scaling
+                ));
                 ui.place(over_rect, scale_debug);
             }
 
@@ -136,7 +139,7 @@ impl super::AppState {
     }
 
     pub fn subgraph_controls(&mut self, ui: &mut egui::Ui) {
-        let settings = self.prefs.clone();
+        let settings = self.data.prefs.clone();
         let running = self
             .workflows
             .running
@@ -229,8 +232,7 @@ impl super::AppState {
                 };
 
                 if info.depth > 0 && resp.double_clicked() {
-                    self.events
-                        .insert(crate::ui::AppEvent::LeaveSubgraph(info.depth));
+                    self.events.insert(AppEvent::LeaveSubgraph(info.depth));
                     resp.surrender_focus();
                 }
             }
@@ -252,8 +254,7 @@ impl super::AppState {
                                             .on_hover_text(format!("{stack}"))
                                             .clicked()
                                         {
-                                            // TODO: stay in this view when undoing
-                                            self.workflows.undo();
+                                            self.events.insert(AppEvent::Undo);
                                         }
                                     });
                                 });
@@ -265,7 +266,7 @@ impl super::AppState {
                                             .on_hover_text(format!("{stack}"))
                                             .clicked()
                                         {
-                                            self.workflows.redo();
+                                            self.events.insert(AppEvent::Redo);
                                         }
                                     });
                                 });
@@ -276,7 +277,9 @@ impl super::AppState {
             if !settings.view(|s| s.autosave) {
                 ui.add_enabled_ui(self.workflows.has_changes(), |ui| {
                     if ui.button("Save").clicked() {
-                        self.workflows.save();
+                        self.events
+                            .insert(AppEvent::WorkflowSnapshot(self.workflows.shadow.clone()));
+                        self.events.insert(AppEvent::SaveWorkflow);
                     }
                 });
             } else if !self.workflows.frozen
@@ -284,7 +287,9 @@ impl super::AppState {
                 && self.workflows.modtime.elapsed().unwrap_or(Duration::ZERO)
                     > Duration::from_secs(2)
             {
-                self.workflows.save();
+                self.events
+                    .insert(AppEvent::WorkflowSnapshot(self.workflows.shadow.clone()));
+                self.events.insert(AppEvent::SaveWorkflow);
             }
 
             ui.separator();
@@ -312,7 +317,7 @@ impl super::AppState {
                     let interrupting = self.workflows.interrupt.load(Ordering::Relaxed);
                     ui.add_enabled_ui(!interrupting, |ui| {
                         if ui.add(stop_button(interrupting)).clicked() {
-                            self.workflows.interrupt.store(true, Ordering::Relaxed);
+                            self.events.insert(AppEvent::InterruptWorkflow);
                         }
                     });
                 } else if ui.add_enabled(!busy, play_button()).clicked() {

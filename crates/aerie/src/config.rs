@@ -1,24 +1,23 @@
 use arc_swap::ArcSwap;
 use cached::proc_macro::cached;
+use decorum::E64;
 use delegate::delegate;
+use derive_builder::Builder;
 use glob::{Pattern, PatternError};
+use std::hash::Hash;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{
-        Arc, RwLock,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::Instant,
+    sync::{Arc, RwLock},
 };
+use web_time::SystemTime;
 
-use crate::rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
 
 #[derive(Parser, Clone, Debug)]
 #[command(version, about, long_about = None)]
@@ -44,46 +43,7 @@ pub struct Args {
 
     #[arg(long)]
     pub backup_dir: Option<PathBuf>,
-
-    #[command(subcommand)]
-    pub command: Option<Command>,
 }
-
-#[derive(Subcommand, Clone, Debug)]
-pub enum Command {
-    Session {
-        #[command(subcommand)]
-        subcmd: SessionCommand,
-    },
-}
-
-#[derive(Subcommand, Clone, Debug)]
-pub enum SessionCommand {
-    List,
-}
-
-#[inline]
-fn is_zero(x: &u64) -> bool {
-    *x == 0
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub struct SeedConfig {
-    pub value: Arc<AtomicU64>,
-
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub increment: u64,
-}
-
-impl PartialEq for SeedConfig {
-    fn eq(&self, other: &Self) -> bool {
-        let a = self.value.load(Ordering::Relaxed);
-        let b = other.value.load(Ordering::Relaxed);
-        a == b && self.increment == other.increment
-    }
-}
-
-impl Eq for SeedConfig {}
 
 #[non_exhaustive]
 #[derive(
@@ -139,13 +99,13 @@ pub enum ModelRole {
     Custom(String),
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone, Hash)]
 pub struct RoleEntry {
     pub name: String,
     pub roles: im::OrdSet<ModelRole>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Hash)]
 pub struct ProfileMap(im::OrdMap<String, im::Vector<RoleEntry>>);
 
 impl Default for ProfileMap {
@@ -181,7 +141,7 @@ impl ProfileMap {
 ///
 /// User configured preferences are stored in `Settings` instead.
 #[skip_serializing_none]
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone, Hash)]
 pub struct ConfigState {
     /// Models previously used in the UI
     #[serde(default, skip_serializing_if = "im::Vector::is_empty")]
@@ -203,10 +163,55 @@ pub struct ConfigState {
     pub output_dir: PathBuf,
 }
 
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct ConfigStateProxy {
+    /// The live in-memory state
+    state: ConfigState,
+
+    modtime: SystemTime,
+}
+
+impl Default for ConfigStateProxy {
+    fn default() -> Self {
+        Self {
+            state: Default::default(),
+            modtime: SystemTime::now(),
+        }
+    }
+}
+
+impl Deref for ConfigStateProxy {
+    type Target = ConfigState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl ConfigStateProxy {
+    pub fn modtime(&self) -> SystemTime {
+        self.modtime
+    }
+
+    pub fn update<T>(&mut self, cb: impl FnOnce(&mut ConfigState) -> T) -> anyhow::Result<T> {
+        // TODO: dispatch actions to backend
+        Ok(cb(&mut self.state))
+    }
+}
+
+impl From<&ConfigStateStore> for ConfigStateProxy {
+    fn from(value: &ConfigStateStore) -> Self {
+        Self {
+            state: value.state.clone(),
+            modtime: value.modtime,
+        }
+    }
+}
+
 /// Manages synchronizing state between memory and disk
 pub struct ConfigStateStore {
     // Currently, facilitates UI repainting
-    modtime: Instant,
+    modtime: SystemTime,
 
     /// The backing disk store
     db: sled::Db,
@@ -226,7 +231,7 @@ impl Deref for ConfigStateStore {
 impl ConfigStateStore {
     pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let mut this = Self {
-            modtime: Instant::now(),
+            modtime: SystemTime::now(),
             db: sled::open(path)?,
             state: Default::default(),
         };
@@ -236,7 +241,7 @@ impl ConfigStateStore {
         Ok(this)
     }
 
-    pub fn modtime(&self) -> Instant {
+    pub fn modtime(&self) -> SystemTime {
         self.modtime
     }
 
@@ -262,7 +267,7 @@ impl ConfigStateStore {
             self.state.output_dir = postcard::from_bytes(&bytes)?;
         }
 
-        self.modtime = Instant::now();
+        self.modtime = SystemTime::now();
 
         Ok(&self.state)
     }
@@ -273,7 +278,7 @@ impl ConfigStateStore {
         let result = cb(&mut self.state);
 
         if baseline != self.state {
-            self.modtime = Instant::now();
+            self.modtime = SystemTime::now();
 
             if baseline.prev_models != self.state.prev_models {
                 let bytes = postcard::to_allocvec(&self.state.prev_models)?;
@@ -329,7 +334,7 @@ impl ConfigStateStore {
 
 /// User managed preferences via file or settings tile in UI.
 #[skip_serializing_none]
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone, Hash)]
 pub struct Preferences {
     /// Profiles containing models tagged with roles
     #[serde(default, skip_serializing_if = "ProfileMap::is_empty")]
@@ -340,7 +345,7 @@ pub struct Preferences {
     pub profile: String,
 
     #[serde(default)]
-    pub temperature: f64,
+    pub temperature: E64,
 
     // Timeout on total request or non-streaming probably not useful, given
     // variability of payload sizes.
@@ -357,9 +362,6 @@ pub struct Preferences {
     /// note: these are tool call/result round-trips, not failure retries.
     #[serde(default)]
     pub tool_turns: Option<usize>,
-
-    /// PRNG seed for completion providers (which typically ignore it)
-    pub seed: Option<SeedConfig>,
 
     #[serde(default)]
     pub autoscroll: bool,
@@ -388,6 +390,8 @@ pub struct Preferences {
     pub _extra: im::OrdMap<String, serde_json::Value>,
 }
 
+impl Eq for Preferences {}
+
 impl Preferences {
     pub fn has_profile(&self, name: &str) -> bool {
         self.models.contains_key(name)
@@ -412,9 +416,12 @@ impl Preferences {
 }
 
 pub trait ConfigExt {
+    /// Reads a consistent copy of the contents and returns the callback result
     fn view<T>(&self, cb: impl FnMut(&Preferences) -> T) -> T;
 
-    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> T;
+    /// Stores the changes made by the callback. Returns a boolean indicating
+    /// whether the contents were changed along with the callback return value.
+    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> (bool, T);
 }
 
 impl ConfigExt for Arc<RwLock<Preferences>> {
@@ -424,9 +431,11 @@ impl ConfigExt for Arc<RwLock<Preferences>> {
     }
 
     // TODO: handle auto-save
-    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> T {
+    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> (bool, T) {
+        let before = self.read().unwrap().clone();
         let mut settings = self.write().unwrap();
-        cb(&mut settings)
+        let result = cb(&mut settings);
+        (*settings != before, result)
     }
 }
 
@@ -440,7 +449,7 @@ impl ConfigExt for Arc<ArcSwap<Preferences>> {
 
     // Clone to stack for working copy. Not sure which way is better
     // This compares every field
-    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> T {
+    fn update<T>(&self, cb: impl FnOnce(&mut Preferences) -> T) -> (bool, T) {
         let mut settings = self.load().as_ref().clone();
 
         let result = cb(&mut settings);
@@ -448,9 +457,10 @@ impl ConfigExt for Arc<ArcSwap<Preferences>> {
         // Only move to stack if changed
         if settings != *self.load().as_ref() {
             self.store(Arc::new(settings));
+            (true, result)
+        } else {
+            (false, result)
         }
-
-        result
     }
 
     // This also clones the whole object (usually), but to the heap
@@ -478,12 +488,11 @@ pub struct ToolSettings {
 }
 
 /// Configuration to access a tool provider
-#[skip_serializing_none]
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 #[serde(tag = "type")]
 pub enum ToolSpec {
     Stdio {
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[serde(default)]
         enabled: bool,
 
         #[serde(default)]
@@ -492,12 +501,12 @@ pub enum ToolSpec {
         #[serde(default)]
         dir: Option<PathBuf>,
 
-        #[serde(default, skip_serializing_if = "String::is_empty")]
+        #[serde(default)]
         env: String,
 
         command: String,
 
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[serde(default)]
         args: Vec<String>,
 
         /// Timeout in seconds
@@ -505,7 +514,7 @@ pub enum ToolSpec {
         timeout: Option<u64>,
     },
     HTTP {
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[serde(default)]
         enabled: bool,
 
         #[serde(default)]
@@ -520,6 +529,86 @@ pub enum ToolSpec {
         #[serde(default)]
         timeout: Option<u64>,
     },
+}
+
+/// Wrapped instead of tagged for binary serializers
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub enum ToolSpecW {
+    Stdio {
+        #[serde(default)]
+        enabled: bool,
+
+        #[serde(default)]
+        preface: Option<String>,
+
+        #[serde(default)]
+        dir: Option<PathBuf>,
+
+        #[serde(default)]
+        env: String,
+
+        command: String,
+
+        #[serde(default)]
+        args: Vec<String>,
+
+        /// Timeout in seconds
+        #[serde(default)]
+        timeout: Option<u64>,
+    },
+    HTTP {
+        #[serde(default)]
+        enabled: bool,
+
+        #[serde(default)]
+        preface: Option<String>,
+
+        uri: String,
+
+        /// : environment var for API key
+        auth_var: Option<String>,
+
+        /// Timeout in seconds
+        #[serde(default)]
+        timeout: Option<u64>,
+    },
+}
+
+impl From<ToolSpec> for ToolSpecW {
+    fn from(value: ToolSpec) -> Self {
+        match value {
+            ToolSpec::Stdio {
+                enabled,
+                preface,
+                dir,
+                env,
+                command,
+                args,
+                timeout,
+            } => ToolSpecW::Stdio {
+                enabled,
+                preface,
+                dir,
+                env,
+                command,
+                args,
+                timeout,
+            },
+            ToolSpec::HTTP {
+                enabled,
+                preface,
+                uri,
+                auth_var,
+                timeout,
+            } => ToolSpecW::HTTP {
+                enabled,
+                preface,
+                uri,
+                auth_var,
+                timeout,
+            },
+        }
+    }
 }
 
 impl Default for ToolSpec {
@@ -612,10 +701,6 @@ impl ToolSelector {
         self.0.remove(selector);
     }
 
-    pub fn include(&mut self, provider: &str, tool: &Tool) {
-        self.add(&format!("{provider}/{}", tool.name));
-    }
-
     pub fn provider_selection(&'_ self, provider: &str) -> Ternary<Cow<'_, str>> {
         if self.0.contains("*/*") || self.0.contains(&format!("{provider}/*")) {
             Ternary::All
@@ -648,7 +733,34 @@ impl ToolSelector {
     }
 }
 
-#[cached(result = true)]
+#[cached]
 pub fn tool_glob(pattern: String) -> Result<Pattern, PatternError> {
     Pattern::new(&pattern)
+}
+
+#[derive(Builder, Serialize, Deserialize)]
+#[builder(
+    name = "AgentSpec",
+    derive(Debug, Hash, PartialEq, Eq, Serialize, Deserialize),
+    field(public)
+)]
+// For use via the derived builder, not directly
+pub struct _AgentSpec_ {
+    pub model: String,
+
+    pub temperature: E64,
+
+    pub preamble: String,
+
+    pub context_doc: Arc<String>,
+
+    pub tools: Arc<ToolSelector>,
+
+    pub schema: Arc<serde_json::Value>,
+}
+
+impl AgentSpec {
+    pub fn tool_selection(&self) -> Arc<ToolSelector> {
+        self.tools.clone().unwrap_or_default()
+    }
 }

@@ -86,6 +86,35 @@ pub fn rig_image_to_egui(img: &rig::message::Image) -> String {
     key
 }
 
+#[cfg(feature = "ui")]
+pub fn img_str_to_egui_key(data: &str) -> anyhow::Result<String> {
+    let mut cache = IMAGE_CACHE.lock();
+    let mut s = DefaultHasher::new();
+    data.hash(&mut s);
+    let key = format!("{:x}", s.finish());
+
+    // TODO: handle local files and urls
+    if cache.contains(&key) {
+        cache.promote(&key);
+    } else if !DATA_URL.is_match(data) && url::Url::parse(data).is_ok() {
+        cache.put(key.clone(), egui::ImageSource::from(data.to_string()));
+    } else {
+        let (bytes, fmt) = resolve_image_to_bytes(data, false)?;
+        let img = egui::ImageSource::from((
+            format!(
+                "bytes://{key}.{}",
+                fmt.map(|f| f.extensions_str()[0])
+                    .expect("Unknown image type")
+            )
+            .to_lowercase(),
+            bytes.clone(),
+        ));
+        cache.put(key.clone(), img);
+    }
+
+    Ok(key)
+}
+
 pub fn image_fingerprint(img: &rig::message::Image) -> u64 {
     let mut s = DefaultHasher::new();
     match &img.data {
@@ -101,7 +130,7 @@ pub fn image_fingerprint(img: &rig::message::Image) -> u64 {
 #[derive(TypedBuilder)]
 pub struct ImageResolver {
     #[builder(default)]
-    pub allow_local: bool,
+    pub allow_local: bool, // TODO: account for web-ui
 
     #[builder(default_code = r#" {
         let max_dim = MAX_IMAGE_DIM.load(std::sync::atomic::Ordering::Relaxed);
@@ -123,8 +152,12 @@ impl ImageResolver {
     }
 
     /// Fetch the image by URL and return a base64-encoded data URI
-    pub fn to_data_uri(&self, url: &str) -> anyhow::Result<String> {
+    pub fn url_to_data_uri(&self, url: &str) -> anyhow::Result<String> {
         data_uri_from_image_path(url, self.allow_local, self.max_size)
+    }
+
+    pub fn bytes_to_data_uri(&self, name: &str, bytes: Cow<'_, [u8]>) -> anyhow::Result<String> {
+        data_uri_from_image_bytes(name, bytes, self.max_size)
     }
 
     /// Take an existing rig Image, inline remote data nad downsample
@@ -174,11 +207,10 @@ impl ImageResolver {
 }
 
 #[cached(
-    result = true,
     key = "String",
     convert = r#"{ format!("{}", path) }"#,
-    time = 300,
-    time_refresh = true
+    ttl_secs = 300,
+    refresh = true
 )]
 fn rig_image_from_path(
     path: &str,
@@ -208,11 +240,10 @@ fn rig_image_from_path(
 }
 
 #[cached(
-    result = true,
     key = "String",
     convert = r#"{ format!("{}", path) }"#,
-    time = 300,
-    time_refresh = true
+    ttl_secs = 300,
+    refresh = true
 )]
 fn data_uri_from_image_path(
     path: &str,
@@ -225,6 +256,34 @@ fn data_uri_from_image_path(
         downsample_image_bytes(&image_bytes, format, w, h)?
     } else {
         (image_bytes, format)
+    };
+
+    let image_base64 = BASE64_STANDARD.encode(&image_bytes);
+    let mime_type = format.map(|f| f.to_mime_type()).unwrap_or_default();
+    Ok(format!("data:{mime_type};base64,{image_base64}"))
+}
+
+#[cached(
+    key = "String",
+    convert = r#"{ format!("{}", name) }"#,
+    ttl_secs = 300,
+    refresh = true
+)]
+pub fn data_uri_from_image_bytes(
+    name: &str,
+    bytes: Cow<'_, [u8]>,
+    max_size: Option<(u32, u32)>,
+) -> anyhow::Result<String> {
+    use base64::{Engine, prelude::BASE64_STANDARD};
+    let format = Path::new(name)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .and_then(ImageFormat::from_extension);
+    let (image_bytes, format) = if let Some((w, h)) = max_size {
+        let (bytes, format) = downsample_image_bytes(bytes.as_ref(), format, w, h)?;
+        (Cow::Owned(bytes), format)
+    } else {
+        (bytes, format)
     };
 
     let image_base64 = BASE64_STANDARD.encode(&image_bytes);
@@ -262,13 +321,15 @@ fn resolve_image_to_bytes(
 }
 
 #[cfg(feature = "fetch-image")]
-#[cached::proc_macro::io_cached(
-    disk = true,
-    time = 3600,
-    time_refresh = true,
-    key = "String",
-    convert = r#"{ format!("{}", url) }"#,
-    map_error = r##"|e| anyhow::Error::from(e)"##
+#[cfg_attr(
+    feature = "native",
+    cached::proc_macro::concurrent_cached(
+        disk = true,
+        ttl_secs = 3600,
+        refresh = true,
+        key = "String",
+        convert = r#"{ format!("{}", url) }"#
+    )
 )]
 fn load_image_url(url: &str) -> anyhow::Result<(Vec<u8>, Option<String>)> {
     use reqwest::header::CONTENT_TYPE;
@@ -378,20 +439,39 @@ pub fn show_image(ui: &mut egui::Ui, image: &egui::ImageSource<'static>, max_dim
         ui.add(egui::Image::new(image.clone()).max_size(ui.ctx().content_rect().size() * 0.75));
     });
 
-    if let egui::ImageSource::Bytes { bytes, .. } = image {
+    if let egui::ImageSource::Bytes { bytes, .. } = image.clone() {
         response.interact(Sense::CLICK).context_menu(|ui| {
-            if ui.button("Save").clicked()
-                && let Some(path) = rfd::FileDialog::new()
-                    .set_file_name("image.jpg")
-                    .add_filter("images", &["png", "jpg", "jpeg", "webp"])
-                    .add_filter("all", &[""])
-                    .save_file()
-                && let Err(e) = save_image_bytes(bytes, &path)
-            {
-                tracing::warn!("Could not save image: {e:?}");
+            if ui.button("Save").clicked() {
+                use crate::utils::spawn_wherever;
+                spawn_wherever(async move {
+                    if let Some(fh) = rfd::AsyncFileDialog::new()
+                        .set_file_name("image.jpg")
+                        .add_filter("images", &["png", "jpg", "jpeg", "webp"])
+                        .add_filter("all", &[""])
+                        .save_file()
+                        .await
+                    {
+                        let file_name = fh.file_name();
+
+                        let buffer = transcode_image_bytes(bytes.as_ref(), &file_name).unwrap();
+                        fh.write(&buffer).await.unwrap();
+                    }
+                });
             }
         });
     }
+}
+
+pub fn transcode_image_bytes(bytes: &[u8], file_name: &str) -> anyhow::Result<Vec<u8>> {
+    let image = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()?
+        .decode()?;
+
+    let format = image::ImageFormat::from_path(Path::new(file_name))?;
+    let mut buffer = Vec::with_capacity(256);
+    image.write_to(Cursor::new(&mut buffer), format)?;
+
+    Ok(buffer)
 }
 
 pub fn save_image_bytes(bytes: &[u8], path: impl AsRef<Path>) -> anyhow::Result<()> {

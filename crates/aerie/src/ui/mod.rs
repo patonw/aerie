@@ -1,15 +1,16 @@
 use eframe::egui;
 use egui::WidgetText;
 
+pub mod render;
 pub mod runner;
 pub mod shortcuts;
 pub mod state;
 pub mod tiles;
 pub mod workflow;
 
-pub use state::AppState;
+use crate::state::app::AppState;
 
-pub use crate::events::*;
+use crate::events::*;
 
 pub enum Pane {
     Settings,

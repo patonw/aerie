@@ -1,53 +1,23 @@
-use std::{
-    borrow::Cow,
-    sync::{Arc, atomic::Ordering},
-    time::{Duration, Instant},
-};
+#![cfg_attr(feature = "web-ui", allow(unused))]
 
-#[cfg(feature = "ui")]
-use egui::{Sense, UiBuilder};
-#[cfg(feature = "ui")]
-use egui_phosphor::regular::{GRAPH, LINE_SEGMENTS, REPEAT};
 use egui_snarl::NodeId;
-use im::vector;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use serde_with::skip_serializing_none;
 use serde_yaml_ng as serde_yml;
-use uuid::Uuid;
-
-#[cfg(feature = "ui")]
-use crate::workflow::{MetaNode, NodeTheme, ThemeCodex, UiNode, nodes::LoopControl};
+use std::borrow::Cow;
+use std::sync::Arc;
 
 use crate::{
     events::AppEvent,
-    utils::ImmutableMapExt,
-    workflow::{
-        CheckContext, DynNode, FlexNode, GraphId, ShadowGraph, Value, ValueKind, WorkNode,
-        WorkflowError, min_instant,
-        runner::{ExecState, WorkflowRunner},
-    },
+    workflow::{DynNode, FlexNode, ShadowGraph, Value, ValueKind, WorkNode, nodes::Flavor},
 };
 
-// "serializing nested enums in YAML is not supported yet"
-// So we'll embed the enum into the node struct instead
-/// Controls execution behavior
-#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, Deserialize, Serialize)]
-pub enum Flavor {
-    #[default]
-    Simple,
-
-    Looping,
-
-    Iterative,
-}
-
-impl Flavor {
-    pub fn multiplexing(&self) -> bool {
-        *self == Self::Iterative
-    }
-}
+#[cfg(feature = "native")]
+use crate::{
+    utils::ImmutableMapExt,
+    workflow::{CheckContext, GraphId},
+};
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize, Serialize)]
@@ -94,479 +64,6 @@ impl Subgraph {
     pub fn with_flavor(self, flavor: Flavor) -> Self {
         Self { flavor, ..self }
     }
-
-    fn exec_simple(
-        &mut self,
-        ctx: &super::RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        // TODO: customize context for subgraph
-        // What to do about outputs channel?
-        let mut ctx = ctx.clone();
-        ctx.is_subgraph = true;
-
-        let deadline = self
-            .timeout
-            .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
-
-        let ctx = ctx.with_scope(&self.title, self.graph.uuid, 0);
-        let exec_id = ctx.exec_id;
-        ctx.node_state.reset(exec_id);
-        let state_view = ctx.node_state.view(exec_id);
-
-        ctx.run_events.broadcast(json!({
-            "exec-id": ctx.exec_id,
-            "msg": "starting subgraph",
-            "tags": ["subgraph"],
-            "title": &self.title,
-            "flavor": &self.flavor,
-            "graph": &self.graph.uuid,
-        }));
-
-        let mut exec = WorkflowRunner::builder()
-            .inputs(inputs)
-            .run_ctx(ctx.with_deadline(deadline))
-            .state_view(state_view)
-            .run_events(ctx.run_events.clone())
-            .build();
-
-        exec.init(&self.graph);
-        let interrupt = ctx.interrupt.clone();
-
-        let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
-        tracing::debug!("About to execute subgraph {:?}", self.graph.uuid);
-
-        loop {
-            if interrupt.load(Ordering::Relaxed) {
-                break;
-            }
-
-            if let Some(deadline) = deadline
-                && deadline <= Instant::now()
-            {
-                Err(WorkflowError::Timeout)?;
-            }
-
-            match exec.step(&mut target) {
-                Ok(false) => {
-                    break;
-                }
-                Ok(true) => {
-                    tracing::trace!("Stepped subgraph");
-                }
-                Err(err) => Err(WorkflowError::Subgraph(err))?,
-            }
-        }
-
-        let mut results = exec
-            .outputs
-            .iter()
-            .map(|it| it.clone().unwrap_or_default())
-            .collect_vec();
-
-        results.push(Value::Placeholder(ValueKind::Failure));
-
-        tracing::info!("Executed subgraph. results {results:?}");
-
-        Ok(results)
-    }
-
-    fn exec_looping(
-        &mut self,
-        ctx: &super::RunContext,
-        mut inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        let mut ctx = ctx.clone();
-        ctx.is_subgraph = true;
-
-        let mut loop_index = 0;
-        ctx.node_state.reset(ctx.exec_id.scope(self.graph.uuid, 0));
-        ctx.run_events.broadcast(json!({
-            "exec-id": ctx.exec_id,
-            "scope": Uuid::from(ctx.exec_id.scope(self.graph.uuid, 0)),
-            "msg": "starting subgraph",
-            "tags": ["subgraph"],
-            "title": &self.title,
-            "flavor": &self.flavor,
-            "graph": &self.graph.uuid,
-        }));
-
-        // Runs the subgraph until it stops requesting to repeat.
-        // Final results gathered from Finish node on last pass.
-        let mut results = loop {
-            let deadline = self
-                .timeout
-                .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
-            let deadline = min_instant(deadline, ctx.deadline);
-
-            tracing::debug!("Looping subgraph run #{loop_index}");
-            let ctx = ctx.with_scope(&self.title, self.graph.uuid, loop_index);
-            let exec_id = ctx.exec_id;
-            let state_view = ctx.node_state.view(exec_id);
-
-            ctx.run_events.broadcast(json!({
-                "exec-id": exec_id,
-                "tags": ["subgraph/pass"],
-                "pass": loop_index,
-            }));
-
-            let mut exec = WorkflowRunner::builder()
-                .inputs(inputs.clone())
-                .run_ctx(ctx.with_deadline(deadline))
-                .state_view(state_view)
-                .run_events(ctx.run_events.clone())
-                .build();
-
-            exec.init(&self.graph);
-
-            let interrupt = ctx.interrupt.clone();
-
-            let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
-            tracing::debug!("About to execute subgraph {:?}", self.graph.uuid);
-
-            // Inner loop steps through the graph
-            let result = loop {
-                if interrupt.load(Ordering::Relaxed) {
-                    break Ok(false);
-                }
-
-                if let Some(deadline) = deadline
-                    && deadline <= Instant::now()
-                {
-                    Err(WorkflowError::Timeout)?;
-                }
-
-                let result = exec.step(&mut target);
-                tracing::trace!("Stepped subgraph");
-                if result != Ok(true) {
-                    break result;
-                }
-            };
-
-            // Get the status of the loop controller to determine whether to repeat
-            tracing::debug!("Loop control node id is {:?}", self.graph.looper);
-            let loop_state = self
-                .graph
-                .looper
-                .as_ref()
-                .and_then(|f| exec.state_view.get(f))
-                .unwrap_or(ExecState::Waiting(Default::default()));
-
-            tracing::debug!("Loop state is {loop_state:?}");
-            let repeat = if let Some(limit) = self.limit
-                && loop_index >= limit - 1
-            {
-                false
-            } else {
-                matches!(loop_state, ExecState::Done(_))
-            };
-
-            if repeat {
-                // Ignore unfinished errors when repeating
-                if let Err(err) = result
-                    && !matches!(*err, WorkflowError::Unfinished(_))
-                {
-                    Err(WorkflowError::Subgraph(err))?
-                }
-
-                loop_index += 1;
-
-                let values = exec.gather_inputs(self.graph.looper.unwrap());
-                tracing::info!("We continue with values {values:?}");
-
-                // Update graph inputs with values from loop controller
-                for (input, updated) in inputs.iter_mut().zip(values) {
-                    if let Some(value) = updated {
-                        *input = Some(value);
-                    }
-                }
-            } else {
-                if let Err(err) = result {
-                    Err(WorkflowError::Subgraph(err))?
-                }
-
-                // Gather the final results from the Finish node
-                let results = exec
-                    .outputs
-                    .iter()
-                    .map(|it| it.clone().unwrap_or_default())
-                    .collect_vec();
-
-                tracing::info!("Looping done with results {results:?}");
-
-                break results;
-            }
-        };
-
-        results.push(Value::Placeholder(ValueKind::Failure));
-
-        tracing::info!("Executed subgraph. results {results:?}");
-
-        Ok(results)
-    }
-
-    fn ser_foreach(
-        &mut self,
-        ctx: &super::RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        let mut ctx = ctx.clone();
-        ctx.is_subgraph = true;
-
-        let graph_id = self.graph.uuid;
-
-        let lengths = input_lengths(&inputs);
-
-        if !lengths.iter().all(|s| *s == lengths[0]) {
-            Err(WorkflowError::Conversion(format!(
-                "List inputs are not the same length: {lengths:?}"
-            )))?;
-        }
-
-        ctx.node_state.reset(ctx.exec_id.scope(self.graph.uuid, 0));
-
-        ctx.run_events.broadcast(json!({
-            "exec-id": ctx.exec_id,
-            "scope": Uuid::from(ctx.exec_id.scope(self.graph.uuid, 0)),
-            "msg": "starting subgraph",
-            "tags": ["subgraph"],
-            "title": &self.title,
-            "flavor": &self.flavor,
-            "graph": &self.graph.uuid,
-        }));
-
-        let mut results = self.init_outputs();
-
-        let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
-        ctx.event(AppEvent::ProgressBegin(graph_id.0, num_iters));
-        for i in 0..num_iters {
-            let deadline = self
-                .timeout
-                .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
-            let deadline = min_instant(deadline, ctx.deadline);
-
-            let sliced = par_slice(&inputs, i);
-            let ctx = ctx.with_scope(&self.title, self.graph.uuid, i);
-            let exec_id = ctx.exec_id;
-            let state_view = ctx.node_state.view(exec_id);
-
-            ctx.run_events.broadcast(json!({
-                "exec-id": exec_id,
-                "tags": ["subgraph/pass"],
-                "pass": i,
-            }));
-
-            let mut exec = WorkflowRunner::builder()
-                .inputs(sliced)
-                .run_ctx(ctx.with_deadline(deadline))
-                .state_view(state_view)
-                .run_events(ctx.run_events.clone())
-                .build();
-
-            exec.init(&self.graph);
-            let interrupt = ctx.interrupt.clone();
-
-            let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
-            tracing::debug!("About to execute subgraph");
-
-            loop {
-                if interrupt.load(Ordering::Relaxed) {
-                    Err(WorkflowError::Interrupted)?;
-                }
-
-                if let Some(deadline) = deadline
-                    && deadline <= Instant::now()
-                {
-                    Err(WorkflowError::Timeout)?;
-                }
-
-                match exec.step(&mut target) {
-                    Ok(false) => {
-                        break;
-                    }
-                    Ok(true) => {
-                        tracing::trace!("Stepped subgraph");
-                    }
-                    Err(err) => Err(WorkflowError::Subgraph(err))?,
-                }
-            }
-
-            ctx.event(AppEvent::ProgressAdd(graph_id.0, 1));
-
-            for (res, val) in results.iter_mut().zip(exec.outputs) {
-                push_values(res, val);
-            }
-        }
-
-        ctx.event(AppEvent::ProgressEnd(graph_id.0));
-        results.push(Value::Placeholder(ValueKind::Failure));
-
-        Ok(results)
-    }
-
-    // TODO: debug missing inputs during pardo
-    fn par_foreach(
-        &mut self,
-        ctx: &super::RunContext,
-        inputs: Vec<Option<Value>>,
-    ) -> Result<Vec<Value>, WorkflowError> {
-        use rayon::prelude::*;
-
-        let mut ctx = ctx.clone();
-        ctx.is_subgraph = true;
-
-        let graph_id = self.graph.uuid;
-
-        let lengths = input_lengths(&inputs);
-
-        if !lengths.iter().all(|s| *s == lengths[0]) {
-            Err(WorkflowError::Conversion(format!(
-                "List inputs are not the same length: {lengths:?}"
-            )))?;
-        }
-
-        ctx.node_state.reset(ctx.exec_id.scope(self.graph.uuid, 0));
-
-        let results = self.init_outputs();
-
-        let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
-        ctx.event(AppEvent::ProgressBegin(graph_id.0, num_iters));
-
-        ctx.run_events.broadcast(json!({
-            "exec-id": ctx.exec_id,
-            "scope": Uuid::from(ctx.exec_id.scope(self.graph.uuid, 0)),
-            "msg": "starting subgraph",
-            "tags": ["subgraph"],
-            "title": &self.title,
-            "flavor": &self.flavor,
-            "graph": &self.graph.uuid,
-        }));
-
-        let all_out = (0..num_iters)
-            .into_par_iter()
-            .map(|i| {
-                tracing::trace!("Initializing runner for {graph_id:?} pass {i}");
-                let sliced = par_slice(&inputs, i);
-                let ctx = ctx.with_scope(&self.title, self.graph.uuid, i);
-                let exec_id = ctx.exec_id;
-                let state_view = ctx.node_state.view(exec_id);
-                let deadline = self
-                    .timeout
-                    .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
-                let deadline = min_instant(deadline, ctx.deadline);
-
-                ctx.run_events.broadcast(json!({
-                    "exec-id": exec_id,
-                    "tags": ["subgraph/pass"],
-                    "pass": i,
-                }));
-
-                let mut exec = WorkflowRunner::builder()
-                    .inputs(sliced)
-                    .run_ctx(ctx.with_deadline(deadline))
-                    .state_view(state_view)
-                    .run_events(ctx.run_events.clone())
-                    .build();
-
-                exec.init(&self.graph);
-                exec
-            })
-            .map(|mut exec| -> Result<Vec<Option<Value>>, WorkflowError> {
-                let interrupt = ctx.interrupt.clone();
-                let deadline = self
-                    .timeout
-                    .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
-                let deadline = min_instant(deadline, ctx.deadline);
-
-                tracing::trace!(
-                    "Running graph {graph_id:?} exec {:?}",
-                    exec.state_view.exec_id
-                );
-
-                let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
-                tracing::debug!("About to execute subgraph {:?}", self.graph.uuid);
-
-                loop {
-                    if interrupt.load(Ordering::Relaxed) {
-                        Err(WorkflowError::Interrupted)?;
-                    }
-
-                    if let Some(deadline) = deadline
-                        && deadline <= Instant::now()
-                    {
-                        Err(WorkflowError::Timeout)?;
-                    }
-
-                    match exec.step(&mut target) {
-                        Ok(false) => {
-                            break;
-                        }
-                        Ok(true) => {
-                            tracing::trace!("Stepped subgraph");
-                        }
-                        Err(err) => Err(WorkflowError::Subgraph(err))?,
-                    }
-                }
-
-                ctx.event(AppEvent::ProgressAdd(graph_id.0, 1));
-                Ok(exec.outputs)
-            })
-            .try_fold(
-                || results.clone(),
-                |mut acc: Vec<Value>, item| -> Result<_, WorkflowError> {
-                    for (res, val) in acc.iter_mut().zip(item?) {
-                        push_values(res, val);
-                    }
-                    Ok(acc)
-                },
-            )
-            .try_reduce(
-                || results.clone(),
-                |mut left, right| {
-                    for (acc, items) in left.iter_mut().zip(right) {
-                        concat_values(acc, items);
-                    }
-                    Ok(left)
-                },
-            );
-
-        let mut results = all_out?;
-        ctx.event(AppEvent::ProgressEnd(graph_id.0));
-        results.push(Value::Placeholder(ValueKind::Failure));
-
-        Ok(results)
-    }
-
-    fn init_outputs(&mut self) -> Vec<Value> {
-        use Value::*;
-        (0..self.outputs() - 1)
-            .map(|i| match self.out_kind(i) {
-                ValueKind::TextList => TextList(vector![]),
-                ValueKind::IntList => IntList(vector![]),
-                ValueKind::FloatList => FloatList(vector![]),
-                ValueKind::MsgList => MsgList(vector![]),
-                ValueKind::Json => Json(Arc::new(serde_json::Value::Array(vec![]))),
-                _ => Default::default(),
-            })
-            .collect_vec()
-    }
-}
-
-fn input_lengths(inputs: &[Option<Value>]) -> Vec<usize> {
-    use Value::*;
-    inputs
-        .iter()
-        .filter_map(|x| x.clone())
-        .filter(|v| v.is_list())
-        .map(|v| match v {
-            TextList(items) => items.len(),
-            IntList(items) => items.len(),
-            FloatList(items) => items.len(),
-            MsgList(items) => items.len(),
-            Json(inner) if inner.is_array() => inner.as_array().unwrap().len(),
-            _ => unreachable!(),
-        })
-        .collect_vec()
 }
 
 impl DynNode for Subgraph {
@@ -634,6 +131,7 @@ impl DynNode for Subgraph {
         }
     }
 
+    #[cfg(feature = "native")]
     fn check(&self, ctx: &CheckContext) -> im::OrdMap<(GraphId, NodeId), Cow<'static, str>> {
         let sub_ctx = ctx.with_graph(self.graph.uuid);
 
@@ -646,6 +144,7 @@ impl DynNode for Subgraph {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &super::RunContext,
@@ -660,178 +159,6 @@ impl DynNode for Subgraph {
             Flavor::Iterative if self.parallel => self.par_foreach(ctx, inputs),
             Flavor::Iterative => self.ser_foreach(ctx, inputs),
         }
-    }
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for Subgraph {
-    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
-        other.downcast_ref::<Self>().is_some_and(|other| {
-            self.flavor == other.flavor
-                && self.parallel == other.parallel
-                && self.limit == other.limit
-                && self.timeout == other.timeout
-                && self.graph.weak_eq(&other.graph)
-        })
-    }
-
-    fn on_paste(&mut self) {
-        let uuid = crate::workflow::GraphId::new();
-        let nodes = self
-            .graph
-            .nodes
-            .iter()
-            .map(|(k, v)| {
-                let mut meta = v.clone();
-                meta.value.as_ui_mut().on_paste();
-
-                (*k, meta)
-            })
-            .collect();
-
-        self.graph = ShadowGraph {
-            uuid,
-            nodes,
-            ..self.graph.clone()
-        };
-    }
-
-    fn title_mut(&mut self) -> Option<&mut String> {
-        Some(&mut self.title)
-    }
-
-    fn tooltip(&self) -> &str {
-        match self.flavor {
-            Flavor::Iterative => {
-                "Runs a workflow for every item in the input list(s).\n\
-                    All input lists must have the same length.\n\
-                    Any scalar values will be broadcast to each run.\n\
-                    Output values will be collected into output lists."
-            }
-            _ => {
-                "Contains a workflow that executes independently when this node is run.\n\
-                    Double click the icon to edit the internal graph.\n\
-                    Customize the in/out pins by editing the Start/Finish nodes inside."
-            }
-        }
-    }
-
-    // TODO: allow adding/remove pins. Removal should drop connections inside graph.
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &super::EditContext,
-        pin_id: usize,
-        _remote: Option<super::Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        if let Some(start) = self.graph.start_node() {
-            let text = start.fields.get(pin_id).map(|x| x.0.as_str()).unwrap_or("");
-            ui.label(text);
-        };
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-
-    fn show_output(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &super::EditContext,
-        pin_id: usize,
-    ) -> egui_snarl::ui::PinInfo {
-        if pin_id == self.outputs() - 1 {
-            ui.label("failure");
-        } else if let Some(finish) = self.graph.finish_node() {
-            let text = finish
-                .fields
-                .get(pin_id)
-                .map(|x| x.0.as_str())
-                .unwrap_or("");
-            ui.label(text);
-        };
-
-        self.out_kind(pin_id).default_pin()
-    }
-
-    fn has_body(&self) -> bool {
-        true
-    }
-
-    fn show_body(&mut self, ui: &mut egui::Ui, ctx: &super::EditContext) {
-        ui.vertical_centered(|ui| {
-            let resp = ui.scope_builder(
-                UiBuilder::new()
-                    .id_salt(ctx.current_node)
-                    .sense(Sense::click()),
-                |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.set_min_width(250.0);
-
-                        ui.style_mut().interaction.selectable_labels = false;
-
-                        match &self.flavor {
-                            Flavor::Simple => ui
-                                .label(egui::RichText::new(GRAPH).size(128.0))
-                                .interact(egui::Sense::click())
-                                .double_clicked(),
-                            Flavor::Looping => ui
-                                .label(egui::RichText::new(REPEAT).size(128.0))
-                                .interact(egui::Sense::click())
-                                .double_clicked(),
-                            Flavor::Iterative => ui
-                                .label(egui::RichText::new(LINE_SEGMENTS).size(128.0))
-                                .interact(egui::Sense::click())
-                                .double_clicked(),
-                        }
-                    })
-                    .inner
-                },
-            );
-
-            if resp.response.double_clicked() || resp.inner {
-                ctx.events
-                    .insert(crate::ui::AppEvent::EnterSubgraph(ctx.current_node));
-            }
-
-            if let Some(timeout) = &mut self.timeout {
-                ui.add(egui::DragValue::new(timeout).prefix("timeout: ").suffix("s"))
-                    .on_hover_text(
-                        "Maximum seconds per pass of the subgraph.\n\
-                            The node will fail if the subgraph execution takes more time than this.\n\
-                            Set to 0 to remove the timeout.",
-                    );
-
-                if *timeout < 1 {
-                    self.timeout = None;
-                }
-            } else if ui.button("no timeout").clicked() {
-                self.timeout = Some(60);
-            }
-
-            if self.flavor == Flavor::Looping {
-                if let Some(limit) = &mut self.limit {
-                    ui.add(egui::DragValue::new(limit).prefix("limit: "))
-                        .on_hover_text(
-                            "Limit the maximum number of passes.\n\
-                                The subgraph will fail if it tries to run more times than this value.\n\
-                                Set to 0 to remove the limit.",
-                        );
-
-                    if *limit < 1 {
-                        self.limit = None;
-                    }
-                } else if ui.button("no limit").clicked() {
-                    self.limit = Some(1);
-                }
-            }
-
-            if self.flavor == Flavor::Iterative {
-                ui.checkbox(&mut self.parallel, "parallel");
-            }
-        });
-    }
-
-    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
-        codex.nesting_theme()
     }
 }
 
@@ -924,52 +251,742 @@ fn par_slice(inputs: &[Option<Value>], i: usize) -> Vec<Option<Value>> {
         .collect_vec()
 }
 
-#[cfg(feature = "ui")]
-fn subgraph_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
-    ui.menu_button("Subgraph", |ui| {
-        if ui.button("Simple").clicked() {
-            snarl.insert_node(pos.into(), Subgraph::default().into());
+#[cfg(feature = "native")]
+mod forward {
+    use im::vector;
+    use serde_json::json;
+    use std::{
+        sync::atomic::Ordering,
+        time::{Duration, Instant},
+    };
+    use uuid::Uuid;
+
+    use crate::{
+        events::ProgressEvent,
+        workflow::{
+            RunContext, WorkflowError, min_instant,
+            runner::{ExecState, WorkflowRunner},
+        },
+    };
+
+    use super::*;
+
+    fn input_lengths(inputs: &[Option<Value>]) -> Vec<usize> {
+        use Value::*;
+        inputs
+            .iter()
+            .filter_map(|x| x.clone())
+            .filter(|v| v.is_list())
+            .map(|v| match v {
+                TextList(items) => items.len(),
+                IntList(items) => items.len(),
+                FloatList(items) => items.len(),
+                MsgList(items) => items.len(),
+                Json(inner) if inner.is_array() => inner.as_array().unwrap().len(),
+                _ => unreachable!(),
+            })
+            .collect_vec()
+    }
+
+    impl Subgraph {
+        pub fn exec_simple(
+            &mut self,
+            ctx: &RunContext,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            // TODO: customize context for subgraph
+            // What to do about outputs channel?
+            let mut ctx = ctx.clone();
+            ctx.is_subgraph = true;
+
+            let deadline = self
+                .timeout
+                .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
+
+            let ctx = ctx.with_scope(&self.title, self.graph.uuid, 0);
+            let exec_id = ctx.exec_id;
+            ctx.node_state.reset(exec_id);
+            let state_view = ctx.node_state.view(exec_id);
+
+            ctx.run_events.broadcast(json!({
+                "exec-id": ctx.exec_id,
+                "msg": "starting subgraph",
+                "tags": ["subgraph"],
+                "title": &self.title,
+                "flavor": &self.flavor,
+                "graph": &self.graph.uuid,
+            }));
+
+            let mut exec = WorkflowRunner::builder()
+                .inputs(inputs)
+                .run_ctx(ctx.with_deadline(deadline))
+                .state_view(state_view)
+                .run_events(ctx.run_events.clone())
+                .build();
+
+            exec.init(&self.graph);
+            let interrupt = ctx.interrupt.clone();
+
+            let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
+            tracing::debug!("About to execute subgraph {:?}", self.graph.uuid);
+
+            loop {
+                if interrupt.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                if let Some(deadline) = deadline
+                    && deadline <= Instant::now()
+                {
+                    Err(WorkflowError::Timeout)?;
+                }
+
+                match exec.step(&mut target) {
+                    Ok(false) => {
+                        break;
+                    }
+                    Ok(true) => {
+                        tracing::trace!("Stepped subgraph");
+                    }
+                    Err(err) => Err(WorkflowError::Subgraph(err))?,
+                }
+            }
+
+            let mut results = exec
+                .outputs
+                .iter()
+                .map(|it| it.clone().unwrap_or_default())
+                .collect_vec();
+
+            results.push(Value::Placeholder(ValueKind::Failure));
+
+            tracing::info!("Executed subgraph. results {results:?}");
+
+            Ok(results)
         }
 
-        if ui.button("Looping").clicked() {
-            let mut container = Subgraph::default().with_flavor(Flavor::Looping);
-            let max_id = container.graph.nodes.keys().max().unwrap();
-            let ctrl_id = NodeId(max_id.0 + 1);
+        pub fn exec_looping(
+            &mut self,
+            ctx: &RunContext,
+            mut inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            let mut ctx = ctx.clone();
+            ctx.is_subgraph = true;
 
-            let starter = container.graph.start_node().unwrap();
+            let mut loop_index = 0;
+            ctx.node_state.reset(ctx.exec_id.scope(self.graph.uuid, 0));
+            ctx.run_events.broadcast(json!({
+                "exec-id": ctx.exec_id,
+                "scope": Uuid::from(ctx.exec_id.scope(self.graph.uuid, 0)),
+                "msg": "starting subgraph",
+                "tags": ["subgraph"],
+                "title": &self.title,
+                "flavor": &self.flavor,
+                "graph": &self.graph.uuid,
+            }));
 
-            // Splice in the loop controller programatically
-            let controller = LoopControl {
-                fields: starter.fields.clone(),
+            // Runs the subgraph until it stops requesting to repeat.
+            // Final results gathered from Finish node on last pass.
+            let mut results = loop {
+                let deadline = self
+                    .timeout
+                    .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
+                let deadline = min_instant(deadline, ctx.deadline);
+
+                tracing::debug!("Looping subgraph run #{loop_index}");
+                let ctx = ctx.with_scope(&self.title, self.graph.uuid, loop_index);
+                let exec_id = ctx.exec_id;
+                let state_view = ctx.node_state.view(exec_id);
+
+                ctx.run_events.broadcast(json!({
+                    "exec-id": exec_id,
+                    "tags": ["subgraph/pass"],
+                    "pass": loop_index,
+                }));
+
+                let mut exec = WorkflowRunner::builder()
+                    .inputs(inputs.clone())
+                    .run_ctx(ctx.with_deadline(deadline))
+                    .state_view(state_view)
+                    .run_events(ctx.run_events.clone())
+                    .build();
+
+                exec.init(&self.graph);
+
+                let interrupt = ctx.interrupt.clone();
+
+                let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
+                tracing::debug!("About to execute subgraph {:?}", self.graph.uuid);
+
+                // Inner loop steps through the graph
+                let result = loop {
+                    if interrupt.load(Ordering::Relaxed) {
+                        break Ok(false);
+                    }
+
+                    if let Some(deadline) = deadline
+                        && deadline <= Instant::now()
+                    {
+                        Err(WorkflowError::Timeout)?;
+                    }
+
+                    let result = exec.step(&mut target);
+                    tracing::trace!("Stepped subgraph");
+                    if result != Ok(true) {
+                        break result;
+                    }
+                };
+
+                // Get the status of the loop controller to determine whether to repeat
+                tracing::debug!("Loop control node id is {:?}", self.graph.looper);
+                let loop_state = self
+                    .graph
+                    .looper
+                    .as_ref()
+                    .and_then(|f| exec.state_view.get(f))
+                    .unwrap_or(ExecState::Waiting(Default::default()));
+
+                tracing::debug!("Loop state is {loop_state:?}");
+                let repeat = if let Some(limit) = self.limit
+                    && loop_index >= limit - 1
+                {
+                    false
+                } else {
+                    matches!(loop_state, ExecState::Done(_))
+                };
+
+                if repeat {
+                    // Ignore unfinished errors when repeating
+                    if let Err(err) = result
+                        && !matches!(*err, WorkflowError::Unfinished(_))
+                    {
+                        Err(WorkflowError::Subgraph(err))?
+                    }
+
+                    loop_index += 1;
+
+                    let values = exec.gather_inputs(self.graph.looper.unwrap());
+                    tracing::info!("We continue with values {values:?}");
+
+                    // Update graph inputs with values from loop controller
+                    for (input, updated) in inputs.iter_mut().zip(values) {
+                        if let Some(value) = updated {
+                            *input = Some(value);
+                        }
+                    }
+                } else {
+                    if let Err(err) = result {
+                        Err(WorkflowError::Subgraph(err))?
+                    }
+
+                    // Gather the final results from the Finish node
+                    let results = exec
+                        .outputs
+                        .iter()
+                        .map(|it| it.clone().unwrap_or_default())
+                        .collect_vec();
+
+                    tracing::info!("Looping done with results {results:?}");
+
+                    break results;
+                }
             };
 
-            let mut subgraph = container.graph.with_metanode(
-                &ctrl_id,
-                &MetaNode {
-                    value: controller.into(),
-                    pos: egui::pos2(500.0, -300.0).into(),
-                    open: true,
-                },
-            );
-            subgraph.looper = Some(ctrl_id);
+            results.push(Value::Placeholder(ValueKind::Failure));
 
-            container.graph = subgraph;
+            tracing::info!("Executed subgraph. results {results:?}");
 
-            snarl.insert_node(pos.into(), container.into());
+            Ok(results)
         }
 
-        if ui.button("Iterative").clicked() {
-            snarl.insert_node(
-                pos.into(),
-                Subgraph::default().with_flavor(Flavor::Iterative).into(),
-            );
+        pub fn ser_foreach(
+            &mut self,
+            ctx: &RunContext,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            let mut ctx = ctx.clone();
+            ctx.is_subgraph = true;
+
+            let graph_id = self.graph.uuid;
+
+            let lengths = input_lengths(&inputs);
+
+            if !lengths.iter().all(|s| *s == lengths[0]) {
+                Err(WorkflowError::Conversion(format!(
+                    "List inputs are not the same length: {lengths:?}"
+                )))?;
+            }
+
+            ctx.node_state.reset(ctx.exec_id.scope(self.graph.uuid, 0));
+
+            ctx.run_events.broadcast(json!({
+                "exec-id": ctx.exec_id,
+                "scope": Uuid::from(ctx.exec_id.scope(self.graph.uuid, 0)),
+                "msg": "starting subgraph",
+                "tags": ["subgraph"],
+                "title": &self.title,
+                "flavor": &self.flavor,
+                "graph": &self.graph.uuid,
+            }));
+
+            let mut results = self.init_outputs();
+
+            let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
+            let progress = ProgressEvent::Begin(graph_id.0, num_iters as u64);
+            ctx.run_events.broadcast(progress.clone());
+            ctx.event(AppEvent::Progress(progress));
+            for i in 0..num_iters {
+                let deadline = self
+                    .timeout
+                    .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
+                let deadline = min_instant(deadline, ctx.deadline);
+
+                let sliced = par_slice(&inputs, i);
+                let ctx = ctx.with_scope(&self.title, self.graph.uuid, i);
+                let exec_id = ctx.exec_id;
+                let state_view = ctx.node_state.view(exec_id);
+
+                ctx.run_events.broadcast(json!({
+                    "exec-id": exec_id,
+                    "tags": ["subgraph/pass"],
+                    "pass": i,
+                }));
+
+                let mut exec = WorkflowRunner::builder()
+                    .inputs(sliced)
+                    .run_ctx(ctx.with_deadline(deadline))
+                    .state_view(state_view)
+                    .run_events(ctx.run_events.clone())
+                    .build();
+
+                exec.init(&self.graph);
+                let interrupt = ctx.interrupt.clone();
+
+                let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
+                tracing::debug!("About to execute subgraph");
+
+                loop {
+                    if interrupt.load(Ordering::Relaxed) {
+                        Err(WorkflowError::Interrupted)?;
+                    }
+
+                    if let Some(deadline) = deadline
+                        && deadline <= Instant::now()
+                    {
+                        Err(WorkflowError::Timeout)?;
+                    }
+
+                    match exec.step(&mut target) {
+                        Ok(false) => {
+                            break;
+                        }
+                        Ok(true) => {
+                            tracing::trace!("Stepped subgraph");
+                        }
+                        Err(err) => Err(WorkflowError::Subgraph(err))?,
+                    }
+                }
+
+                let progress = ProgressEvent::Add(graph_id.0, 1);
+                ctx.run_events.broadcast(progress.clone());
+                ctx.event(AppEvent::Progress(progress));
+
+                for (res, val) in results.iter_mut().zip(exec.outputs) {
+                    push_values(res, val);
+                }
+            }
+
+            let progress = ProgressEvent::End(graph_id.0);
+            ctx.run_events.broadcast(progress.clone());
+            ctx.event(AppEvent::Progress(progress));
+            results.push(Value::Placeholder(ValueKind::Failure));
+
+            Ok(results)
         }
-    });
+
+        // TODO: debug missing inputs during pardo
+        pub fn par_foreach(
+            &mut self,
+            ctx: &RunContext,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            use rayon::prelude::*;
+
+            let mut ctx = ctx.clone();
+            ctx.is_subgraph = true;
+
+            let graph_id = self.graph.uuid;
+
+            let lengths = input_lengths(&inputs);
+
+            if !lengths.iter().all(|s| *s == lengths[0]) {
+                Err(WorkflowError::Conversion(format!(
+                    "List inputs are not the same length: {lengths:?}"
+                )))?;
+            }
+
+            ctx.node_state.reset(ctx.exec_id.scope(self.graph.uuid, 0));
+
+            let results = self.init_outputs();
+
+            let num_iters = if lengths.is_empty() { 1 } else { lengths[0] };
+            let progress = ProgressEvent::Begin(graph_id.0, num_iters as u64);
+            ctx.run_events.broadcast(progress.clone());
+            ctx.event(AppEvent::Progress(progress));
+
+            ctx.run_events.broadcast(json!({
+                "exec-id": ctx.exec_id,
+                "scope": Uuid::from(ctx.exec_id.scope(self.graph.uuid, 0)),
+                "msg": "starting subgraph",
+                "tags": ["subgraph"],
+                "title": &self.title,
+                "flavor": &self.flavor,
+                "graph": &self.graph.uuid,
+            }));
+
+            let all_out = (0..num_iters)
+                .into_par_iter()
+                .map(|i| {
+                    tracing::trace!("Initializing runner for {graph_id:?} pass {i}");
+                    let sliced = par_slice(&inputs, i);
+                    let ctx = ctx.with_scope(&self.title, self.graph.uuid, i);
+                    let exec_id = ctx.exec_id;
+                    let state_view = ctx.node_state.view(exec_id);
+                    let deadline = self
+                        .timeout
+                        .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
+                    let deadline = min_instant(deadline, ctx.deadline);
+
+                    ctx.run_events.broadcast(json!({
+                        "exec-id": exec_id,
+                        "tags": ["subgraph/pass"],
+                        "pass": i,
+                    }));
+
+                    let mut exec = WorkflowRunner::builder()
+                        .inputs(sliced)
+                        .run_ctx(ctx.with_deadline(deadline))
+                        .state_view(state_view)
+                        .run_events(ctx.run_events.clone())
+                        .build();
+
+                    exec.init(&self.graph);
+                    exec
+                })
+                .map(|mut exec| -> Result<Vec<Option<Value>>, WorkflowError> {
+                    let interrupt = ctx.interrupt.clone();
+                    let deadline = self
+                        .timeout
+                        .and_then(|t| Instant::now().checked_add(Duration::from_secs(t)));
+                    let deadline = min_instant(deadline, ctx.deadline);
+
+                    tracing::trace!(
+                        "Running graph {graph_id:?} exec {:?}",
+                        exec.state_view.exec_id
+                    );
+
+                    let mut target = egui_snarl::Snarl::try_from(self.graph.clone())?;
+                    tracing::debug!("About to execute subgraph {:?}", self.graph.uuid);
+
+                    loop {
+                        if interrupt.load(Ordering::Relaxed) {
+                            Err(WorkflowError::Interrupted)?;
+                        }
+
+                        if let Some(deadline) = deadline
+                            && deadline <= Instant::now()
+                        {
+                            Err(WorkflowError::Timeout)?;
+                        }
+
+                        match exec.step(&mut target) {
+                            Ok(false) => {
+                                break;
+                            }
+                            Ok(true) => {
+                                tracing::trace!("Stepped subgraph");
+                            }
+                            Err(err) => Err(WorkflowError::Subgraph(err))?,
+                        }
+                    }
+
+                    let progress = ProgressEvent::Add(graph_id.0, 1);
+                    ctx.run_events.broadcast(progress.clone());
+                    ctx.event(AppEvent::Progress(progress));
+                    Ok(exec.outputs)
+                })
+                .try_fold(
+                    || results.clone(),
+                    |mut acc: Vec<Value>, item| -> Result<_, WorkflowError> {
+                        for (res, val) in acc.iter_mut().zip(item?) {
+                            push_values(res, val);
+                        }
+                        Ok(acc)
+                    },
+                )
+                .try_reduce(
+                    || results.clone(),
+                    |mut left, right| {
+                        for (acc, items) in left.iter_mut().zip(right) {
+                            concat_values(acc, items);
+                        }
+                        Ok(left)
+                    },
+                );
+
+            let mut results = all_out?;
+            let progress = ProgressEvent::End(graph_id.0);
+            ctx.run_events.broadcast(progress.clone());
+            ctx.event(AppEvent::Progress(progress));
+            results.push(Value::Placeholder(ValueKind::Failure));
+
+            Ok(results)
+        }
+
+        pub fn init_outputs(&mut self) -> Vec<Value> {
+            use Value::*;
+            (0..self.outputs() - 1)
+                .map(|i| match self.out_kind(i) {
+                    ValueKind::TextList => TextList(vector![]),
+                    ValueKind::IntList => IntList(vector![]),
+                    ValueKind::FloatList => FloatList(vector![]),
+                    ValueKind::MsgList => MsgList(vector![]),
+                    ValueKind::Json => Json(Arc::new(serde_json::Value::Array(vec![]))),
+                    _ => Default::default(),
+                })
+                .collect_vec()
+        }
+    }
 }
 
 #[cfg(feature = "ui")]
-inventory::submit! {
-    super::GraphSubmenu("subgraph", subgraph_menu)
+mod gui {
+    use egui::{Sense, UiBuilder};
+    use egui_phosphor::regular::{GRAPH, LINE_SEGMENTS, REPEAT};
+
+    use crate::workflow::{
+        EditContext, MetaNode, NodeTheme, ThemeCodex, UiNode,
+        nodes::{GraphSubmenu, LoopControl},
+    };
+
+    use super::*;
+
+    impl UiNode for Subgraph {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other.downcast_ref::<Self>().is_some_and(|other| {
+                self.flavor == other.flavor
+                    && self.parallel == other.parallel
+                    && self.limit == other.limit
+                    && self.timeout == other.timeout
+                    && self.graph.weak_eq(&other.graph)
+            })
+        }
+
+        fn on_paste(&mut self) {
+            let uuid = crate::workflow::GraphId::new();
+            let nodes = self
+                .graph
+                .nodes
+                .iter()
+                .map(|(k, v)| {
+                    let mut meta = v.clone();
+                    meta.value.as_ui_mut().on_paste();
+
+                    (*k, meta)
+                })
+                .collect();
+
+            self.graph = ShadowGraph {
+                uuid,
+                nodes,
+                ..self.graph.clone()
+            };
+        }
+
+        fn title_mut(&mut self) -> Option<&mut String> {
+            Some(&mut self.title)
+        }
+
+        fn tooltip(&self) -> &str {
+            match self.flavor {
+                Flavor::Iterative => {
+                    "Runs a workflow for every item in the input list(s).\n\
+                    All input lists must have the same length.\n\
+                    Any scalar values will be broadcast to each run.\n\
+                    Output values will be collected into output lists."
+                }
+                _ => {
+                    "Contains a workflow that executes independently when this node is run.\n\
+                    Double click the icon to edit the internal graph.\n\
+                    Customize the in/out pins by editing the Start/Finish nodes inside."
+                }
+            }
+        }
+
+        // TODO: allow adding/remove pins. Removal should drop connections inside graph.
+        fn show_input(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+            _remote: Option<super::Value>,
+        ) -> egui_snarl::ui::PinInfo {
+            if let Some(start) = self.graph.start_node() {
+                let text = start.fields.get(pin_id).map(|x| x.0.as_str()).unwrap_or("");
+                ui.label(text);
+            };
+
+            self.in_kinds(pin_id).first().unwrap().default_pin()
+        }
+
+        fn show_output(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+        ) -> egui_snarl::ui::PinInfo {
+            if pin_id == self.outputs() - 1 {
+                ui.label("failure");
+            } else if let Some(finish) = self.graph.finish_node() {
+                let text = finish
+                    .fields
+                    .get(pin_id)
+                    .map(|x| x.0.as_str())
+                    .unwrap_or("");
+                ui.label(text);
+            };
+
+            self.out_kind(pin_id).default_pin()
+        }
+
+        fn has_body(&self) -> bool {
+            true
+        }
+
+        fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
+            ui.vertical_centered(|ui| {
+            let resp = ui.scope_builder(
+                UiBuilder::new()
+                    .id_salt(ctx.current_node)
+                    .sense(Sense::click()),
+                |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.set_min_width(250.0);
+
+                        ui.style_mut().interaction.selectable_labels = false;
+
+                        match &self.flavor {
+                            Flavor::Simple => ui
+                                .label(egui::RichText::new(GRAPH).size(128.0))
+                                .interact(egui::Sense::click())
+                                .double_clicked(),
+                            Flavor::Looping => ui
+                                .label(egui::RichText::new(REPEAT).size(128.0))
+                                .interact(egui::Sense::click())
+                                .double_clicked(),
+                            Flavor::Iterative => ui
+                                .label(egui::RichText::new(LINE_SEGMENTS).size(128.0))
+                                .interact(egui::Sense::click())
+                                .double_clicked(),
+                        }
+                    })
+                    .inner
+                },
+            );
+
+            if resp.response.double_clicked() || resp.inner {
+                ctx.events
+                    .insert(AppEvent::EnterSubgraph(ctx.current_node));
+            }
+
+            if let Some(timeout) = &mut self.timeout {
+                ui.add(egui::DragValue::new(timeout).prefix("timeout: ").suffix("s"))
+                    .on_hover_text(
+                        "Maximum seconds per pass of the subgraph.\n\
+                            The node will fail if the subgraph execution takes more time than this.\n\
+                            Set to 0 to remove the timeout.",
+                    );
+
+                if *timeout < 1 {
+                    self.timeout = None;
+                }
+            } else if ui.button("no timeout").clicked() {
+                self.timeout = Some(60);
+            }
+
+            if self.flavor == Flavor::Looping {
+                if let Some(limit) = &mut self.limit {
+                    ui.add(egui::DragValue::new(limit).prefix("limit: "))
+                        .on_hover_text(
+                            "Limit the maximum number of passes.\n\
+                                The subgraph will fail if it tries to run more times than this value.\n\
+                                Set to 0 to remove the limit.",
+                        );
+
+                    if *limit < 1 {
+                        self.limit = None;
+                    }
+                } else if ui.button("no limit").clicked() {
+                    self.limit = Some(1);
+                }
+            }
+
+            if self.flavor == Flavor::Iterative {
+                ui.checkbox(&mut self.parallel, "parallel");
+            }
+        });
+        }
+
+        fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+            codex.nesting_theme()
+        }
+    }
+
+    fn subgraph_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
+        ui.menu_button("Subgraph", |ui| {
+            if ui.button("Simple").clicked() {
+                snarl.insert_node(pos.into(), Subgraph::default().into());
+            }
+
+            if ui.button("Looping").clicked() {
+                let mut container = Subgraph::default().with_flavor(Flavor::Looping);
+                let max_id = container.graph.nodes.keys().max().unwrap();
+                let ctrl_id = NodeId(max_id.0 + 1);
+
+                let starter = container.graph.start_node().unwrap();
+
+                // Splice in the loop controller programatically
+                let controller = LoopControl {
+                    fields: starter.fields.clone(),
+                };
+
+                let mut subgraph = container.graph.with_metanode(
+                    &ctrl_id,
+                    &MetaNode {
+                        value: controller.into(),
+                        pos: egui::pos2(500.0, -300.0).into(),
+                        open: true,
+                    },
+                );
+                subgraph.looper = Some(ctrl_id);
+
+                container.graph = subgraph;
+
+                snarl.insert_node(pos.into(), container.into());
+            }
+
+            if ui.button("Iterative").clicked() {
+                snarl.insert_node(
+                    pos.into(),
+                    Subgraph::default().with_flavor(Flavor::Iterative).into(),
+                );
+            }
+        });
+    }
+
+    inventory::submit! {
+        GraphSubmenu("subgraph", subgraph_menu)
+    }
 }
 
 #[cfg(test)]

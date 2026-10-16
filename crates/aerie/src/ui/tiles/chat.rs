@@ -1,26 +1,30 @@
-use crate::{
-    rig::message::{Message, UserContent},
-    utils::{IMAGE_CACHE, MERMAID_MD, show_image},
-};
 use eframe::egui;
-use egui_commonmark::*;
 use egui_extras::{Size, StripBuilder};
-use egui_phosphor::regular::{GIT_BRANCH, GLOBE, IMAGES, TRASH, X_CIRCLE};
+use egui_phosphor::regular::{GIT_BRANCH, GLOBE, IMAGE_BROKEN, IMAGES, TRASH, X_CIRCLE};
 use itertools::Itertools;
-use std::{borrow::Cow, collections::VecDeque, sync::atomic::Ordering};
+use std::{
+    borrow::Cow,
+    sync::{Arc, atomic::Ordering},
+};
 
 use crate::{
-    ChatContent,
+    chat::ChatContent,
     config::ConfigExt,
-    ui::{AppEvent, agent_bubble, error_bubble, shortcuts::squelch, user_bubble},
-    utils::{ErrorDistiller as _, FormatOpts},
+    events::AppEvent,
+    rig::message::{Message, UserContent},
+    ui::{error_bubble, shortcuts::squelch},
+    utils::{ErrorDistiller as _, IMAGE_CACHE, ImageResolver, img_str_to_egui_key},
 };
+
+pub use crate::ui::render::render_message;
+pub use crate::ui::render::render_message_width;
 
 // Too many refs to self for a free function. Need to clean this up
 impl super::AppState {
     pub fn chat_ui(&mut self, ui: &mut egui::Ui) {
         let errors = self.errors.clone();
         let workflows = self.workflows.names().map(|s| s.to_string()).collect_vec();
+        let images = self.images.clone();
 
         // TODO: top panel with helper actions
         egui::TopBottomPanel::bottom("prompt")
@@ -37,43 +41,49 @@ impl super::AppState {
                             .auto_shrink(false)
                             .show(ui, |ui| {
                                 ui.set_max_height(
-                                    3.0 * ui.available_width() * self.images.len() as f32,
+                                    3.0 * ui.available_width() * images.load().len() as f32,
                                 );
 
                                 let mut remove_idx = None;
 
-                                for (i, path) in self.images.iter().enumerate() {
-                                    let path = if let Ok(exists) = std::fs::exists(path)
-                                        && exists
-                                    {
-                                        Cow::Owned(format!("file://{path}"))
-                                    } else {
-                                        Cow::Borrowed(path)
-                                    };
+                                for (i, path) in images.load().iter().enumerate() {
+                                    if let Ok(key) = img_str_to_egui_key(path) {
+                                        let mut cache = IMAGE_CACHE.lock();
+                                        if let Some(image) = cache.get(&key) {
+                                            let resp = ui.image(image.clone()).on_hover_ui(|ui| {
+                                                ui.add(
+                                                    egui::Image::new(image.clone())
+                                                        .max_size(ui.ctx().content_rect().size() * 0.75),
+                                                );
+                                            });
 
-                                    let resp = ui.image(&*path).on_hover_ui(|ui| {
-                                        ui.add(
-                                            egui::Image::new(&*path)
-                                                .max_size(ui.ctx().content_rect().size() * 0.75),
-                                        );
-                                    });
+                                            let button = egui::Button::new(X_CIRCLE)
+                                                .small()
+                                                .fill(egui::Color32::from_black_alpha(0));
+                                            let rect = egui::Rect::from_center_size(
+                                                resp.rect.left_top() + egui::vec2(8.0, 4.0),
+                                                egui::vec2(8.0, 8.0),
+                                            );
+                                            let resp = ui.place(rect, button);
 
-                                    let button = egui::Button::new(X_CIRCLE)
-                                        .small()
-                                        .fill(egui::Color32::from_black_alpha(0));
-                                    let rect = egui::Rect::from_center_size(
-                                        resp.rect.left_top() + egui::vec2(8.0, 4.0),
-                                        egui::vec2(8.0, 8.0),
-                                    );
-                                    let resp = ui.place(rect, button);
-
-                                    if resp.interact(egui::Sense::click()).clicked() {
-                                        remove_idx = Some(i);
-                                    }
+                                            if resp.interact(egui::Sense::click()).clicked() {
+                                                remove_idx = Some(i);
+                                            }
+                                        } else {
+                                            let width = ui.available_width();
+                                            let widget = egui::Label::new(IMAGE_BROKEN).selectable(false);
+                                            ui.add_sized(egui::vec2(width, width * 0.75), widget);
+                                        }}
                                 }
 
                                 if let Some(idx) = remove_idx {
-                                    self.images.remove(idx);
+                                    self.events.insert(AppEvent::RemoveChatImage(idx as u32));
+                                    images.rcu(|images| {
+                                        let mut images= im::Vector::clone(images); 
+                                        images.remove(idx);
+                                        Arc::new(images)
+
+                                    });
                                 }
                             });
                         ui.vertical_centered_justified(|ui| {
@@ -84,17 +94,18 @@ impl super::AppState {
                                         StripBuilder::new(ui)
                                             .sizes(
                                                 Size::remainder(),
-                                                if self.images.is_empty() { 2 } else { 3 },
+                                                if self.images.load().is_empty() { 2 } else { 3 },
                                             )
                                             .horizontal(|mut strip| {
-                                                if !self.images.is_empty() {
+                                                if !self.images.load().is_empty() {
                                                     strip.cell(|ui| {
                                                         if ui
                                                             .button(TRASH)
                                                             .on_hover_text("Clear")
                                                             .clicked()
                                                         {
-                                                            self.images.clear();
+                                                            self.events.insert(AppEvent::ClearChatImages);
+                                                            self.images.store(Default::default());
                                                         }
                                                     });
                                                 }
@@ -112,21 +123,44 @@ impl super::AppState {
                                                         .button(IMAGES)
                                                         .on_hover_text("Load Images (filesystem)")
                                                         .clicked()
-                                                        && let Some(paths) = rfd::FileDialog::new()
-                                                            .set_directory(&self.state.export_dir)
-                                                            .add_filter(
-                                                                "images",
-                                                                &["png", "jpg", "jpeg", "webp"],
-                                                            )
-                                                            .add_filter("all", &[""])
-                                                            .pick_files()
                                                     {
-                                                        let paths =
-                                                            paths.into_iter().filter_map(|p| {
-                                                                p.to_str().map(|s| s.to_string())
-                                                            });
+                                                        use crate::utils::spawn_wherever;
 
-                                                        self.images.extend(paths);
+                                                        let events = self.events.clone();
+
+                                                        spawn_wherever(async move {
+                                                            if let Some(fhs) =
+                                                                rfd::AsyncFileDialog::new()
+                                                                    // .set_directory(
+                                                                    //     &self.state.export_dir,
+                                                                    // )
+                                                                    .add_filter(
+                                                                        "images",
+                                                                        &[
+                                                                            "png", "jpg", "jpeg",
+                                                                            "webp",
+                                                                        ],
+                                                                    )
+                                                                    .add_filter("all", &[""])
+                                                                    .pick_files().await
+                                                            {
+                                                                use futures_util::future::join_all;
+
+                                                                // TODO: pre-process server-side
+                                                                let new_images = join_all(fhs
+                                                                    .into_iter()
+                                                                    .map(|fh| async move {
+                                                                        let bytes = fh.read().await;
+                                                                        {
+                                                                            let name: &str = &fh.file_name();
+                                                                            let bytes = Cow::Owned(bytes);
+                                                                            ImageResolver::default().bytes_to_data_uri(name, bytes)
+                                                                        }
+                                                                    })).await;
+                                                                let new_images = new_images.into_iter().filter_map(|it| it.ok()).collect_vec();
+                                                                events.insert(AppEvent::AddChatImages(new_images.clone()));
+                                                            }
+                                                        });
                                                     }
                                                 });
                                             });
@@ -182,6 +216,10 @@ impl super::AppState {
                         squelch(ui.add_sized(ui.available_size(), widget));
 
                         if let Cow::Owned(prompt) = prompt_w {
+                            // TODO: more sensible delineation of responsibility
+                            #[cfg(feature = "web-ui")]
+                            self.events.insert(AppEvent::SetPrompt(prompt.clone()));
+
                             self.prompt = prompt;
                         }
                     });
@@ -192,7 +230,9 @@ impl super::AppState {
 
                     if workflow.is_empty() || workflows.contains(&workflow.to_string()) {
                         // TODO: deal with this nuking any edits in progress
-                        self.workflows.switch(workflow);
+                        // TODO: implement as action dispatch
+                        self.events
+                            .insert(AppEvent::SwitchWorkflow(workflow.to_string()));
                         self.events.insert(AppEvent::UserRunWorkflow);
                         self.events.insert(AppEvent::SetPrompt(String::new()));
                     } else {
@@ -207,7 +247,22 @@ impl super::AppState {
                             if let Some(path) = &drop.path
                                 && let Some(name) = path.to_str()
                             {
-                                self.images.push(name.to_string());
+                                self.images.rcu(|images| {
+                                    let images = im::Vector::clone(images);
+                                    self.events.insert(AppEvent::AddChatImages(vec![name.to_string()]));
+                                    Arc::new(images)
+                                });
+                            }
+                            else if let Some(bytes) = &drop.bytes {
+                                self.images.rcu(|images| {
+                                    let images = im::Vector::clone(images);
+                                    if let Some(uri) = errors.distil({
+                                        ImageResolver::default().bytes_to_data_uri(&drop.name, Cow::Borrowed(bytes.as_ref()))
+                                    }) {
+                                        self.events.insert(AppEvent::AddChatImages(vec![uri.clone()]));
+                                    }
+                                    Arc::new(images)
+                                });
                             }
                         }
                     }
@@ -224,11 +279,11 @@ impl super::AppState {
                 ui.set_width(ui.available_width());
 
                 let scroll_bottom = self.task_count.load(Ordering::Relaxed) > 0
-                    && (self.prefs.view(|s| s.autoscroll)
+                    && (self.data.prefs.view(|s| s.autoscroll)
                         || ui.button("Scroll to bottom.").clicked());
 
                 let md_cache = &mut self.cache;
-                self.session.view(|history| {
+                self.data.session.view(|history| {
                     for msg in history.iter() {
                         ui.push_id(msg.id, |ui| {
                             let aside = history.iter_aside(msg).collect_vec();
@@ -296,7 +351,7 @@ impl super::AppState {
                     }
                 });
 
-                let chat_r = self.session.scratch.load();
+                let chat_r = self.data.session.scratch.load();
                 if !chat_r.is_empty() {
                     ui.separator();
                 }
@@ -326,17 +381,34 @@ impl super::AppState {
                     ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
                 }
             });
+
+            if cfg!(feature = "debug-ui") {
+                let history = self.data.session.history.load();
+                let scratch = self.data.session.scratch.load();
+
+                let n_scratch= scratch.len();
+                let n_msgs = history.iter_msgs().count();
+                let n_errs = self.errors.load().len();
+
+                let egui::Pos2 { x, y } = ui.max_rect().right_top();
+                let over_rect =
+                egui::Rect::from_two_pos(egui::pos2(x - 128.0, y), egui::pos2(x, y + 20.0));
+
+                let widget = egui::Label::new(format!("#scratch {n_scratch}\n#msgs {n_msgs}\n#errs {n_errs}"));
+                ui.place(over_rect, widget);
+            }
         });
 
         if let Some(branch_point) = self.branch_point {
             let mut submit = false;
             let unique_name = !self.new_branch.is_empty() && {
-                self.session
+                self.data
+                    .session
                     .view(|session_r| !session_r.has_branch(&self.new_branch))
             };
 
             // Copy prompt from branch point into chat input
-            self.session.view(|hist| {
+            self.data.session.view(|hist| {
                 if self.prompt.is_empty()
                     && let Some(entry) = hist.store.get(&branch_point)
                     && let ChatContent::Message(msg) = &entry.content
@@ -382,7 +454,7 @@ impl super::AppState {
                 }
 
                 if submit {
-                    errors.distil(self.session.transform(|history| {
+                    errors.distil(self.data.session.transform(|history| {
                         let parent = history.find_parent(branch_point);
 
                         let name = std::mem::take(&mut self.new_branch);
@@ -411,7 +483,15 @@ impl super::AppState {
             };
 
             ui.label("URL(s):");
-            ui.text_edit_multiline(input).request_focus();
+            egui::Resize::default()
+                .show(ui, |ui| {
+                    egui::ScrollArea::both().auto_shrink(false).show(
+                        ui,
+                        |ui| {
+                            let widget = egui::TextEdit::multiline(input);
+                            ui.add_sized(ui.available_size(), widget).request_focus();
+                        });
+                });
             ui.separator();
 
             egui::Sides::new().show(
@@ -437,7 +517,8 @@ impl super::AppState {
 
             if submit {
                 if let Some(new_items) = self.image_input.take() {
-                    self.images.extend(new_items.lines().map(|s| s.to_string()));
+                    let new_images = new_items.lines().map(|s| s.to_string()).collect_vec();
+                    self.events.insert(AppEvent::AddChatImages(new_images.clone()));
                 }
                 ui.close();
             }
@@ -445,234 +526,6 @@ impl super::AppState {
 
         if modal.should_close() {
             self.image_input = None;
-        }
-    }
-}
-
-pub fn render_message(ui: &mut egui::Ui, cache: &mut CommonMarkCache, message: &Message) {
-    render_message_width(ui, cache, message, None);
-}
-
-pub fn render_message_width(
-    ui: &mut egui::Ui,
-    cache: &mut CommonMarkCache,
-    message: &Message,
-    width: Option<f32>,
-) {
-    use crate::utils::MessageExt as _;
-    use base64::prelude::*;
-    let mut dq = VecDeque::from_iter(message.text_fmt_opts().into_iter().enumerate());
-
-    match message {
-        Message::User { .. } => {
-            user_bubble(ui, |ui| {
-                ui.set_width(width.unwrap_or(ui.available_width() * 0.75));
-
-                ui.vertical(|ui| {
-                    while let Some((idx, (text, fmt))) = dq.pop_front() {
-                        match fmt {
-                            FormatOpts::Plain => {
-                                ui.label(text.as_ref());
-                            }
-                            FormatOpts::Pre => {
-                                egui::ScrollArea::horizontal().id_salt(idx).show(ui, |ui| {
-                                    ui.with_layout(
-                                        egui::Layout::left_to_right(egui::Align::TOP),
-                                        |ui| {
-                                            let language = "json";
-                                            let theme =
-                                        egui_extras::syntax_highlighting::CodeTheme::from_memory(
-                                            ui.ctx(),
-                                            ui.style(),
-                                        );
-
-                                            let layout_job =
-                                                egui_extras::syntax_highlighting::highlight(
-                                                    ui.ctx(),
-                                                    ui.style(),
-                                                    &theme,
-                                                    &text,
-                                                    language,
-                                                );
-                                            ui.add(
-                                                egui::Label::new(layout_job)
-                                                    .selectable(true)
-                                                    .wrap(),
-                                            );
-                                        },
-                                    );
-                                });
-                            }
-                            FormatOpts::Markdown => {
-                                CommonMarkViewer::new().show(ui, cache, &text);
-                            }
-                            FormatOpts::Reasoning => {}
-                            FormatOpts::Image => {
-                                let mut cache = IMAGE_CACHE.lock();
-                                let mut image = text;
-
-                                egui::ScrollArea::horizontal().show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        loop {
-                                            if let Some(image) = cache.get(image.as_ref()) {
-                                                show_image(ui, image, 100.0);
-                                            }
-
-                                            if matches!(
-                                                dq.front(),
-                                                Some((_, (_, FormatOpts::Image)))
-                                            ) {
-                                                image = dq.pop_front().unwrap().1.0;
-                                            } else {
-                                                break;
-                                            }
-                                        }
-                                    });
-                                });
-                            }
-                            FormatOpts::Unknown => {
-                                ui.label(text.as_ref());
-                            }
-                        }
-
-                        if !dq.is_empty() {
-                            ui.separator();
-                        }
-                    }
-                });
-            });
-        }
-        Message::Assistant { .. } => {
-            let mut all_text = String::new();
-
-            agent_bubble(ui, |ui| {
-                ui.set_width(width.unwrap_or(ui.available_width() * 0.75));
-
-                ui.vertical(|ui| {
-                    while let Some((idx, (text, fmt))) = dq.pop_front() {
-                        match fmt {
-                            FormatOpts::Plain => {
-                                ui.label(text.as_ref());
-                                all_text.push_str(&text);
-                            }
-                            FormatOpts::Pre => {
-                                all_text.push_str(&text);
-
-                                egui::ScrollArea::horizontal().id_salt(idx).show(ui, |ui| {
-                                    let language = "json";
-                                    let theme =
-                                        egui_extras::syntax_highlighting::CodeTheme::from_memory(
-                                            ui.ctx(),
-                                            ui.style(),
-                                        );
-
-                                    egui_extras::syntax_highlighting::code_view_ui(
-                                        ui, &theme, &text, language,
-                                    );
-                                });
-                            }
-                            FormatOpts::Markdown => {
-                                all_text.push_str(&text);
-                                CommonMarkViewer::new().show(ui, cache, &text);
-                            }
-                            FormatOpts::Reasoning => {
-                                ui.label(egui::RichText::new(text.as_ref()).italics());
-                            }
-                            FormatOpts::Image => {
-                                let mut cache = IMAGE_CACHE.lock();
-                                let mut image = text;
-
-                                ui.horizontal(|ui| {
-                                    loop {
-                                        if let Some(image) = cache.get(image.as_ref()) {
-                                            show_image(ui, image, 100.0);
-                                        }
-
-                                        if matches!(dq.front(), Some((_, (_, FormatOpts::Image)))) {
-                                            image = dq.pop_front().unwrap().1.0;
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                });
-                            }
-                            FormatOpts::Unknown => {
-                                all_text.push_str(&text);
-                                ui.label(text.as_ref());
-                            }
-                        }
-
-                        if !dq.is_empty() {
-                            ui.separator();
-                        }
-                    }
-                });
-            });
-
-            for (_, [diagram]) in MERMAID_MD.captures_iter(&all_text).map(|m| m.extract()) {
-                ui.scope_builder(egui::UiBuilder::new().id_salt(diagram), |ui| {
-                    let enc = BASE64_URL_SAFE_NO_PAD.encode(diagram);
-
-                    // Would prefer to use SVGs but egui implementation is a bit buggy
-                    let url = format!(
-                        "https://mermaid.ink/img/{enc}?type=png&theme=forest&bgColor=888888&width={}",
-                        ui.available_width() as i32
-                    );
-                    let img = egui::Image::new(&url)
-                        .corner_radius(10)
-                        .fit_to_original_size(1.0)
-                        .bg_fill(egui::Color32::GRAY);
-                    let resp = ui
-                        .add(img)
-                        .on_hover_text_at_pointer(&url)
-                        .interact(egui::Sense::click());
-
-                    let payload = serde_json::to_string(&serde_json::json!({
-                        "code": diagram.to_string(),
-                        "mermaid": {"theme": "default"},
-                        "autoSync": true,
-                        "updateDiagram": false,
-                        "editorMode": "code",
-                    }))
-                    .unwrap_or_default();
-                    // ui.label(&payload);
-
-                    // Can't figure out the right compression settings for pako
-                    let enc = BASE64_URL_SAFE_NO_PAD.encode(payload);
-                    let edit_url = format!("https://mermaid.live/edit#base64:{enc}");
-                    // ui.label(&enc);
-
-                    resp.context_menu(|ui| {
-                        if ui.button("Open").clicked() {
-                            ui.ctx().open_url(egui::OpenUrl {
-                                url: url.clone(),
-                                new_tab: true,
-                            });
-                        }
-
-                        if ui.button("Edit").clicked() {
-                            ui.ctx().open_url(egui::OpenUrl {
-                                url: edit_url,
-                                new_tab: true,
-                            });
-                        }
-                    });
-                });
-            }
-        }
-        Message::System { content } => {
-            // We don't actually include system messages in the chat history.
-            // They're properties of individual agents and can change within a workflow
-            // as different agents operate on the history.
-            egui::Frame::new()
-                .stroke(egui::Stroke::new(1.0, egui::Color32::GRAY))
-                .corner_radius(16)
-                .outer_margin(4)
-                .inner_margin(8)
-                .show(ui, |ui| {
-                    ui.set_width(width.unwrap_or(ui.available_width()));
-                    ui.label(content);
-                });
         }
     }
 }

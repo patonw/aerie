@@ -1,57 +1,68 @@
-use crate::{
-    config::ModelRole,
-    rig::{
-        self,
-        message::Message,
-        tool::{ToolExecutionError, server::ToolServerError},
-    },
-    utils::EPos2,
-    workflow::nodes::LoopControl,
-};
 use arc_swap::ArcSwap;
 use decorum::{E32, E64};
 use downcast_rs::{Downcast, impl_downcast};
 use dyn_clone::DynClone;
 use dyn_eq::DynEq;
 use dyn_hash::DynHash;
-#[cfg(feature = "ui")]
-use egui::{Color32, Stroke};
-#[cfg(feature = "ui")]
-use egui_snarl::ui::{PinInfo, WireStyle};
 use egui_snarl::{InPinId, Node as SnarlNode, NodeId, NodePos, OutPinId, Snarl};
 use either::Either;
 use im::Vector;
 use itertools::Itertools;
 use jsonschema::ValidationError;
 use kinded::Kinded;
-use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{VariantAccess, Visitor},
+    ser::SerializeTupleVariant,
+};
 use serde_yaml_ng as serde_yml;
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
     fmt::{Debug, Display},
     hash::Hash,
-    sync::{Arc, atomic::AtomicBool},
+    marker::PhantomData,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use thiserror::Error;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
+#[cfg(feature = "native")]
+use std::{collections::BTreeMap, sync::atomic::AtomicBool};
+
+#[cfg(feature = "ui")]
+use egui::{Color32, Stroke};
+#[cfg(feature = "ui")]
+use egui_snarl::ui::{PinInfo, WireStyle};
+
+#[cfg(feature = "wip")]
 use crate::{
-    AgentFactory, ChatHistory, ToolSelector, Toolbox,
-    agent::AgentSpec,
-    config::SeedConfig,
-    events::{AppEvent, AppEvents},
-    rig::message::Image,
+    agent::AgentFactory,
+    config::ModelRole,
+    rig::{
+        self,
+        tool::{ToolExecutionError, server::ToolServerError},
+    },
     transmute::Transmuter,
-    utils::{AtomicBuffer, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
+    workflow::runner::{ExecState, NodeStateMap},
+};
+
+use crate::{
+    chat::ChatHistory,
+    config::{AgentSpec, ToolSelector},
+    events::AppEvents,
+    rig::message::{Image, Message},
+    toolbox::Toolbox,
+    utils::{EPos2, ErrorList, ImmutableMapExt as _, ImmutableSetExt as _, message_text},
     workflow::{
-        nodes::{Finish, Flavor, Start},
-        runner::{ExecId, ExecState, NodeStateMap},
+        nodes::{Finish, Flavor, LoopControl, Start},
+        runner::ExecId,
     },
 };
+
+#[cfg(feature = "native")]
+use crate::{events::AppEvent, utils::AtomicBuffer};
 
 pub mod nodes;
 pub mod runner;
@@ -70,7 +81,7 @@ pub use nodes::WorkNode;
 
 // type DynFuture<T> = Pin<Box<dyn Future<Output = T>>>;
 
-#[derive(Kinded, Debug, Clone, PartialEq, Serialize)]
+#[derive(Kinded, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[kinded(derive(Hash, Serialize, Deserialize))]
 pub enum Value {
     Placeholder(ValueKind),
@@ -93,6 +104,32 @@ pub enum Value {
 impl Default for Value {
     fn default() -> Self {
         Value::Placeholder(ValueKind::Placeholder)
+    }
+}
+
+impl std::hash::Hash for Value {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        core::mem::discriminant(self).hash(state);
+        match self {
+            Value::Placeholder(it) => it.hash(state),
+            Value::Failure(it) => {
+                format!("{it:#?}").hash(state);
+            }
+            Value::Text(it) => it.hash(state),
+            Value::Number(it) => it.hash(state),
+            Value::Integer(it) => it.hash(state),
+            Value::TextList(it) => it.hash(state),
+            Value::FloatList(it) => it.hash(state),
+            Value::IntList(it) => it.hash(state),
+            Value::Json(it) => it.hash(state),
+            Value::Agent(it) => it.hash(state),
+            Value::Tools(it) => it.hash(state),
+            Value::Chat(it) => it.hash(state),
+            // TODO: use a cheaper repr
+            Value::Message(it) => serde_json::to_string(it).unwrap().hash(state),
+            Value::MsgList(it) => serde_json::to_string(it).unwrap().hash(state),
+            Value::Images(it) => serde_json::to_string(it).unwrap().hash(state),
+        }
     }
 }
 
@@ -215,10 +252,25 @@ impl PreviewData {
     pub fn value(&self, exec_id: ExecId, uuid: Uuid) -> Option<Value> {
         self.0.load().get(&(exec_id, uuid)).cloned()
     }
+
+    pub fn replace(&self, values: Vec<((ExecId, Uuid), Value)>) {
+        let data = values.into_iter().collect::<im::OrdMap<_, _>>();
+        self.0.store(Arc::new(data));
+    }
+
+    pub fn into_vec(&self) -> Vec<((ExecId, Uuid), Value)> {
+        Arc::unwrap_or_clone(self.0.load_full())
+            .into_iter()
+            .collect()
+    }
+
+    pub fn scan<R>(&self, cb: impl Fn(im::ordmap::Iter<'_, (ExecId, Uuid), Value>) -> R) -> R {
+        cb(self.0.load().iter())
+    }
 }
 
 // Copy-paste from egui_snarl::ui::pin
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AnyPin {
     Out(OutPinId),
     In(InPinId),
@@ -333,6 +385,7 @@ impl OutputChannel {
     }
 }
 
+#[cfg(feature = "native")]
 #[derive(Clone, TypedBuilder)]
 pub struct RunContext {
     pub runtime: tokio::runtime::Handle,
@@ -372,9 +425,6 @@ pub struct RunContext {
     pub history: Arc<ArcSwap<ChatHistory>>,
 
     #[builder(default)]
-    pub seed: Option<SeedConfig>,
-
-    #[builder(default)]
     pub scratch: Option<AtomicBuffer<Result<Message, String>>>,
 
     /// Final chat snapshot at the end of the workflow run that we want to keep
@@ -403,6 +453,7 @@ pub struct RunContext {
     pub run_events: runner::RunEventCast,
 }
 
+#[cfg(feature = "native")]
 impl RunContext {
     #[inline]
     pub fn event(&self, event: AppEvent) {
@@ -444,6 +495,7 @@ impl RunContext {
     }
 }
 
+#[cfg(feature = "native")]
 #[derive(TypedBuilder)]
 pub struct RootContext {
     /// A full copy of the current graph
@@ -468,6 +520,7 @@ pub struct RootContext {
     pub extra_content: Vec<rig::message::UserContent>,
 }
 
+#[cfg(feature = "native")]
 impl RootContext {
     pub fn inputs(&self) -> Result<Vec<Option<Value>>, WorkflowError> {
         let schema: serde_json::Value = if !self.workflow.metadata.schema.is_empty() {
@@ -558,7 +611,7 @@ impl Display for GraphId {
 
 impl Default for GraphId {
     fn default() -> Self {
-        Self(Uuid::new_v4())
+        Self(Uuid::now_v7())
     }
 }
 
@@ -575,16 +628,15 @@ impl AsRef<Uuid> for GraphId {
     }
 }
 
-#[skip_serializing_none]
 #[derive(Debug, Default, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowMeta {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(default)]
     pub description: Arc<String>,
 
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(default)]
     pub schema: Arc<String>,
 
-    #[serde(default, skip_serializing_if = "im::OrdSet::is_empty")]
+    #[serde(default)]
     pub chain: im::OrdSet<String>,
 }
 
@@ -647,6 +699,58 @@ impl ArcMeta for Arc<ShadowMeta> {
     }
 }
 
+#[derive(Default)]
+struct NodeMapVisitor<T> {
+    _marker: PhantomData<T>,
+}
+
+impl<T> NodeMapVisitor<T> {
+    fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'de, V: Deserialize<'de> + Clone> Visitor<'de> for NodeMapVisitor<V> {
+    type Value = im::OrdMap<NodeId, V>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("A node map")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut data = im::OrdMap::new();
+        while let Some((k, v)) = map.next_entry::<serde_json::Value, V>()? {
+            let id = match k {
+                serde_json::Value::Number(num) if let Some(id) = num.as_u64() => id as usize,
+                serde_json::Value::String(s) if let Ok(id) = s.parse::<usize>() => id,
+                unk => {
+                    tracing::warn!(?unk, "Unexpected value while deserializing node map");
+                    let unx = serde::de::Unexpected::Other("Not an id");
+
+                    return Err(serde::de::Error::invalid_value(unx, &self));
+                }
+            };
+
+            let id = NodeId(id);
+            data.insert(id, v);
+        }
+        Ok(data)
+    }
+}
+
+fn deserialize_node_map<'de, D, T>(d: D) -> Result<im::OrdMap<NodeId, T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Clone + Hash + PartialEq + Debug + Deserialize<'de>,
+{
+    d.deserialize_map(NodeMapVisitor::new())
+}
+
 pub type GraphNodeId = (GraphId, NodeId);
 
 /// The shadow graph is incrementally updated when edits are made through the viewer.
@@ -654,7 +758,6 @@ pub type GraphNodeId = (GraphId, NodeId);
 /// to make cloning-on-write cheap. This allows shadow graphs to be quickly compared using
 /// top-level pointer comparison. We could also use this to support undo/redo operations,
 /// though the shadow doesn't currently track positions.
-#[skip_serializing_none]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowGraph<T>
 where
@@ -663,10 +766,14 @@ where
     #[serde(default)]
     pub uuid: GraphId,
 
+    // TODO: Custom serialization
+    #[serde(bound(deserialize = "T: Deserialize<'de>"))]
+    #[serde(deserialize_with = "deserialize_node_map")]
     pub nodes: im::OrdMap<NodeId, MetaNode<T>>,
+
     pub wires: im::OrdSet<Wire>,
 
-    #[serde(default, skip_serializing_if = "im::OrdSet::is_empty")]
+    #[serde(default)]
     pub disabled: im::OrdSet<NodeId>,
 
     pub start: Option<NodeId>,
@@ -1171,6 +1278,12 @@ impl Workflow {
             metadata: meta,
         }
     }
+
+    pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        let mut bytes = Vec::with_capacity(256);
+        serde_yml::to_writer(&mut bytes, &self.repair())?;
+        Ok(bytes)
+    }
 }
 
 pub trait DynNode {
@@ -1229,7 +1342,7 @@ pub trait DynNode {
                 if kinds.contains(&value.kind()) {
                     None::<String>
                 } else {
-                    Some(format!("{value:?} is not one of {kinds:?}"))
+                    Some(format!("[input #{i}] {value:?} is not one of {kinds:?}"))
                 }
             })
             .collect_vec();
@@ -1265,6 +1378,7 @@ pub trait DynNode {
         Default::default()
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -1368,6 +1482,7 @@ dyn_hash::hash_trait_object!(FlexNode);
 
 #[derive(Debug, Error, Kinded)]
 #[kinded(derive(Hash, Serialize, Deserialize))]
+// #[serde(from = "WorkflowErrorProxy", into = "WorkflowErrorProxy")]
 pub enum WorkflowError {
     #[error("Input required {0:?}")]
     Required(Vec<String>),
@@ -1383,9 +1498,11 @@ pub enum WorkflowError {
     )]
     MissingToolCall,
 
+    #[cfg(feature = "native")]
     #[error("Error while invoking tool")]
     ToolCall(#[source] ToolExecutionError),
 
+    #[cfg(feature = "native")]
     #[error("Error while invoking tool")]
     ToolServerCall(#[source] ToolServerError),
 
@@ -1400,11 +1517,16 @@ pub enum WorkflowError {
     #[error("timed out")]
     Timeout,
 
+    #[cfg(feature = "native")]
     #[error("Graph execution halted before finishing: {0:?}")]
     Unfinished(ExecState),
 
     #[error("Error while executing subgraph")]
     Subgraph(#[source] Arc<WorkflowError>),
+
+    /// Abridged error sent to client
+    #[error("{0}: {1}")]
+    Summary(WorkflowErrorKind, String),
 
     // #[error("Scripting error {0:?}")]
     // RhaiScript(#[source] Arc<rhai::EvalAltResult>),
@@ -1413,11 +1535,109 @@ pub enum WorkflowError {
 }
 
 impl Serialize for WorkflowError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        self.kind().serialize(serializer)
+        let mut tup = ser.serialize_tuple_variant("WorkflowError", 11, "Summary", 1)?;
+        tup.serialize_field(&self.kind())?;
+        tup.serialize_field(&format!("{self}"))?;
+        tup.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkflowError {
+    fn deserialize<D>(des: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // let result = des.deserialize_ignored_any(WorkflowErrorVisitor);
+        let result = des.deserialize_enum(
+            "WorkflowError",
+            &["Summary", "Unknown"],
+            error_visitor::WorkflowErrorVisitor,
+        );
+        tracing::info!(?result, "Deserializing WorkflowError");
+
+        result
+    }
+}
+
+mod error_visitor {
+    use super::*;
+
+    pub struct SummaryErrorVisitor;
+    impl<'de> Visitor<'de> for SummaryErrorVisitor {
+        type Value = WorkflowError;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("An error kind and message")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let Some(kind) = seq.next_element::<WorkflowErrorKind>()? else {
+                return Err(serde::de::Error::invalid_length(0, &"Error kind required"));
+            };
+            let Some(msg) = seq.next_element()? else {
+                return Err(serde::de::Error::invalid_length(
+                    1,
+                    &"Error message required",
+                ));
+            };
+
+            Ok(WorkflowError::Summary(kind, msg))
+        }
+    }
+
+    pub struct UnknownErrorVisitor;
+    impl<'de> Visitor<'de> for UnknownErrorVisitor {
+        type Value = WorkflowError;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("An error message")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let data: Option<serde_json::Value> = seq.next_element()?;
+            tracing::info!(?data, "visiting seq");
+
+            Ok(WorkflowError::Unknown("Not implemented".into()))
+        }
+    }
+
+    pub struct WorkflowErrorVisitor;
+
+    impl<'de> Visitor<'de> for WorkflowErrorVisitor {
+        type Value = WorkflowError;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("A WorkflowError")
+        }
+
+        fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::EnumAccess<'de>,
+        {
+            match data.variant()? {
+                ("Summary", v) => {
+                    let that = v.tuple_variant(1, SummaryErrorVisitor)?;
+                    tracing::info!(?that, "Summarized");
+                    Ok(that)
+                }
+                ("Unknown", v) => {
+                    let that = v.tuple_variant(1, UnknownErrorVisitor)?;
+                    tracing::info!(?that, "Unknown");
+                    Ok(that)
+                }
+                _ => Ok(WorkflowError::Unknown("Not implemented".into())),
+            }
+        }
     }
 }
 
@@ -1427,9 +1647,12 @@ impl PartialEq for WorkflowError {
             (Self::Required(l0), Self::Required(r0)) => l0 == r0,
             (Self::Conversion(l0), Self::Conversion(r0)) => l0 == r0,
             (Self::Provider(l0), Self::Provider(r0)) => std::ptr::eq(l0, r0),
+            #[cfg(feature = "native")]
             (Self::ToolCall(l0), Self::ToolCall(r0)) => std::ptr::eq(l0, r0),
+            #[cfg(feature = "native")]
             (Self::ToolServerCall(l0), Self::ToolServerCall(r0)) => std::ptr::eq(l0, r0),
             (Self::Validation(l0), Self::Validation(r0)) => std::ptr::eq(l0, r0),
+            #[cfg(feature = "native")]
             (Self::Unfinished(l0), Self::Unfinished(r0)) => std::ptr::eq(l0, r0),
             (Self::Subgraph(l0), Self::Subgraph(r0)) => l0 == r0,
             (Self::Unknown(l0), Self::Unknown(r0)) => l0 == r0,
@@ -1438,18 +1661,21 @@ impl PartialEq for WorkflowError {
     }
 }
 
+#[cfg(feature = "native")]
 impl From<ToolExecutionError> for WorkflowError {
     fn from(value: ToolExecutionError) -> Self {
         WorkflowError::ToolCall(value)
     }
 }
 
+#[cfg(feature = "native")]
 impl From<ToolServerError> for WorkflowError {
     fn from(value: ToolServerError) -> Self {
         WorkflowError::ToolServerCall(value)
     }
 }
 
+#[cfg(feature = "wip")]
 #[cfg(feature = "scripting")]
 impl From<Box<rhai::EvalAltResult>> for WorkflowError {
     fn from(value: Box<rhai::EvalAltResult>) -> Self {
@@ -1457,6 +1683,7 @@ impl From<Box<rhai::EvalAltResult>> for WorkflowError {
     }
 }
 
+#[cfg(feature = "wip")]
 impl From<anyhow::Error> for WorkflowError {
     fn from(value: anyhow::Error) -> Self {
         WorkflowError::Unknown(format!("{value:?}"))
@@ -1572,4 +1799,29 @@ pub async fn with_deadline<T>(
     deadline: Option<Instant>,
 ) -> Result<T, WorkflowError> {
     with_timeout(fut, merge_deadline(timeout, deadline)).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    pub fn test_workflow_json() -> anyhow::Result<()> {
+        let workflow = Workflow::default();
+        let json = serde_json::to_string(&workflow)?;
+        let round: Workflow = serde_json::from_str(&json)?;
+
+        assert_eq!(workflow, round);
+        Ok(())
+    }
+
+    #[test]
+    pub fn test_workflow_yaml() -> anyhow::Result<()> {
+        let workflow = Workflow::default();
+        let json = serde_yaml_ng::to_string(&workflow)?;
+        let round: Workflow = serde_yaml_ng::from_str(&json)?;
+
+        assert_eq!(workflow, round);
+        Ok(())
+    }
 }

@@ -41,5 +41,6 @@ in pkgs.mkShell {
       rust-toolchain
       uv
       xh
+      trunk
   ] ++ libraries;
 }

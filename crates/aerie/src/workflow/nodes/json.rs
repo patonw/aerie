@@ -1,25 +1,14 @@
-use std::{borrow::Cow, sync::Arc};
-
-#[cfg(feature = "ui")]
-use egui_snarl::OutPinId;
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use serde_with::skip_serializing_none;
+use std::borrow::Cow;
 
-use crate::{
-    utils::{extract_json, message_text, message_to_json},
-    workflow::{DynNode, FlexNode, RunContext, Value, ValueKind, WorkflowError},
-};
+use crate::workflow::{DynNode, FlexNode, Value, ValueKind};
+
+#[cfg(feature = "native")]
+use crate::workflow::{RunContext, WorkflowError};
 
 #[cfg(feature = "ui")]
-use crate::{
-    ui::{
-        resizable_frame,
-        shortcuts::{Shortcut, squelch},
-    },
-    workflow::{EditContext, UiNode, WorkNode, nodes::GraphSubmenu},
-};
+pub use gui::json_editor;
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +51,7 @@ impl DynNode for ParseJson {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -70,160 +60,7 @@ impl DynNode for ParseJson {
     ) -> Result<Vec<Value>, WorkflowError> {
         self.validate(&inputs)?;
 
-        let text = match &inputs[0] {
-            Some(Value::Text(text)) => Cow::Borrowed(text.as_str()),
-            Some(Value::Message(message)) => Cow::Owned(message_text(message)),
-            None => Cow::Borrowed(self.text.as_str()),
-            _ => unreachable!(),
-        };
-
-        let result = serde_json::from_str::<serde_json::Value>(&text);
-        let value = match result {
-            Ok(value) => value,
-            Err(_) if self.extract => {
-                extract_json(&text, self.as_array).ok_or(WorkflowError::Conversion(format!(
-                    "Could not find a JSON {} inside text",
-                    if self.as_array { "array" } else { "object" }
-                )))?
-            }
-            Err(_) => {
-                result.map_err(|e| WorkflowError::Conversion(format!("Invalid JSON: {e:?}")))?
-            }
-        };
-
-        let value = Arc::new(value);
-
-        Ok(vec![
-            Value::Json(value),
-            Value::Placeholder(ValueKind::Failure),
-        ])
-    }
-}
-
-#[cfg(feature = "ui")]
-pub fn json_editor(
-    ui: &mut egui::Ui,
-    buffer: &mut dyn egui::TextBuffer,
-    hint: Option<&str>,
-) -> egui::Response {
-    let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
-    let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-        let mut layout_job = egui_extras::syntax_highlighting::highlight(
-            ui.ctx(),
-            ui.style(),
-            &theme,
-            buf.as_str(),
-            "json",
-        );
-        layout_job.wrap.max_width = wrap_width;
-        ui.fonts_mut(|f| f.layout_job(layout_job))
-    };
-
-    let mut widget = egui::TextEdit::multiline(buffer)
-        .id_salt("json text")
-        .font(egui::TextStyle::Monospace) // for cursor height
-        .code_editor()
-        .desired_rows(1)
-        .lock_focus(true)
-        .desired_width(f32::INFINITY)
-        .layouter(&mut layouter);
-
-    let hover = if let Some(hint) = hint {
-        widget = widget.id_salt(hint).hint_text(hint);
-        hint
-    } else {
-        "JSON"
-    };
-
-    let resp = ui
-        .add_sized(ui.available_size(), widget)
-        .on_hover_text(hover);
-
-    if resp.has_focus()
-        && resp
-            .ctx
-            .input_mut(|i| i.consume_shortcut(&Shortcut::FormatCode.key()))
-        && let Ok(text) = serde_json::from_str::<serde_json::Value>(buffer.as_str())
-            .and_then(|v| serde_json::to_string_pretty(&v))
-    {
-        buffer.replace_with(text.as_str());
-    }
-
-    squelch(resp)
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for ParseJson {
-    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
-        other.downcast_ref::<Self>().is_some_and(|other| {
-            self.text == other.text
-                && self.extract == other.extract
-                && self.as_array == other.as_array
-        })
-    }
-
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                if remote.is_none() {
-                    resizable_frame(&mut self.size, ui, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            json_editor(ui, &mut self.text, None);
-                        });
-                    });
-                } else {
-                    ui.label("JSON text");
-                }
-            }
-            _ => unreachable!(),
-        };
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-
-    fn show_output(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                ui.label("json");
-            }
-            1 => {
-                ui.label("failure");
-            }
-            _ => unreachable!(),
-        }
-        self.out_kind(pin_id).default_pin()
-    }
-
-    fn has_body(&self) -> bool {
-        true
-    }
-
-    fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
-        ui.vertical(|ui| {
-            ui.checkbox(&mut self.extract, "extract").on_hover_text(
-                "Attempt to find a JSON object inside unstructured text.\n\
-                    Use this when you expect that the input is mostly JSON.\n\
-                    It can be slow on large documents with many braces,\n\
-                    such as source code, log files or malformed JSON.\n\
-                    Does not attempt to repair broken JSON documents.",
-            );
-
-            if self.extract {
-                ui.checkbox(&mut self.as_array, "as array")
-                    .on_hover_text("Find an array instead of an object.");
-            }
-        });
+        self.forward(inputs)
     }
 }
 
@@ -268,6 +105,7 @@ impl DynNode for ValidateJson {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -276,102 +114,7 @@ impl DynNode for ValidateJson {
     ) -> Result<Vec<Value>, WorkflowError> {
         self.validate(&inputs)?;
 
-        let schema = match &inputs[0] {
-            Some(Value::Json(schema)) => schema.as_ref().to_owned(),
-            None if !self.schema.is_empty() => serde_json::from_str(&self.schema)
-                .map_err(|err| WorkflowError::Conversion(err.to_string()))?,
-            None => Err(WorkflowError::Required(vec!["Schema is required".into()]))?,
-            _ => unreachable!(),
-        };
-
-        let input = match &inputs[1] {
-            Some(Value::Json(input)) => input.as_ref().to_owned(),
-            Some(Value::Text(text)) => serde_json::from_str(text)
-                .map_err(|err| WorkflowError::Conversion(err.to_string()))?,
-            Some(Value::Message(msg)) => serde_json::from_str(&message_text(msg))
-                .map_err(|err| WorkflowError::Conversion(err.to_string()))?,
-            None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
-            _ => unreachable!(),
-        };
-
-        let validator = jsonschema::validator_for(&schema)
-            .map_err(|err| anyhow::anyhow!("Invalid schema: {err:?}"))?;
-
-        validator
-            .validate(&input)
-            .map_err(|err| anyhow::anyhow!("Validation error: {err:?}"))?;
-
-        let value = Arc::new(input);
-
-        Ok(vec![
-            Value::Json(value),
-            Value::Placeholder(ValueKind::Failure),
-        ])
-    }
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for ValidateJson {
-    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
-        other
-            .downcast_ref::<Self>()
-            .is_some_and(|other| self.schema == other.schema)
-    }
-
-    fn tooltip(&self) -> &str {
-        "Validates a JSON value against a JSON Schema (as a JSON object).\n\
-            If the value is valid it is passed through to the output."
-    }
-
-    fn help_link(&self) -> &str {
-        "https://json-schema.org/understanding-json-schema/reference"
-    }
-
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                if remote.is_none() {
-                    resizable_frame(&mut self.size, ui, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            let hint_text = "JSON Schema";
-                            json_editor(ui, &mut self.schema, Some(hint_text));
-                        });
-                    });
-                } else {
-                    ui.label("schema");
-                }
-            }
-            1 => {
-                ui.label("json");
-            }
-            _ => unreachable!(),
-        };
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-
-    fn show_output(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                ui.label("json");
-            }
-            1 => {
-                ui.label("failure");
-            }
-            _ => unreachable!(),
-        }
-        self.out_kind(pin_id).default_pin()
+        self.forward(inputs)
     }
 }
 
@@ -418,6 +161,7 @@ impl DynNode for TransformJson {
         ValueKind::Json
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -426,89 +170,7 @@ impl DynNode for TransformJson {
     ) -> Result<Vec<Value>, WorkflowError> {
         self.validate(&inputs)?;
 
-        let filter = match &inputs[0] {
-            Some(Value::Text(text)) => text.as_str(),
-            None => self.filter.as_str(),
-            _ => unreachable!(),
-        };
-
-        let filter = ctx.transmuter.init_filter(filter)?;
-
-        let input = match &inputs[1] {
-            Some(Value::Json(input)) => input.as_ref().to_owned(),
-            Some(Value::Number(value)) => json!(value),
-            Some(Value::FloatList(value)) => json!(value),
-            Some(Value::Integer(value)) => json!(value),
-            Some(Value::IntList(value)) => json!(value),
-            Some(Value::Text(value)) => json!(value),
-            Some(Value::TextList(value)) => json!(value),
-            Some(Value::Chat(value)) => {
-                json!(value.iter_msgs().map(|m| message_to_json(&m)).collect_vec())
-            }
-            Some(Value::Message(value)) => message_to_json(value),
-
-            Some(Value::MsgList(value)) => {
-                json!(value.iter().map(|m| message_to_json(m)).collect_vec())
-            }
-
-            None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
-            _ => unreachable!(),
-        };
-
-        let value = ctx.transmuter.run_filter(&filter, input)?;
-
-        Ok(vec![Value::Json(Arc::new(value))])
-    }
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for TransformJson {
-    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
-        other
-            .downcast_ref::<Self>()
-            .is_some_and(|other| self.filter == other.filter)
-    }
-
-    fn tooltip(&self) -> &str {
-        "Transform a JSON value using jq/jaq filters."
-    }
-
-    fn help_link(&self) -> &str {
-        "https://gedenkt.at/jaq/manual/#corelang"
-    }
-
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                if remote.is_none() {
-                    egui::Frame::new().inner_margin(4).show(ui, |ui| {
-                        resizable_frame(&mut self.size, ui, |ui| {
-                            egui::ScrollArea::vertical().show(ui, |ui| {
-                                let widget = egui::TextEdit::multiline(&mut self.filter)
-                                    .desired_width(f32::INFINITY)
-                                    .hint_text("Filter\u{1F64B}");
-
-                                squelch(ui.add_sized(ui.available_size(), widget));
-                            });
-                        });
-                    });
-                } else {
-                    ui.label("filter");
-                }
-            }
-            1 => {
-                ui.label("json");
-            }
-            _ => unreachable!(),
-        };
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
+        self.forward(ctx, inputs)
     }
 }
 
@@ -548,74 +210,16 @@ impl DynNode for GatherJson {
         ValueKind::Json
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
         _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        use serde_json::Number;
-
         self.validate(&inputs)?;
 
-        let values = inputs
-            .into_iter()
-            .take(self.count)
-            .map(|it| match it {
-                Some(Value::Json(value)) => value.as_ref().clone(),
-                Some(Value::Text(value)) => serde_json::Value::String((*value).clone()),
-                Some(Value::Number(value)) => {
-                    serde_json::Value::Number(Number::from_f64(value.into_inner()).unwrap())
-                }
-                Some(Value::Integer(value)) => {
-                    serde_json::Value::Number(Number::from_i128(value as i128).unwrap())
-                }
-                Some(Value::FloatList(value)) => json!(value),
-                Some(Value::IntList(value)) => json!(value),
-                Some(Value::TextList(value)) => json!(value),
-                Some(Value::Chat(value)) => {
-                    json!(value.iter_msgs().map(|m| message_to_json(&m)).collect_vec())
-                }
-                Some(Value::Message(value)) => message_to_json(&value),
-                Some(Value::MsgList(value)) => {
-                    json!(value.iter().map(|m| message_to_json(m)).collect_vec())
-                }
-                None => serde_json::Value::Null,
-                _ => unreachable!(),
-            })
-            .collect_vec();
-
-        let value = Arc::new(serde_json::Value::Array(values));
-
-        Ok(vec![Value::Json(value)])
-    }
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for GatherJson {
-    fn tooltip(&self) -> &str {
-        "Combine multiple JSON documents into a single array.\n\
-            The output can be transformed using shallow, deep or arbitrary merging"
-    }
-
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        if pin_id == self.count && remote.is_some() {
-            self.count += 1;
-        } else if pin_id + 1 == self.count && remote.is_none() {
-            self.count -= 1;
-        }
-
-        if pin_id < self.count {
-            ui.label(format!(".[{pin_id}]"));
-        }
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
+        self.forward(inputs)
     }
 }
 
@@ -656,6 +260,7 @@ impl DynNode for UnwrapJson {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         _ctx: &RunContext,
@@ -663,125 +268,568 @@ impl DynNode for UnwrapJson {
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
         self.validate(&inputs)?;
-        use serde_json::Value as JVal;
+        self.forward(inputs)
+    }
+}
 
-        let json = match &inputs[0] {
-            Some(Value::Json(value)) => value.clone(),
-            None => Err(WorkflowError::Required(vec![
-                "JSON input is required".into(),
-            ]))?,
-            _ => unreachable!(),
-        };
+#[cfg(feature = "native")]
+mod forward {
+    use itertools::Itertools;
+    use serde_json::json;
+    use std::sync::Arc;
 
-        let value = match (self.kind, &*json) {
-            (ValueKind::Text, JVal::String(text)) => Value::text(text.clone()),
-            (ValueKind::TextList, JVal::Array(values)) if values.iter().all(|t| t.is_string()) => {
-                let texts = values
-                    .iter()
-                    .map(|t| t.as_str().unwrap().to_string())
-                    .collect_vec();
-                Value::text_list(texts)
-            }
-            (ValueKind::Number, JVal::Number(value)) if value.is_f64() || value.is_i64() => {
-                Value::float(value.as_f64().unwrap())
-            }
-            (ValueKind::FloatList, JVal::Array(values))
-                if values.iter().all(|t| t.is_f64() || t.is_i64()) =>
-            {
-                let values = values.iter().map(|t| t.as_f64().unwrap()).collect_vec();
-                Value::float_list(values)
-            }
-            (ValueKind::Integer, JVal::Number(value)) if value.is_i64() => {
-                Value::Integer(value.as_i64().unwrap())
-            }
-            (ValueKind::IntList, JVal::Array(values)) if values.iter().all(|t| t.is_i64()) => {
-                let values = values.iter().map(|t| t.as_i64().unwrap()).collect_vec();
-                Value::int_list(values)
-            }
-            _ => Err(WorkflowError::Conversion(format!(
-                "Could not convert {json:?} into a {:?}",
-                self.kind
-            )))?,
-        };
+    use crate::{
+        utils::{extract_json, message_text, message_to_json},
+        workflow::{RunContext, WorkflowError},
+    };
 
-        Ok(vec![value])
+    use super::*;
+
+    impl ParseJson {
+        pub fn forward(&mut self, inputs: Vec<Option<Value>>) -> Result<Vec<Value>, WorkflowError> {
+            let text = match &inputs[0] {
+                Some(Value::Text(text)) => Cow::Borrowed(text.as_str()),
+                Some(Value::Message(message)) => Cow::Owned(message_text(message)),
+                None => Cow::Borrowed(self.text.as_str()),
+                _ => unreachable!(),
+            };
+
+            let result = serde_json::from_str::<serde_json::Value>(&text);
+            let value = match result {
+                Ok(value) => value,
+                Err(_) if self.extract => {
+                    extract_json(&text, self.as_array).ok_or(WorkflowError::Conversion(format!(
+                        "Could not find a JSON {} inside text",
+                        if self.as_array { "array" } else { "object" }
+                    )))?
+                }
+                Err(_) => {
+                    result.map_err(|e| WorkflowError::Conversion(format!("Invalid JSON: {e:?}")))?
+                }
+            };
+
+            let value = Arc::new(value);
+
+            Ok(vec![
+                Value::Json(value),
+                Value::Placeholder(ValueKind::Failure),
+            ])
+        }
+    }
+
+    impl ValidateJson {
+        pub fn forward(&mut self, inputs: Vec<Option<Value>>) -> Result<Vec<Value>, WorkflowError> {
+            let schema = match &inputs[0] {
+                Some(Value::Json(schema)) => schema.as_ref().to_owned(),
+                None if !self.schema.is_empty() => serde_json::from_str(&self.schema)
+                    .map_err(|err| WorkflowError::Conversion(err.to_string()))?,
+                None => Err(WorkflowError::Required(vec!["Schema is required".into()]))?,
+                _ => unreachable!(),
+            };
+
+            let input = match &inputs[1] {
+                Some(Value::Json(input)) => input.as_ref().to_owned(),
+                Some(Value::Text(text)) => serde_json::from_str(text)
+                    .map_err(|err| WorkflowError::Conversion(err.to_string()))?,
+                Some(Value::Message(msg)) => serde_json::from_str(&message_text(msg))
+                    .map_err(|err| WorkflowError::Conversion(err.to_string()))?,
+                None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
+                _ => unreachable!(),
+            };
+
+            let validator = jsonschema::validator_for(&schema)
+                .map_err(|err| anyhow::anyhow!("Invalid schema: {err:?}"))?;
+
+            validator
+                .validate(&input)
+                .map_err(|err| anyhow::anyhow!("Validation error: {err:?}"))?;
+
+            let value = Arc::new(input);
+
+            Ok(vec![
+                Value::Json(value),
+                Value::Placeholder(ValueKind::Failure),
+            ])
+        }
+    }
+
+    impl TransformJson {
+        pub fn forward(
+            &mut self,
+            ctx: &RunContext,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            let filter = match &inputs[0] {
+                Some(Value::Text(text)) => text.as_str(),
+                None => self.filter.as_str(),
+                _ => unreachable!(),
+            };
+
+            let filter = ctx.transmuter.init_filter(filter)?;
+
+            let input = match &inputs[1] {
+                Some(Value::Json(input)) => input.as_ref().to_owned(),
+                Some(Value::Number(value)) => json!(value),
+                Some(Value::FloatList(value)) => json!(value),
+                Some(Value::Integer(value)) => json!(value),
+                Some(Value::IntList(value)) => json!(value),
+                Some(Value::Text(value)) => json!(value),
+                Some(Value::TextList(value)) => json!(value),
+                Some(Value::Chat(value)) => {
+                    json!(value.iter_msgs().map(|m| message_to_json(&m)).collect_vec())
+                }
+                Some(Value::Message(value)) => message_to_json(value),
+
+                Some(Value::MsgList(value)) => {
+                    json!(value.iter().map(|m| message_to_json(m)).collect_vec())
+                }
+
+                None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
+                _ => unreachable!(),
+            };
+
+            let value = ctx.transmuter.run_filter(&filter, input)?;
+
+            Ok(vec![Value::Json(Arc::new(value))])
+        }
+    }
+
+    impl GatherJson {
+        pub fn forward(&mut self, inputs: Vec<Option<Value>>) -> Result<Vec<Value>, WorkflowError> {
+            use serde_json::Number;
+            let values = inputs
+                .into_iter()
+                .take(self.count)
+                .map(|it| match it {
+                    Some(Value::Json(value)) => value.as_ref().clone(),
+                    Some(Value::Text(value)) => serde_json::Value::String((*value).clone()),
+                    Some(Value::Number(value)) => {
+                        serde_json::Value::Number(Number::from_f64(value.into_inner()).unwrap())
+                    }
+                    Some(Value::Integer(value)) => {
+                        serde_json::Value::Number(Number::from_i128(value as i128).unwrap())
+                    }
+                    Some(Value::FloatList(value)) => json!(value),
+                    Some(Value::IntList(value)) => json!(value),
+                    Some(Value::TextList(value)) => json!(value),
+                    Some(Value::Chat(value)) => {
+                        json!(value.iter_msgs().map(|m| message_to_json(&m)).collect_vec())
+                    }
+                    Some(Value::Message(value)) => message_to_json(&value),
+                    Some(Value::MsgList(value)) => {
+                        json!(value.iter().map(|m| message_to_json(m)).collect_vec())
+                    }
+                    None => serde_json::Value::Null,
+                    _ => unreachable!(),
+                })
+                .collect_vec();
+
+            let value = Arc::new(serde_json::Value::Array(values));
+
+            Ok(vec![Value::Json(value)])
+        }
+    }
+    impl UnwrapJson {
+        pub fn forward(&mut self, inputs: Vec<Option<Value>>) -> Result<Vec<Value>, WorkflowError> {
+            use serde_json::Value as JVal;
+
+            let json = match &inputs[0] {
+                Some(Value::Json(value)) => value.clone(),
+                None => Err(WorkflowError::Required(vec![
+                    "JSON input is required".into(),
+                ]))?,
+                _ => unreachable!(),
+            };
+
+            let value = match (self.kind, &*json) {
+                (ValueKind::Text, JVal::String(text)) => Value::text(text.clone()),
+                (ValueKind::TextList, JVal::Array(values))
+                    if values.iter().all(|t| t.is_string()) =>
+                {
+                    let texts = values
+                        .iter()
+                        .map(|t| t.as_str().unwrap().to_string())
+                        .collect_vec();
+                    Value::text_list(texts)
+                }
+                (ValueKind::Number, JVal::Number(value)) if value.is_f64() || value.is_i64() => {
+                    Value::float(value.as_f64().unwrap())
+                }
+                (ValueKind::FloatList, JVal::Array(values))
+                    if values.iter().all(|t| t.is_f64() || t.is_i64()) =>
+                {
+                    let values = values.iter().map(|t| t.as_f64().unwrap()).collect_vec();
+                    Value::float_list(values)
+                }
+                (ValueKind::Integer, JVal::Number(value)) if value.is_i64() => {
+                    Value::Integer(value.as_i64().unwrap())
+                }
+                (ValueKind::IntList, JVal::Array(values)) if values.iter().all(|t| t.is_i64()) => {
+                    let values = values.iter().map(|t| t.as_i64().unwrap()).collect_vec();
+                    Value::int_list(values)
+                }
+                _ => Err(WorkflowError::Conversion(format!(
+                    "Could not convert {json:?} into a {:?}",
+                    self.kind
+                )))?,
+            };
+
+            Ok(vec![value])
+        }
     }
 }
 
 #[cfg(feature = "ui")]
-impl UiNode for UnwrapJson {
-    fn tooltip(&self) -> &str {
-        "Converts a JSON value into a workflow value"
+mod gui {
+    use crate::{
+        ui::{
+            resizable_frame,
+            shortcuts::{Shortcut, squelch},
+        },
+        workflow::{EditContext, UiNode, WorkNode, nodes::GraphSubmenu},
+    };
+    use egui_snarl::OutPinId;
+
+    use super::*;
+
+    pub fn json_editor(
+        ui: &mut egui::Ui,
+        buffer: &mut dyn egui::TextBuffer,
+        hint: Option<&str>,
+    ) -> egui::Response {
+        let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
+        let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+            let mut layout_job = egui_extras::syntax_highlighting::highlight(
+                ui.ctx(),
+                ui.style(),
+                &theme,
+                buf.as_str(),
+                "json",
+            );
+            layout_job.wrap.max_width = wrap_width;
+            ui.fonts_mut(|f| f.layout_job(layout_job))
+        };
+
+        let mut widget = egui::TextEdit::multiline(buffer)
+            .id_salt("json text")
+            .font(egui::TextStyle::Monospace) // for cursor height
+            .code_editor()
+            .desired_rows(1)
+            .lock_focus(true)
+            .desired_width(f32::INFINITY)
+            .layouter(&mut layouter);
+
+        let hover = if let Some(hint) = hint {
+            widget = widget.id_salt(hint).hint_text(hint);
+            hint
+        } else {
+            "JSON"
+        };
+
+        let resp = ui
+            .add_sized(ui.available_size(), widget)
+            .on_hover_text(hover);
+
+        if resp.has_focus()
+            && resp
+                .ctx
+                .input_mut(|i| i.consume_shortcut(&Shortcut::FormatCode.key()))
+            && let Ok(text) = serde_json::from_str::<serde_json::Value>(buffer.as_str())
+                .and_then(|v| serde_json::to_string_pretty(&v))
+        {
+            buffer.replace_with(text.as_str());
+        }
+
+        squelch(resp)
     }
 
-    fn has_body(&self) -> bool {
-        true
-    }
+    impl UiNode for ParseJson {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other.downcast_ref::<Self>().is_some_and(|other| {
+                self.text == other.text
+                    && self.extract == other.extract
+                    && self.as_array == other.as_array
+            })
+        }
 
-    fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
-        let old_kind = self.kind;
-        egui::ComboBox::from_id_salt("UnwrapJsonKind")
-            .selected_text(self.kind.to_string().to_ascii_lowercase())
-            .show_ui(ui, |ui| {
-                let kinds = [
-                    ValueKind::Text,
-                    ValueKind::TextList,
-                    ValueKind::Number,
-                    ValueKind::FloatList,
-                    ValueKind::Integer,
-                    ValueKind::IntList,
-                ];
-
-                for kind in kinds {
-                    let mut label = kind.to_string().to_lowercase();
-                    if kind.is_list() {
-                        label = format!("[{label}]");
+        fn show_input(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+            remote: Option<Value>,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    if remote.is_none() {
+                        resizable_frame(&mut self.size, ui, |ui| {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                json_editor(ui, &mut self.text, None);
+                            });
+                        });
+                    } else {
+                        ui.label("JSON text");
                     }
+                }
+                _ => unreachable!(),
+            };
 
-                    ui.selectable_value(&mut self.kind, kind, label);
+            self.in_kinds(pin_id).first().unwrap().default_pin()
+        }
+
+        fn show_output(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    ui.label("json");
+                }
+                1 => {
+                    ui.label("failure");
+                }
+                _ => unreachable!(),
+            }
+            self.out_kind(pin_id).default_pin()
+        }
+
+        fn has_body(&self) -> bool {
+            true
+        }
+
+        fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
+            ui.vertical(|ui| {
+                ui.checkbox(&mut self.extract, "extract").on_hover_text(
+                    "Attempt to find a JSON object inside unstructured text.\n\
+                    Use this when you expect that the input is mostly JSON.\n\
+                    It can be slow on large documents with many braces,\n\
+                    such as source code, log files or malformed JSON.\n\
+                    Does not attempt to repair broken JSON documents.",
+                );
+
+                if self.extract {
+                    ui.checkbox(&mut self.as_array, "as array")
+                        .on_hover_text("Find an array instead of an object.");
                 }
             });
-
-        if old_kind != self.kind {
-            ctx.reset_out_pin(OutPinId {
-                node: ctx.current_node,
-                output: 0,
-            });
         }
     }
-}
 
-#[cfg(feature = "ui")]
-fn json_node_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
-    ui.menu_button("JSON", |ui| {
-        if ui.button("Parse JSON").clicked() {
-            snarl.insert_node(pos.into(), ParseJson::default().into());
-            ui.close();
+    impl UiNode for ValidateJson {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other
+                .downcast_ref::<Self>()
+                .is_some_and(|other| self.schema == other.schema)
         }
 
-        if ui.button("Gather JSON").clicked() {
-            snarl.insert_node(pos.into(), GatherJson::default().into());
-            ui.close();
+        fn tooltip(&self) -> &str {
+            "Validates a JSON value against a JSON Schema (as a JSON object).\n\
+            If the value is valid it is passed through to the output."
         }
 
-        if ui.button("Validate JSON").clicked() {
-            snarl.insert_node(pos.into(), ValidateJson::default().into());
-            ui.close();
+        fn help_link(&self) -> &str {
+            "https://json-schema.org/understanding-json-schema/reference"
         }
 
-        if ui.button("Transform JSON").clicked() {
-            snarl.insert_node(pos.into(), TransformJson::default().into());
-            ui.close();
+        fn show_input(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+            remote: Option<Value>,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    if remote.is_none() {
+                        resizable_frame(&mut self.size, ui, |ui| {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                let hint_text = "JSON Schema";
+                                json_editor(ui, &mut self.schema, Some(hint_text));
+                            });
+                        });
+                    } else {
+                        ui.label("schema");
+                    }
+                }
+                1 => {
+                    ui.label("json");
+                }
+                _ => unreachable!(),
+            };
+
+            self.in_kinds(pin_id).first().unwrap().default_pin()
         }
 
-        if ui.button("Unwrap JSON").clicked() {
-            snarl.insert_node(pos.into(), UnwrapJson::default().into());
-            ui.close();
+        fn show_output(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    ui.label("json");
+                }
+                1 => {
+                    ui.label("failure");
+                }
+                _ => unreachable!(),
+            }
+            self.out_kind(pin_id).default_pin()
         }
-    });
-}
+    }
 
-#[cfg(feature = "ui")]
-inventory::submit! {
-    GraphSubmenu("json", json_node_menu)
+    impl UiNode for TransformJson {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other
+                .downcast_ref::<Self>()
+                .is_some_and(|other| self.filter == other.filter)
+        }
+
+        fn tooltip(&self) -> &str {
+            "Transform a JSON value using jq/jaq filters."
+        }
+
+        fn help_link(&self) -> &str {
+            "https://gedenkt.at/jaq/manual/#corelang"
+        }
+
+        fn show_input(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+            remote: Option<Value>,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    if remote.is_none() {
+                        egui::Frame::new().inner_margin(4).show(ui, |ui| {
+                            resizable_frame(&mut self.size, ui, |ui| {
+                                egui::ScrollArea::vertical().show(ui, |ui| {
+                                    let widget = egui::TextEdit::multiline(&mut self.filter)
+                                        .desired_width(f32::INFINITY)
+                                        .hint_text("Filter\u{1F64B}");
+
+                                    squelch(ui.add_sized(ui.available_size(), widget));
+                                });
+                            });
+                        });
+                    } else {
+                        ui.label("filter");
+                    }
+                }
+                1 => {
+                    ui.label("json");
+                }
+                _ => unreachable!(),
+            };
+
+            self.in_kinds(pin_id).first().unwrap().default_pin()
+        }
+    }
+
+    impl UiNode for GatherJson {
+        fn tooltip(&self) -> &str {
+            "Combine multiple JSON documents into a single array.\n\
+            The output can be transformed using shallow, deep or arbitrary merging"
+        }
+
+        fn show_input(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+            remote: Option<Value>,
+        ) -> egui_snarl::ui::PinInfo {
+            if pin_id == self.count && remote.is_some() {
+                self.count += 1;
+            } else if pin_id + 1 == self.count && remote.is_none() {
+                self.count -= 1;
+            }
+
+            if pin_id < self.count {
+                ui.label(format!(".[{pin_id}]"));
+            }
+
+            self.in_kinds(pin_id).first().unwrap().default_pin()
+        }
+    }
+
+    impl UiNode for UnwrapJson {
+        fn tooltip(&self) -> &str {
+            "Converts a JSON value into a workflow value"
+        }
+
+        fn has_body(&self) -> bool {
+            true
+        }
+
+        fn show_body(&mut self, ui: &mut egui::Ui, ctx: &EditContext) {
+            let old_kind = self.kind;
+            egui::ComboBox::from_id_salt("UnwrapJsonKind")
+                .selected_text(self.kind.to_string().to_ascii_lowercase())
+                .show_ui(ui, |ui| {
+                    let kinds = [
+                        ValueKind::Text,
+                        ValueKind::TextList,
+                        ValueKind::Number,
+                        ValueKind::FloatList,
+                        ValueKind::Integer,
+                        ValueKind::IntList,
+                    ];
+
+                    for kind in kinds {
+                        let mut label = kind.to_string().to_lowercase();
+                        if kind.is_list() {
+                            label = format!("[{label}]");
+                        }
+
+                        ui.selectable_value(&mut self.kind, kind, label);
+                    }
+                });
+
+            if old_kind != self.kind {
+                ctx.reset_out_pin(OutPinId {
+                    node: ctx.current_node,
+                    output: 0,
+                });
+            }
+        }
+    }
+
+    fn json_node_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
+        ui.menu_button("JSON", |ui| {
+            if ui.button("Parse JSON").clicked() {
+                snarl.insert_node(pos.into(), ParseJson::default().into());
+                ui.close();
+            }
+
+            if ui.button("Gather JSON").clicked() {
+                snarl.insert_node(pos.into(), GatherJson::default().into());
+                ui.close();
+            }
+
+            if ui.button("Validate JSON").clicked() {
+                snarl.insert_node(pos.into(), ValidateJson::default().into());
+                ui.close();
+            }
+
+            if ui.button("Transform JSON").clicked() {
+                snarl.insert_node(pos.into(), TransformJson::default().into());
+                ui.close();
+            }
+
+            if ui.button("Unwrap JSON").clicked() {
+                snarl.insert_node(pos.into(), UnwrapJson::default().into());
+                ui.close();
+            }
+        });
+    }
+
+    inventory::submit! {
+        GraphSubmenu("json", json_node_menu)
+    }
 }

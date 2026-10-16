@@ -1,14 +1,24 @@
 use delegate::delegate;
-#[cfg(feature = "ui")]
-use egui::Ui;
-use egui_snarl::NodeId;
-#[cfg(feature = "ui")]
-use egui_snarl::Snarl;
 use serde::{Deserialize, Serialize};
 use std::{
     hash::Hash,
     ops::{Deref, DerefMut},
 };
+
+#[cfg(feature = "native")]
+use egui_snarl::NodeId;
+
+#[cfg(feature = "ui")]
+use egui::Ui;
+#[cfg(feature = "ui")]
+use egui_snarl::Snarl;
+
+pub use crate::workflow::{DynNode, FlexNode, Value, ValueKind};
+#[cfg(feature = "native")]
+pub use crate::workflow::{RunContext, WorkflowError};
+
+#[cfg(feature = "ui")]
+pub use crate::workflow::{EditContext, UiNode};
 
 pub mod agent;
 pub mod chat;
@@ -33,12 +43,24 @@ pub use subgraph::*;
 pub const MIN_WIDTH: f32 = 128.0;
 pub const MIN_HEIGHT: f32 = 32.0;
 
-use crate::workflow::{FlexNode, WorkflowError};
+// "serializing nested enums in YAML is not supported yet"
+// So we'll embed the enum into the node struct instead
+/// Controls execution behavior
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, Deserialize, Serialize)]
+pub enum Flavor {
+    #[default]
+    Simple,
 
-#[cfg(feature = "ui")]
-pub use super::{EditContext, UiNode};
+    Looping,
 
-pub use super::{DynNode, RunContext, Value, ValueKind};
+    Iterative,
+}
+
+impl Flavor {
+    pub fn multiplexing(&self) -> bool {
+        *self == Self::Iterative
+    }
+}
 
 #[derive(Debug, Clone, Eq, Serialize, Deserialize)]
 pub struct WorkNode(pub Box<dyn FlexNode>);
@@ -72,6 +94,7 @@ impl WorkNode {
 
             pub fn title(&self) -> &str;
 
+            #[cfg(feature = "native")]
             pub fn execute(&mut self, ctx: &RunContext, node_id: NodeId, inputs: Vec<Option<Value>>,) -> Result<Vec<Value>, WorkflowError>;
         }
     }
@@ -131,6 +154,7 @@ impl WorkNode {
     pub fn is_comment(&self) -> bool {
         self.0.as_ref().downcast_ref::<CommentNode>().is_some()
     }
+
     #[inline]
     pub fn is_protected(&self) -> bool {
         self.is_start() || self.is_finish() || self.is_repeat()

@@ -1,21 +1,14 @@
-use std::{borrow::Cow, sync::Arc};
-
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use serde_with::skip_serializing_none;
+use std::borrow::Cow;
 
-#[cfg(feature = "ui")]
-use crate::{
-    ui::{resizable_frame, shortcuts::squelch},
-    workflow::{EditContext, NodeTheme, ThemeCodex, UiNode},
-};
+#[cfg(feature = "native")]
+use std::sync::Arc;
 
-use crate::{
-    utils::message_to_json,
-    workflow::{DynNode, FlexNode, RunContext, Value, WorkflowError},
-};
+use crate::workflow::{DynNode, FlexNode, Value, ValueKind};
 
-use super::ValueKind;
+#[cfg(feature = "native")]
+use crate::workflow::{RunContext, WorkflowError};
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,45 +32,6 @@ impl DynNode for CommentNode {
 
     fn outputs(&self) -> usize {
         0
-    }
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for CommentNode {
-    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
-        other
-            .downcast_ref::<Self>()
-            .is_some_and(|other| self.comment == other.comment)
-    }
-
-    fn has_body(&self) -> bool {
-        true
-    }
-
-    fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
-        egui::Frame::new().inner_margin(4).show(ui, |ui| {
-            resizable_frame(&mut self.size, ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let widget = egui::TextEdit::multiline(&mut self.comment)
-                        .desired_width(f32::INFINITY)
-                        .background_color(Self::bg_color())
-                        .text_color_opt(Some(egui::Color32::BLACK))
-                        .hint_text("Comment body\u{1F64B}");
-                    squelch(ui.add_sized(ui.available_size(), widget));
-                });
-            });
-        });
-    }
-
-    fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
-        codex.comment_theme()
-    }
-}
-
-#[cfg(feature = "ui")]
-impl CommentNode {
-    pub fn bg_color() -> egui::Color32 {
-        egui::Color32::LIGHT_YELLOW.gamma_multiply(0.75)
     }
 }
 
@@ -127,122 +81,16 @@ impl DynNode for TemplateNode {
         }
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
         _node_id: egui_snarl::NodeId,
         inputs: Vec<Option<Value>>,
     ) -> Result<Vec<Value>, WorkflowError> {
-        use itertools::Itertools as _;
         self.validate(&inputs)?;
 
-        let template = match &inputs[0] {
-            Some(Value::Text(text)) => text.as_str(),
-            None => self.template.as_str(),
-            _ => unreachable!(),
-        };
-
-        let vars = match &inputs[1] {
-            Some(Value::Json(value)) => match value.as_ref() {
-                serde_json::Value::Object(_) => value.as_ref().clone(),
-                _ => json!({"value": value}),
-            },
-            Some(Value::Number(value)) => json!({"value": value}),
-            Some(Value::Integer(value)) => json!({"value": value}),
-            Some(Value::Text(value)) => json!({"value": value}),
-            Some(Value::FloatList(value)) => json!({"value": value}),
-            Some(Value::IntList(value)) => json!({"value": value}),
-            Some(Value::TextList(value)) => json!({"value": value}),
-            Some(Value::Chat(value)) => {
-                json!({
-                    "value":
-                    value
-                        .iter_msgs()
-                        .map(|m| message_to_json(&m)) .collect_vec()
-                })
-            }
-            Some(Value::Message(value)) => json!({"value": message_to_json(value)}),
-            Some(Value::MsgList(value)) => {
-                json!({"value":
-                   value
-                       .iter()
-                       .map(|m| message_to_json(m))
-                       .collect_vec()
-                })
-            }
-            None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
-            _ => unreachable!(),
-        };
-
-        let value = ctx.transmuter.render_template(template, &vars)?;
-
-        Ok(vec![Value::Text(Arc::new(value))])
-    }
-}
-
-#[cfg(feature = "ui")]
-impl UiNode for TemplateNode {
-    fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
-        other
-            .downcast_ref::<Self>()
-            .is_some_and(|other| self.template == other.template)
-    }
-
-    fn tooltip(&self) -> &str {
-        "Renders a Minijinja template with variables from a JSON value"
-    }
-
-    fn help_link(&self) -> &str {
-        "https://docs.rs/minijinja/latest/minijinja/syntax/index.html"
-    }
-
-    fn show_input(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-        remote: Option<Value>,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                if remote.is_none() {
-                    egui::Frame::new().inner_margin(4).show(ui, |ui| {
-                        resizable_frame(&mut self.size, ui, |ui| {
-                            egui::ScrollArea::vertical().show(ui, |ui| {
-                                let widget = egui::TextEdit::multiline(&mut self.template)
-                                    .desired_width(f32::INFINITY)
-                                    .hint_text("Template body\u{1F64B}");
-
-                                squelch(ui.add_sized(ui.available_size(), widget));
-                            });
-                        });
-                    });
-                } else {
-                    ui.label("template");
-                }
-            }
-            1 => {
-                ui.label("variables");
-            }
-            _ => unreachable!(),
-        };
-
-        self.in_kinds(pin_id).first().unwrap().default_pin()
-    }
-
-    fn show_output(
-        &mut self,
-        ui: &mut egui::Ui,
-        _ctx: &EditContext,
-        pin_id: usize,
-    ) -> egui_snarl::ui::PinInfo {
-        match pin_id {
-            0 => {
-                ui.label("text");
-            }
-            _ => unreachable!(),
-        }
-        self.out_kind(pin_id).default_pin()
+        self.forward(ctx, inputs)
     }
 }
 
@@ -267,6 +115,7 @@ impl DynNode for EnvironmentNode {
         ValueKind::Json
     }
 
+    #[cfg(feature = "native")]
     fn execute(
         &mut self,
         ctx: &RunContext,
@@ -285,9 +134,185 @@ impl DynNode for EnvironmentNode {
     }
 }
 
+#[cfg(feature = "native")]
+mod forward {
+    use serde_json::json;
+    use std::sync::Arc;
+
+    use crate::{
+        utils::message_to_json,
+        workflow::{RunContext, WorkflowError},
+    };
+
+    use super::*;
+
+    impl TemplateNode {
+        pub fn forward(
+            &mut self,
+            ctx: &RunContext,
+            inputs: Vec<Option<Value>>,
+        ) -> Result<Vec<Value>, WorkflowError> {
+            use itertools::Itertools as _;
+            let template = match &inputs[0] {
+                Some(Value::Text(text)) => text.as_str(),
+                None => self.template.as_str(),
+                _ => unreachable!(),
+            };
+
+            let vars = match &inputs[1] {
+                Some(Value::Json(value)) => match value.as_ref() {
+                    serde_json::Value::Object(_) => value.as_ref().clone(),
+                    _ => json!({"value": value}),
+                },
+                Some(Value::Number(value)) => json!({"value": value}),
+                Some(Value::Integer(value)) => json!({"value": value}),
+                Some(Value::Text(value)) => json!({"value": value}),
+                Some(Value::FloatList(value)) => json!({"value": value}),
+                Some(Value::IntList(value)) => json!({"value": value}),
+                Some(Value::TextList(value)) => json!({"value": value}),
+                Some(Value::Chat(value)) => {
+                    json!({
+                        "value":
+                        value
+                            .iter_msgs()
+                            .map(|m| message_to_json(&m)) .collect_vec()
+                    })
+                }
+                Some(Value::Message(value)) => json!({"value": message_to_json(value)}),
+                Some(Value::MsgList(value)) => {
+                    json!({"value":
+                       value
+                           .iter()
+                           .map(|m| message_to_json(m))
+                           .collect_vec()
+                    })
+                }
+                None => Err(WorkflowError::Required(vec!["JSON input required".into()]))?,
+                _ => unreachable!(),
+            };
+
+            let value = ctx.transmuter.render_template(template, &vars)?;
+
+            Ok(vec![Value::Text(Arc::new(value))])
+        }
+    }
+}
+
 #[cfg(feature = "ui")]
-impl UiNode for EnvironmentNode {
-    fn tooltip(&self) -> &str {
-        "Gets the current set of environment variables"
+mod gui {
+    use crate::{
+        ui::{resizable_frame, shortcuts::squelch},
+        workflow::{EditContext, NodeTheme, ThemeCodex, UiNode},
+    };
+
+    use super::*;
+
+    impl CommentNode {
+        pub fn bg_color() -> egui::Color32 {
+            egui::Color32::LIGHT_YELLOW.gamma_multiply(0.75)
+        }
+    }
+
+    impl UiNode for CommentNode {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other
+                .downcast_ref::<Self>()
+                .is_some_and(|other| self.comment == other.comment)
+        }
+
+        fn has_body(&self) -> bool {
+            true
+        }
+
+        fn show_body(&mut self, ui: &mut egui::Ui, _ctx: &EditContext) {
+            egui::Frame::new().inner_margin(4).show(ui, |ui| {
+                resizable_frame(&mut self.size, ui, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        let widget = egui::TextEdit::multiline(&mut self.comment)
+                            .desired_width(f32::INFINITY)
+                            .background_color(Self::bg_color())
+                            .text_color_opt(Some(egui::Color32::BLACK))
+                            .hint_text("Comment body\u{1F64B}");
+                        squelch(ui.add_sized(ui.available_size(), widget));
+                    });
+                });
+            });
+        }
+
+        fn theme(&self, codex: &dyn ThemeCodex) -> NodeTheme {
+            codex.comment_theme()
+        }
+    }
+
+    #[cfg(feature = "ui")]
+    impl UiNode for TemplateNode {
+        fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
+            other
+                .downcast_ref::<Self>()
+                .is_some_and(|other| self.template == other.template)
+        }
+
+        fn tooltip(&self) -> &str {
+            "Renders a Minijinja template with variables from a JSON value"
+        }
+
+        fn help_link(&self) -> &str {
+            "https://docs.rs/minijinja/latest/minijinja/syntax/index.html"
+        }
+
+        fn show_input(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+            remote: Option<Value>,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    if remote.is_none() {
+                        egui::Frame::new().inner_margin(4).show(ui, |ui| {
+                            resizable_frame(&mut self.size, ui, |ui| {
+                                egui::ScrollArea::vertical().show(ui, |ui| {
+                                    let widget = egui::TextEdit::multiline(&mut self.template)
+                                        .desired_width(f32::INFINITY)
+                                        .hint_text("Template body\u{1F64B}");
+
+                                    squelch(ui.add_sized(ui.available_size(), widget));
+                                });
+                            });
+                        });
+                    } else {
+                        ui.label("template");
+                    }
+                }
+                1 => {
+                    ui.label("variables");
+                }
+                _ => unreachable!(),
+            };
+
+            self.in_kinds(pin_id).first().unwrap().default_pin()
+        }
+
+        fn show_output(
+            &mut self,
+            ui: &mut egui::Ui,
+            _ctx: &EditContext,
+            pin_id: usize,
+        ) -> egui_snarl::ui::PinInfo {
+            match pin_id {
+                0 => {
+                    ui.label("text");
+                }
+                _ => unreachable!(),
+            }
+            self.out_kind(pin_id).default_pin()
+        }
+    }
+
+    impl UiNode for EnvironmentNode {
+        fn tooltip(&self) -> &str {
+            "Gets the current set of environment variables"
+        }
     }
 }

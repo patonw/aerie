@@ -1,13 +1,30 @@
+use std::sync::Arc;
+
 use egui_snarl::{InPinId, NodeId, OutPinId};
+use kinded::Kinded;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
+    config::{Preferences, ToolSpec},
     utils::PriorityQueue,
-    workflow::{AnyPin, GraphId, ValueKind},
+    workflow::{
+        AnyPin, GraphId, ShadowGraph, ValueKind, WorkNode, Workflow,
+        runner::{ExecId, ExecState},
+    },
 };
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, Kinded)]
+pub enum ProgressEvent {
+    Begin(Uuid, u64),
+    Add(Uuid, u64),
+    End(Uuid),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, Kinded)]
 pub enum AppEvent {
+    DiscardErrors,
+
     EnterSubgraph(NodeId),
     LeaveSubgraph(usize),
 
@@ -26,23 +43,50 @@ pub enum AppEvent {
     SwapInputs(GraphId, InPinId, InPinId),
     SwapOutputs(GraphId, OutPinId, OutPinId),
 
+    GraphSnapshot(ShadowGraph<WorkNode>),
+
+    CreateWorkflow,
+    ImportWorkflow(String, Vec<u8>),
+    DeleteWorkflow(String),
+    SaveWorkflow,
+    WorkflowSnapshot(Workflow),
+    SwitchWorkflow(String),
+    RenameWorkflow(String, String),
     // User requested to run the current workflow
     UserRunWorkflow,
+    InterruptWorkflow,
 
     ToolsChanged,
+    ImportTools(String, Vec<u8>),
+    SaveToolProvider(Option<String>, String, ToolSpec),
+    ReloadToolProvider(String),
+    RemoveToolProvider(String),
 
     NodesChanged(GraphId, im::OrdSet<NodeId>),
     RerunNodes(GraphId, Vec<NodeId>),
 
     SetPrompt(String),
+    AddChatImages(Vec<String>),
+    RemoveChatImage(u32),
+    ClearChatImages,
 
     Freeze(Option<bool>),
     Undo,
     Redo,
 
-    ProgressBegin(Uuid, usize),
-    ProgressAdd(Uuid, usize),
-    ProgressEnd(Uuid),
+    Progress(ProgressEvent),
+
+    UpdatePreferences(Arc<Preferences>),
+    ClearModels,
+    TouchModel(String),
+
+    CreateSession,
+    SwitchSession(String),
+    RenameSession(String, String),
+    ImportSession(String, Vec<u8>),
+    DeleteSession(String),
+
+    SwitchBranch(String),
 }
 
 impl AppEvent {
@@ -69,3 +113,37 @@ impl Ord for AppEvent {
 }
 
 pub type AppEvents = PriorityQueue<AppEvent>;
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum NodeStateEvent {
+    /// Drops all execution data
+    Clear,
+
+    /// Drops node states for a specific execution
+    Reset(ExecId),
+
+    /// Drop a single node from a specific execution
+    Remove(ExecId, NodeId),
+
+    /// Update the state of a node within an execution
+    Update(ExecId, NodeId, ExecState),
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum ExecEvent {
+    Start(ExecId, String, chrono::DateTime<chrono::Local>),
+    Tick(ExecId, u64),
+    Output(ExecId, String, crate::workflow::Value),
+    Finish(ExecId, u64),
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum GraphEditEvent {}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum WorkflowEvent {
+    Exec(ExecEvent),
+    Progress(ProgressEvent),
+    // NodeState(NodeStateEvent),
+    // GraphEdit(GraphEditEvent),
+}

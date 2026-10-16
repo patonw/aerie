@@ -1,29 +1,27 @@
-use crate::rig::{
-    self,
-    agent::AgentBuilder,
-    completion::CompletionModel,
-    tool::{Tool as RigTool, ToolContext, server::ToolServer},
-};
-use anyhow::Context as _;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use cached::proc_macro::cached;
 use either::Either;
 use im::OrdMap;
 use itertools::Itertools;
+use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     iter::{self, once},
     path::{Path, PathBuf},
     sync::Arc,
     time::SystemTime,
 };
+
+#[cfg(feature = "native")]
 use tokio::process::Command;
 
-use crate::rmcp::{
+#[cfg(feature = "native")]
+use rmcp::{
     Peer, RoleClient, ServiceExt as _,
-    model::{ClientInfo, Implementation, InitializeRequestParams, Tool},
+    model::{ClientInfo, Implementation, InitializeRequestParams},
     service::RunningService,
     transport::{
         ConfigureCommandExt, StreamableHttpClientTransport, TokioChildProcess,
@@ -33,11 +31,22 @@ use crate::rmcp::{
 
 use crate::{
     config::Ternary,
-    workflow::{
-        WorkflowError,
-        store::{WorkflowStore as _, WorkflowStoreDir},
+    rig::{
+        self,
+        agent::AgentBuilder,
+        tool::{Tool as RigTool, ToolContext},
     },
+    workflow::WorkflowError,
 };
+
+#[cfg(feature = "native")]
+use crate::{
+    rig::{completion::CompletionModel, tool::server::ToolServer},
+    workflow::store::{WorkflowStore as _, WorkflowStoreDir},
+};
+
+#[cfg(not(feature = "native"))]
+use crate::workflow::store::WorkflowStoreStub;
 
 pub type AgentMaybeTooled<M> =
     Either<AgentBuilder<M>, AgentBuilder<M, rig::agent::WithBuilderTools>>;
@@ -84,7 +93,7 @@ impl ChainBreaker {
     }
 }
 
-#[cached(result = true)]
+#[cached]
 fn parse_schema(text: String) -> anyhow::Result<serde_json::Value> {
     Ok(serde_json::from_str(&text)?)
 }
@@ -193,25 +202,34 @@ impl RigTool for ChainTool {
 #[derive(Clone)]
 pub enum ToolProvider {
     Chainer {
+        // TODO: A client-side proxy
+        #[cfg(feature = "native")]
         workflows: WorkflowStoreDir,
+
+        #[cfg(not(feature = "native"))]
+        workflows: WorkflowStoreStub,
 
         next_workflow: Arc<ArcSwapOption<String>>,
         next_prompt: Arc<ArcSwapOption<String>>,
         next_images: Arc<ArcSwap<Vec<String>>>,
     },
     MCP {
+        #[cfg(feature = "native")]
         client: McpClient,
         tools: Vec<Tool>,
+        #[cfg(feature = "native")]
         timeout: Option<u64>,
     },
 }
 
+#[cfg(feature = "native")]
 #[derive(Clone)]
 pub enum McpClient {
     Stdio(Arc<RunningService<RoleClient, ()>>),
     HTTP(Arc<RunningService<RoleClient, InitializeRequestParams>>),
 }
 
+#[cfg(feature = "native")]
 impl McpClient {
     pub fn peer(&self) -> &Peer<RoleClient> {
         match self {
@@ -303,13 +321,18 @@ impl ToolProvider {
                 }
             }
             ToolProvider::Chainer { workflows, .. } => {
-                return workflows.names().any(|name| selector(&name));
+                for name in workflows.names() {
+                    if selector(name.as_ref()) {
+                        return true;
+                    }
+                }
             }
         }
 
         false
     }
 
+    #[cfg(feature = "native")]
     pub fn add_tools(&self, mut server: ToolServer, selector: impl Fn(&str) -> bool) -> ToolServer {
         match self {
             ToolProvider::MCP { client, tools, .. } => {
@@ -353,6 +376,7 @@ impl ToolProvider {
         server
     }
 
+    #[cfg(feature = "native")]
     pub fn select_tools<M: CompletionModel>(
         &self,
         mut agent: AgentMaybeTooled<M>,
@@ -415,6 +439,7 @@ impl ToolProvider {
         }
     }
 
+    #[cfg(feature = "native")]
     pub async fn from_spec(
         spec: &ToolSpec,
         vars: &std::collections::HashMap<String, String>,
@@ -457,6 +482,8 @@ impl ToolProvider {
                 McpClient::Stdio(Arc::new(client))
             }
             ToolSpec::HTTP { uri, auth_var, .. } => {
+                use anyhow::Context as _;
+
                 const API_KEY: &str = "{{api_key}}";
                 let auth_var = auth_var.as_ref().filter(|s| !s.is_empty());
                 let config = if uri.contains(API_KEY) {
@@ -536,6 +563,10 @@ impl Toolbox {
     pub fn without_provider(&self, name: &str) -> &Self {
         self.providers.rcu(|providers| {
             if let Some(provider) = providers.get(name) {
+                #[cfg(not(feature = "native"))]
+                let _ = provider;
+
+                #[cfg(feature = "native")]
                 if let ToolProvider::MCP { client, .. } = provider {
                     client.cancel();
                 }
@@ -548,6 +579,7 @@ impl Toolbox {
         self
     }
 
+    #[cfg(feature = "native")]
     pub fn get_tools(&self, toolset: &ToolSelector) -> ToolServer {
         let mut server = ToolServer::new();
 
@@ -577,7 +609,7 @@ impl Toolbox {
                             .map(|tool| (name.as_str(), tool)),
                     ),
                 })
-                .any(|(name, tool)| ts.apply(name, &tool));
+                .any(|(name, tool)| ts.apply(name, tool.as_ref()));
 
             if !has_matches {
                 missing.push(entry.to_string());
@@ -587,6 +619,7 @@ impl Toolbox {
         missing
     }
 
+    #[cfg(feature = "native")]
     pub fn select_tools<M: CompletionModel>(
         &self,
         agent: AgentBuilder<M>,
@@ -600,6 +633,7 @@ impl Toolbox {
             })
     }
 
+    #[cfg(feature = "native")]
     pub fn apply<M: CompletionModel>(
         &self,
         agent: AgentBuilder<M>,
@@ -620,8 +654,9 @@ impl Toolbox {
 
     pub fn timeout(&self, toolset: &ToolSelector, tool_name: &str) -> Option<u64> {
         self.provider_for(toolset, tool_name).and_then(|p| match p {
+            #[cfg(feature = "native")]
             ToolProvider::MCP { timeout, .. } => timeout,
-            ToolProvider::Chainer { .. } => None,
+            _ => None,
         })
     }
 
@@ -700,21 +735,48 @@ impl Toolbox {
     }
 }
 
-#[derive(Clone)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ToolStore {
-    path: PathBuf,
+    pub path: PathBuf,
 
-    cache: Arc<ArcSwap<im::OrdMap<String, (SystemTime, ToolSpec)>>>,
+    pub cache: Arc<ArcSwap<im::OrdMap<String, (SystemTime, ToolSpec)>>>,
+
+    #[serde(default)]
+    pub tool_info: BTreeMap<String, Vec<Tool>>,
 }
+
+impl std::hash::Hash for ToolStore {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match serde_json::to_vec(self) {
+            Ok(it) => it.hash(state),
+            Err(err) => format!("{err:#?}").hash(state),
+        }
+    }
+}
+
+impl PartialEq for ToolStore {
+    fn eq(&self, other: &Self) -> bool {
+        // TODO: a more serious impl
+        match (serde_json::to_vec(self), serde_json::to_vec(other)) {
+            (Ok(x), Ok(y)) => x == y,
+            (Err(x), Err(y)) => format!("{x:#?}") == format!("{y:#?}"),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ToolStore {}
 
 impl ToolStore {
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
             cache: Default::default(),
+            tool_info: Default::default(),
         }
     }
 
+    #[cfg(feature = "native")]
     pub async fn load_provider(
         &self,
         toolbox: Toolbox,
@@ -722,6 +784,8 @@ impl ToolStore {
         vars: &std::collections::HashMap<String, String>,
     ) -> anyhow::Result<Toolbox> {
         use crate::storage::CachedDirStore as _;
+        use anyhow::Context as _;
+
         let Ok(spec) = self.load(name) else {
             anyhow::bail!("Could not load tool spec for {name}");
         };
@@ -738,6 +802,7 @@ impl ToolStore {
     }
 }
 
+#[cfg(feature = "native")]
 impl crate::storage::CachedDirStore<ToolSpec> for ToolStore {
     const EXT: &'static str = "mcp";
 
@@ -759,5 +824,27 @@ impl crate::storage::CachedDirStore<ToolSpec> for ToolStore {
         ) -> im::OrdMap<String, (SystemTime, ToolSpec)>,
     ) {
         self.cache.rcu(|cache| cb(cache));
+    }
+}
+
+impl ToolStore {
+    pub fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
+        let cache = self.cache.load();
+        cache
+            .keys()
+            .cloned()
+            .collect_vec()
+            .into_iter()
+            .map(|s| Cow::Owned(s))
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        let cache = self.cache.load();
+        cache.contains_key(name)
+    }
+
+    pub fn get(&self, name: &str) -> Option<Cow<'_, ToolSpec>> {
+        let cache = self.cache.load();
+        cache.get(name).map(|it| Cow::Owned(it.1.clone()))
     }
 }

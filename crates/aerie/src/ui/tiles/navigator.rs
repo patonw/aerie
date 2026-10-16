@@ -2,12 +2,13 @@ use egui_extras::{Size, StripBuilder};
 use egui_phosphor::regular::{DOWNLOAD_SIMPLE, MAGIC_WAND, PENCIL, ROCKET, TRASH, UPLOAD_SIMPLE};
 use std::{collections::BTreeSet, sync::atomic::Ordering};
 
-use crate::utils::ErrorDistiller as _;
+use crate::{events::AppEvent, utils::ErrorDistiller as _, utils::spawn_wherever};
 
 impl super::AppState {
     pub fn nav_ui(&mut self, ui: &mut egui::Ui) {
-        let session = self.session.clone();
+        let session = self.data.session.clone();
         let errors = self.errors.clone();
+        let events = self.events.clone();
 
         let running = self.task_count.load(Ordering::Relaxed) > 0;
         egui::CentralPanel::default().show_inside(ui, |ui| {
@@ -17,13 +18,16 @@ impl super::AppState {
                         let editor = ui.text_edit_singleline(renaming);
                         if editor.lost_focus() {
                             if !renaming.is_empty() {
-                                errors.distil(self.session.rename(renaming));
-                                self.state.set_session(self.session.name());
+                                self.events.insert(AppEvent::RenameSession(
+                                    self.data.session.name(),
+                                    renaming.clone(),
+                                ));
                             }
                             self.rename_session = None;
                         }
                         editor.request_focus();
                     } else {
+                        // TODO: refresh on remote import/rename
                         egui::ComboBox::from_id_salt("session_list")
                             .wrap()
                             .width(ui.available_width())
@@ -35,14 +39,12 @@ impl super::AppState {
 
                                 ui.selectable_value(&mut current, &blank, "");
 
-                                let names = session.list();
-                                for name in &names {
+                                for name in &self.data.session_names {
                                     ui.selectable_value(&mut current, name, name);
                                 }
 
                                 if current != &original {
-                                    errors.distil(self.session.switch(current));
-                                    self.state.set_session(self.session.name());
+                                    self.events.insert(AppEvent::SwitchSession(current.clone()));
                                 }
                             });
                     }
@@ -60,18 +62,13 @@ impl super::AppState {
                                                 .on_hover_text("Create")
                                                 .clicked()
                                             {
-                                                let datetime = chrono::offset::Local::now();
-                                                let timestamp = datetime
-                                                    .format("unnamed-%Y-%m-%dT%H:%M:%S")
-                                                    .to_string();
-                                                errors.distil(self.session.switch(&timestamp));
-                                                errors.distil(self.session.save());
-                                                self.state.set_session(self.session.name());
+                                                self.events.insert(AppEvent::CreateSession);
                                             }
                                         });
                                         strip.cell(|ui| {
                                             if ui.button(PENCIL).on_hover_text("Rename").clicked() {
-                                                self.rename_session = Some(self.session.name());
+                                                self.rename_session =
+                                                    Some(self.data.session.name());
                                             }
                                         });
                                         strip.cell(|ui| {
@@ -79,12 +76,25 @@ impl super::AppState {
                                                 .button(DOWNLOAD_SIMPLE)
                                                 .on_hover_text("Import")
                                                 .clicked()
-                                                && let Some(path) = rfd::FileDialog::new()
-                                                    .set_directory(&self.state.export_dir)
-                                                    .pick_file()
                                             {
-                                                self.state.set_export_dir(path.parent());
-                                                errors.distil(self.session.import(&path));
+                                                spawn_wherever(async move {
+                                                    if let Some(fh) = rfd::AsyncFileDialog::new()
+                                                        .pick_file()
+                                                        .await
+                                                    {
+                                                        tracing::info!(?fh, "picked ifle");
+                                                        let data = fh.read().await;
+
+                                                        // TODO: by event
+                                                        // #[cfg(feature = "native")]
+                                                        // self.state.set_export_dir(fh.path().parent());
+
+                                                        events.insert(AppEvent::ImportSession(
+                                                            fh.file_name(),
+                                                            data,
+                                                        ));
+                                                    }
+                                                });
                                             }
                                         });
                                         strip.cell(|ui| {
@@ -92,26 +102,38 @@ impl super::AppState {
                                                 .button(UPLOAD_SIMPLE)
                                                 .on_hover_text("Export")
                                                 .clicked()
-                                                && let Some(path) = rfd::FileDialog::new()
-                                                    .set_directory(&self.state.export_dir)
-                                                    .set_file_name(format!(
-                                                        "{}.yml",
-                                                        session.name()
-                                                    ))
-                                                    .save_file()
                                             {
-                                                self.state.set_export_dir(path.parent());
-                                                errors.distil(self.session.export(&path));
+                                                // TODO: by event
+                                                // self.state.set_export_dir(path.parent());
+                                                // errors.distil(self.data.session.export(&path));
+
+                                                let name = session.name();
+                                                if let Some(data) =
+                                                    errors.distil(session.to_bytes())
+                                                {
+                                                    spawn_wherever(async move {
+                                                        if let Some(fh) =
+                                                            rfd::AsyncFileDialog::new()
+                                                                // .set_directory(&self.state.export_dir)
+                                                                .set_file_name(format!(
+                                                                    "{name}.yml"
+                                                                ))
+                                                                .save_file()
+                                                                .await
+                                                        {
+                                                            tracing::info!(?fh, "picked file");
+                                                            fh.write(&data).await.unwrap();
+                                                        }
+                                                    });
+                                                }
                                             }
                                         });
                                         strip.cell(|ui| {
                                             ui.menu_button(TRASH, |ui| {
                                                 if ui.button("OK").clicked() {
-                                                    let old_name = session.name();
-                                                    errors.distil(self.session.switch(""));
-                                                    errors.distil(self.session.delete(&old_name));
-                                                    self.state.set_session(self.session.name());
-                                                    ui.close();
+                                                    self.events.insert(AppEvent::DeleteSession(
+                                                        session.name(),
+                                                    ));
                                                 }
                                             })
                                             .response
@@ -126,7 +148,7 @@ impl super::AppState {
             ui.separator();
             ui.vertical_centered(|ui| ui.monospace("Branches"));
             egui::ScrollArea::vertical().show(ui, |ui| {
-                let lineage = self.session.view(|history| history.lineage());
+                let lineage = self.data.session.view(|history| history.lineage());
 
                 if let Some(children) = lineage.get("") {
                     for child in children {
@@ -153,9 +175,11 @@ impl super::AppState {
                     egui::Sides::new().show(
                         ui,
                         |ui| {
-                            errors.distil(self.session.transform(|history| {
+                            errors.distil(self.data.session.transform(|history| {
                                 let mut head = history.head.as_str();
-                                ui.selectable_value(&mut head, cursor, cursor);
+                                if ui.selectable_value(&mut head, cursor, cursor).clicked() {
+                                    self.events.insert(AppEvent::SwitchBranch(head.to_string()));
+                                }
                                 Ok(history.switch(head))
                             }));
                         },
@@ -165,7 +189,8 @@ impl super::AppState {
                             }
                             if ui.button(ROCKET).on_hover_text("Promote").clicked() {
                                 errors.distil(
-                                    self.session
+                                    self.data
+                                        .session
                                         .transform(|history| history.promote_branch(cursor)),
                                 );
                             }
@@ -181,9 +206,11 @@ impl super::AppState {
             egui::Sides::new().show(
                 ui,
                 |ui| {
-                    errors.distil(self.session.transform(|history| {
+                    errors.distil(self.data.session.transform(|history| {
                         let mut head = history.head.as_str();
-                        ui.selectable_value(&mut head, cursor, cursor);
+                        if ui.selectable_value(&mut head, cursor, cursor).clicked() {
+                            self.events.insert(AppEvent::SwitchBranch(head.to_string()));
+                        }
                         Ok(history.switch(head))
                     }));
                 },
@@ -193,21 +220,26 @@ impl super::AppState {
                     }
                     if ui.button(ROCKET).on_hover_text("Promote").clicked() {
                         errors.distil(
-                            self.session
+                            self.data
+                                .session
                                 .transform(|history| history.promote_branch(cursor)),
                         );
                     }
 
-                    ui.add_enabled_ui(self.session.view(|history| history.head == cursor), |ui| {
-                        if ui.button(TRASH).on_hover_text("Prune").clicked() {
-                            errors.distil(
-                                self.session
-                                    .transform(|history| history.prune_branch(cursor)),
-                            );
+                    ui.add_enabled_ui(
+                        self.data.session.view(|history| history.head == cursor),
+                        |ui| {
+                            if ui.button(TRASH).on_hover_text("Prune").clicked() {
+                                errors.distil(
+                                    self.data
+                                        .session
+                                        .transform(|history| history.prune_branch(cursor)),
+                                );
 
-                            self.session.scratch.clear();
-                        }
-                    });
+                                self.data.session.scratch.clear();
+                            }
+                        },
+                    );
                 },
             );
         }
@@ -223,6 +255,7 @@ impl super::AppState {
         let mut submit = false;
         let unique_name = !self.new_branch.is_empty()
             && self
+                .data
                 .session
                 .view(|history| !history.has_branch(&self.new_branch));
 
@@ -263,7 +296,8 @@ impl super::AppState {
             if submit {
                 let new_name = std::mem::take(&mut self.new_branch);
                 errors.distil(
-                    self.session
+                    self.data
+                        .session
                         .transform(|history| history.rename_branch(old_name, &new_name)),
                 );
                 ui.close();

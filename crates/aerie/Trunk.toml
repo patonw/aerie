@@ -1,0 +1,2 @@
+[watch]
+ignore = ["src/bin/runner", "src/bin/aerie.rs", "src/bin/backend.rs"]

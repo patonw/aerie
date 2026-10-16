@@ -69,7 +69,7 @@ pub fn check_workflows(args: &Args, pretty: bool) -> anyhow::Result<()> {
         anyhow::bail!("Nothing to check");
     };
 
-    let names = store.names().map(|n| n.to_string()).collect_vec();
+    let names = store.scan_names().map(|n| n.to_string()).collect_vec();
 
     let mut json_writer = JsonStreamWriter::new_custom(
         std::io::stdout(),
@@ -319,7 +319,6 @@ pub fn run_loop(
             .agent_factory(agent_factory.clone())
             .metadata(workflow.metadata.clone())
             .history(session.history.clone())
-            .seed(settings.seed.clone())
             .models(models.clone())
             .run_events(event_tx.clone())
             .build();
@@ -341,7 +340,7 @@ pub fn run_loop(
             .user_prompt(std::mem::take(&mut prompt))
             .extra_content(extra_content)
             .model("default".into())
-            .temperature(settings.temperature)
+            .temperature(settings.temperature.into_inner())
             .build()
             .inputs()?;
 

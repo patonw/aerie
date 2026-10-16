@@ -12,7 +12,7 @@ use petgraph::{
 };
 use uuid::Uuid;
 
-use crate::{ChatEntry, ChatHistory};
+use crate::chat::{ChatEntry, ChatHistory};
 
 // TODO: show tags for branch heads
 
@@ -214,7 +214,7 @@ mod node {
     use petgraph::{EdgeType, stable_graph::IndexType};
 
     use crate::{
-        ChatContent,
+        chat::ChatContent,
         utils::{message_party, message_text},
     };
 
@@ -428,7 +428,7 @@ impl super::AppState {
     pub fn message_graph(&mut self, ui: &mut egui::Ui) {
         let app = &mut self.message_graph;
 
-        self.session.view(|history| app.update(history));
+        self.data.session.view(|history| app.update(history));
         app.render(ui);
     }
 }

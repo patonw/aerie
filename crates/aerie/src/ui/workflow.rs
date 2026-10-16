@@ -2,10 +2,11 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     iter,
-    sync::{Arc, atomic::AtomicUsize},
+    sync::Arc,
 };
 
 use anyhow::Context as _;
+use arc_swap::ArcSwap;
 use cached::proc_macro::cached;
 use egui::{Color32, Hyperlink, RichText, Sense, Ui, emath::TSTransform};
 use egui_phosphor::regular::{
@@ -19,13 +20,14 @@ use im::vector;
 use itertools::{Itertools, izip};
 use serde_yaml_ng as serde_yml;
 use typed_builder::TypedBuilder;
-use uuid::Uuid;
 
 use crate::{
+    events::AppEvents,
+    state::workflow::ProgressMap,
     ui::shortcuts::{ShortcutHandler, squelch},
     utils::ErrorDistiller as _,
     workflow::{
-        EditContext, GraphId, MetaNode, ShadowGraph, StandardTheme, ThemeCodex, WorkNode, Workflow,
+        DynNode, EditContext, GraphId, MetaNode, ShadowGraph, StandardTheme, WorkNode, Workflow,
         nodes::{
             ChatContext, ChatNode, CommentNode, Demote, EnvironmentNode, Fallback, Flavor,
             GateNode, GraphSubmenu, InvokeTool, Matcher, Number, OutputNode, Panic, Preview,
@@ -34,8 +36,6 @@ use crate::{
         runner::{ExecId, ExecState, NodeStateMap},
     },
 };
-
-use super::AppEvents;
 
 #[cached]
 pub fn get_snarl_style() -> SnarlStyle {
@@ -75,7 +75,7 @@ pub fn get_subgraph_style() -> SnarlStyle {
     }
 }
 
-#[derive(Clone, TypedBuilder)]
+#[derive(TypedBuilder, Debug, Clone, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ViewStack {
     pub root_id: egui::Id,
 
@@ -112,6 +112,29 @@ impl ViewStack {
         me
     }
 
+    pub fn from_graph(
+        name: &str,
+        graph: &ShadowGraph<WorkNode>,
+        path: impl Iterator<Item = NodeId>,
+    ) -> Self {
+        let mut me = Self::builder()
+            .root_id(egui::Id::new(graph.uuid))
+            .root_name(name.into())
+            .flavor(vector![Flavor::Simple])
+            .levels(vector![graph.clone()])
+            .passes(vector![0])
+            .build();
+
+        for id in path {
+            if let Err(err) = me.enter(id) {
+                tracing::error!(?err, "Could not restore view stack");
+                break;
+            }
+        }
+
+        me
+    }
+
     pub fn from_root(name: &str, workflow: Workflow) -> Self {
         Self::new(name, workflow, iter::empty())
     }
@@ -123,6 +146,11 @@ impl ViewStack {
     pub fn switch(&mut self, name: &str, workflow: Workflow) {
         let path = self.path.clone();
         *self = Self::new(name, workflow, path.into_iter());
+    }
+
+    pub fn switch_graph(&mut self, graph: &ShadowGraph<WorkNode>) {
+        let path = self.path.clone();
+        *self = Self::from_graph(&self.root_name, graph, path.into_iter().rev());
     }
 
     pub fn is_empty(&self) -> bool {
@@ -216,22 +244,28 @@ impl ViewStack {
     }
 
     pub fn enter(&mut self, node: NodeId) -> anyhow::Result<()> {
-        let meta = self
-            .leaf()
-            .nodes
-            .get(&node)
-            .cloned()
-            .context("No such node in parent graph")?;
+        let meta = self.leaf().nodes.get(&node).cloned().context(format!(
+            "No such node {node:?} in graph {:?}",
+            self.leaf().uuid,
+        ))?;
 
         let container = meta.value;
         if !container.is_subgraph() {
-            anyhow::bail!("Not a subgraph");
+            anyhow::bail!(
+                "Node {node:?} {container:?} is not a subgraph of {:?}",
+                self.leaf().uuid
+            );
         }
 
         let Some(subgraph) = container.0.downcast_ref::<Subgraph>() else {
             anyhow::bail!("Could not extract subgraph");
         };
 
+        tracing::info!(
+            "Entering subgraph {:?} from {:?} node {node:?}",
+            subgraph.uuid(),
+            self.leaf().uuid
+        );
         self.path.push_front(node);
         self.flavor.push_front(subgraph.flavor);
         self.passes.push_front(0);
@@ -379,11 +413,6 @@ impl<'a> Iterator for &'a ViewStack {
     }
 }
 
-#[derive(Default, Clone, Debug)]
-pub struct ProgressEntry(pub usize, pub Arc<AtomicUsize>);
-
-pub type ProgressMap = im::OrdMap<Uuid, ProgressEntry>;
-
 #[derive(Clone, TypedBuilder)]
 pub struct WorkflowViewer {
     #[builder(default = egui::Id::new("default_viewer"))]
@@ -403,7 +432,7 @@ pub struct WorkflowViewer {
     pub node_state: NodeStateMap,
 
     #[builder(default)]
-    pub progress: ProgressMap,
+    pub progress: Arc<ArcSwap<ProgressMap>>,
 
     #[builder(default)]
     pub running: bool,
@@ -417,8 +446,8 @@ pub struct WorkflowViewer {
     #[builder(default)]
     pub alerts: im::OrdMap<(GraphId, NodeId), Cow<'static, str>>,
 
-    #[builder(default=Arc::new(StandardTheme))]
-    pub themes: Arc<dyn ThemeCodex>,
+    #[builder(default)]
+    pub theme: StandardTheme,
 }
 
 impl WorkflowViewer {
@@ -573,7 +602,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         }
 
         let node = &snarl[node_id];
-        let theme = node.as_ui().theme(self.themes.as_ref());
+        let theme = node.as_ui().theme(&self.theme);
         let frame = theme.apply_body(frame);
 
         theme.apply_overview(frame, self.transform.scaling)
@@ -588,7 +617,7 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
         snarl: &Snarl<WorkNode>,
     ) -> egui::Frame {
         let node = &snarl[node_id];
-        let theme = node.as_ui().theme(self.themes.as_ref());
+        let theme = node.as_ui().theme(&self.theme);
         let node_info = snarl.get_node_info(node_id).unwrap();
 
         if node_info.open {
@@ -687,12 +716,12 @@ impl SnarlViewer<WorkNode> for WorkflowViewer {
                 },
             );
 
+            let guard = self.progress.load();
             if let Some(uuid) = snarl[node].as_dyn().uuid()
-                && let Some(progress) = self.progress.get(&uuid)
+                && let Some(progress) = guard.get(&uuid)
                 && progress.0 > 0
             {
-                let ratio = progress.1.load(std::sync::atomic::Ordering::Relaxed) as f32
-                    / progress.0 as f32;
+                let ratio = progress.1 as f32 / progress.0 as f32;
 
                 ui.add(
                     egui::ProgressBar::new(ratio)

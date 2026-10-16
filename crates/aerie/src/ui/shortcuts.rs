@@ -5,15 +5,15 @@ use enum_iterator::Sequence;
 use itertools::Itertools as _;
 use typed_builder::TypedBuilder;
 
-use crate::{
-    ui::{AppEvent, ShowHelp, workflow::WorkflowViewer},
-    workflow::WorkNode,
-};
+use crate::ui::workflow::WorkflowViewer;
+use crate::{events::AppEvent, ui::ShowHelp, workflow::WorkNode};
 
 pub const NONE: Modifiers = Modifiers::NONE;
+pub const ALT: Modifiers = Modifiers::ALT;
 pub const CTRL: Modifiers = Modifiers::CTRL;
 pub const SHIFT: Modifiers = Modifiers::SHIFT;
 pub const CTRL_SHIFT: Modifiers = Modifiers::CTRL.plus(Modifiers::SHIFT);
+pub const ALT_SHIFT: Modifiers = Modifiers::ALT.plus(Modifiers::SHIFT);
 
 const fn shortcut(modifiers: Modifiers, logical_key: Key) -> KeyboardShortcut {
     KeyboardShortcut {
@@ -45,10 +45,10 @@ pub enum Shortcut {
     #[assoc(key=shortcut(NONE, Key::CloseBracket))]
     NextPass,
 
-    #[assoc(key=shortcut(CTRL_SHIFT, Key::R))]
+    #[assoc(key=shortcut(ALT_SHIFT, Key::R))]
     RunWorkflow,
 
-    #[assoc(key=shortcut(CTRL, Key::R))]
+    #[assoc(key=shortcut(ALT, Key::R))]
     ResetNodes,
 
     #[assoc(key=shortcut(SHIFT, Key::Questionmark))]
@@ -318,7 +318,7 @@ pub fn show_shortcuts(ui: &mut egui::Ui, scope: ShowHelp) {
 
                     if scope == ShowHelp::Workflow {
                         render_shortcut(ui, Shortcut::ResetNodes.key());
-                        ui.label("Reset node(s) & resume");
+                        ui.label("Incremental run");
                         ui.end_row();
                     }
 
