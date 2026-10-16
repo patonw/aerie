@@ -1,26 +1,33 @@
-use crate::{
-    config::ModelRole,
-    rig::message::Message,
-    workflow::{CheckContext, GraphId, NodeTheme, ThemeCodex, with_deadline},
-};
 use anyhow::Context as _;
 use decorum::E64;
+#[cfg(feature = "ui")]
 use egui::{Color32, RichText, TextEdit, collapsing_header::CollapsingState};
 use egui_snarl::NodeId;
+#[cfg(feature = "ui")]
 use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{borrow::Cow, str::FromStr as _, sync::Arc};
+#[cfg(feature = "ui")]
 use strum::IntoEnumIterator as _;
 
-use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
 use crate::{
-    ToolProvider, ToolSelector,
-    config::Ternary,
+    ToolSelector,
+    config::{ModelRole, Ternary},
+    rig::message::Message,
     toolbox::{ChainBreaker, ChainTool},
-    ui::{resizable_frame, resizable_frame_opt, shortcuts::squelch},
     utils::message_text,
-    workflow::{FlexNode, WorkflowError},
+    workflow::{
+        CheckContext, DynNode, FlexNode, GraphId, RunContext, Value, ValueKind, WorkflowError,
+        with_deadline,
+    },
+};
+
+#[cfg(feature = "ui")]
+use crate::{
+    ToolProvider,
+    ui::{resizable_frame, resizable_frame_opt, shortcuts::squelch},
+    workflow::{EditContext, NodeTheme, ThemeCodex, UiNode},
 };
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +44,14 @@ pub struct Tools {
 impl FlexNode for Tools {}
 
 impl DynNode for Tools {
+    fn title(&self) -> &str {
+        if self.name.is_empty() {
+            "Tools"
+        } else {
+            &self.name
+        }
+    }
+
     fn inputs(&self) -> usize {
         0
     }
@@ -87,19 +102,12 @@ impl DynNode for Tools {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Tools {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other
             .downcast_ref::<Self>()
             .is_some_and(|other| self.toolset == other.toolset)
-    }
-
-    fn title(&self) -> &str {
-        if self.name.is_empty() {
-            "Tools"
-        } else {
-            &self.name
-        }
     }
 
     fn title_mut(&mut self) -> Option<&mut String> {
@@ -301,6 +309,14 @@ mod legacy {
     impl FlexNode for AgentNode {}
 
     impl DynNode for AgentNode {
+        fn title(&self) -> &str {
+            if self.name.is_empty() {
+                "Agent (Deprecated)"
+            } else {
+                &self.name
+            }
+        }
+
         fn inputs(&self) -> usize {
             5
         }
@@ -408,6 +424,7 @@ mod legacy {
         }
     }
 
+    #[cfg(feature = "ui")]
     impl UiNode for AgentNode {
         fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
             other.downcast_ref::<Self>().is_some_and(|other| {
@@ -415,14 +432,6 @@ mod legacy {
                     && self.preamble == other.preamble
                     && self.temperature == other.temperature
             })
-        }
-
-        fn title(&self) -> &str {
-            if self.name.is_empty() {
-                "Agent (Deprecated)"
-            } else {
-                &self.name
-            }
         }
 
         fn title_mut(&mut self) -> Option<&mut String> {
@@ -566,6 +575,14 @@ pub struct RoleAgent {
 impl FlexNode for RoleAgent {}
 
 impl DynNode for RoleAgent {
+    fn title(&self) -> &str {
+        if self.name.is_empty() {
+            "Agent"
+        } else {
+            &self.name
+        }
+    }
+
     fn inputs(&self) -> usize {
         5
     }
@@ -671,6 +688,7 @@ impl DynNode for RoleAgent {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for RoleAgent {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other.downcast_ref::<Self>().is_some_and(|other| {
@@ -678,14 +696,6 @@ impl UiNode for RoleAgent {
                 && self.preamble == other.preamble
                 && self.temperature == other.temperature
         })
-    }
-
-    fn title(&self) -> &str {
-        if self.name.is_empty() {
-            "Agent"
-        } else {
-            &self.name
-        }
     }
 
     fn title_mut(&mut self) -> Option<&mut String> {
@@ -830,6 +840,10 @@ pub struct ChatContext {
 impl FlexNode for ChatContext {}
 
 impl DynNode for ChatContext {
+    fn title(&self) -> &str {
+        "Context"
+    }
+
     fn inputs(&self) -> usize {
         2
     }
@@ -893,15 +907,12 @@ impl DynNode for ChatContext {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for ChatContext {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other
             .downcast_ref::<Self>()
             .is_some_and(|other| self.context_doc == other.context_doc)
-    }
-
-    fn title(&self) -> &str {
-        "Context"
     }
 
     fn tooltip(&self) -> &str {
@@ -994,6 +1005,10 @@ pub struct InvokeTool {
 impl FlexNode for InvokeTool {}
 
 impl DynNode for InvokeTool {
+    fn title(&self) -> &str {
+        "Invoke Tool"
+    }
+
     fn inputs(&self) -> usize {
         4
     }
@@ -1034,15 +1049,12 @@ impl DynNode for InvokeTool {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for InvokeTool {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other.downcast_ref::<Self>().is_some_and(|other| {
             self.tool_name == other.tool_name && self.arguments == other.arguments
         })
-    }
-
-    fn title(&self) -> &str {
-        "Invoke Tool"
     }
 
     fn show_output(
@@ -1138,8 +1150,8 @@ impl InvokeTool {
             _ => unreachable!(),
         };
 
-        let rig_tools = run_ctx.agent_factory.toolbox.get_tools(&toolset);
-        let tool_defs = rig_tools.get_tool_definitions().await.unwrap_or_default();
+        let rig_tools = run_ctx.agent_factory.toolbox.get_tools(&toolset).run();
+        let tool_defs = rig_tools.get_tool_defs(None).await.unwrap_or_default();
         tracing::debug!("Tool definitions {:?}", &tool_defs);
 
         let single_tool = if let [tool] = tool_defs.as_slice() {
@@ -1167,11 +1179,17 @@ impl InvokeTool {
             _ => unreachable!(),
         };
 
-        let future = rig_tools.call(tool_name, args.to_string());
+        let mut tool_ctx = Default::default();
+        let tool_args = serde_json::to_string(&args)
+            .map_err(|e| anyhow::anyhow!("Could not serialize args: {e:?}"))?;
+        let future = rig_tools.execute(tool_name, &tool_args, &mut tool_ctx);
         let timeout = run_ctx.agent_factory.toolbox.timeout(&toolset, tool_name);
-        let tool_output = with_deadline(future, timeout, run_ctx.deadline).await??;
+        let tool_result = with_deadline(future, timeout, run_ctx.deadline).await?;
 
-        let msg = Arc::new(Message::tool_result(tool_name, &tool_output));
+        let Some(tool_output) = tool_result.output().as_text() else {
+            return Err(WorkflowError::Unknown("Could not get tool output".into()));
+        };
+        let msg = Arc::new(Message::tool_result(tool_name, tool_output));
 
         let history = if let Some(chat) = chat {
             let chat = chat.extend(vec![Ok(msg.clone()).into()])?;
@@ -1183,7 +1201,7 @@ impl InvokeTool {
         Ok(vec![
             history,
             Value::Message(msg),
-            Value::Text(Arc::new(tool_output.clone())),
+            Value::Text(Arc::new(tool_output.to_string())),
             Value::Placeholder(ValueKind::Failure),
         ])
     }

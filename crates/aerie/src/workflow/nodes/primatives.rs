@@ -1,21 +1,28 @@
 use std::{borrow::Cow, convert::identity, iter::once, str::FromStr as _, sync::Arc};
 
 use decorum::E64;
+#[cfg(feature = "ui")]
 use egui_commonmark::CommonMarkCache;
+#[cfg(feature = "ui")]
 use egui_phosphor::regular::{BRACKETS_SQUARE, NUMPAD};
 use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
 
+#[cfg(feature = "ui")]
 use crate::{
     ChatContent,
-    ui::{AppEvent, resizable_frame, shortcuts::squelch, tiles::chat::render_message_width},
-    utils::{IMAGE_CACHE, message_text, rig_image_to_egui, show_image},
-    workflow::{FlexNode, GraphId, WorkflowError},
+    events::AppEvent,
+    ui::{resizable_frame, shortcuts::squelch, tiles::chat::render_message_width},
+    utils::{IMAGE_CACHE, rig_image_to_egui, show_image},
+    workflow::{EditContext, UiNode},
 };
 
-use super::{DynNode, EditContext, RunContext, UiNode, Value, ValueKind};
+use crate::{
+    utils::message_text,
+    workflow::{DynNode, FlexNode, GraphId, RunContext, Value, ValueKind, WorkflowError},
+};
 
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Number {
@@ -33,6 +40,10 @@ pub struct Number {
 impl FlexNode for Number {}
 
 impl DynNode for Number {
+    fn title(&self) -> &str {
+        "Number"
+    }
+
     fn in_kinds(&'_ self, _in_pin: usize) -> Cow<'_, [ValueKind]> {
         let Self { integer, .. } = self;
         if *integer {
@@ -186,10 +197,8 @@ impl DynNode for Number {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Number {
-    fn title(&self) -> &str {
-        "Number"
-    }
     fn show_input(
         &mut self,
         ui: &mut egui::Ui,
@@ -259,6 +268,10 @@ pub struct Text {
 impl FlexNode for Text {}
 
 impl DynNode for Text {
+    fn title(&self) -> &str {
+        "Text"
+    }
+
     fn value(&self, _out_pin: usize) -> Value {
         Value::Text(self.value.clone())
     }
@@ -325,15 +338,12 @@ impl DynNode for Text {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Text {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other
             .downcast_ref::<Self>()
             .is_some_and(|other| self.value == other.value && self.delim == other.delim)
-    }
-
-    fn title(&self) -> &str {
-        "Text"
     }
 
     fn show_input(
@@ -431,6 +441,14 @@ impl PartialEq for Preview {
 impl Eq for Preview {}
 
 impl DynNode for Preview {
+    fn title(&self) -> &str {
+        if self.title.is_empty() {
+            "Preview"
+        } else {
+            &self.title
+        }
+    }
+
     fn priority(&self) -> usize {
         9999
     }
@@ -486,17 +504,10 @@ impl DynNode for Preview {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Preview {
     fn on_paste(&mut self) {
         self.uuid = GraphId::new();
-    }
-
-    fn title(&self) -> &str {
-        if self.title.is_empty() {
-            "Preview"
-        } else {
-            &self.title
-        }
     }
 
     fn title_mut(&mut self) -> Option<&mut String> {
@@ -594,6 +605,10 @@ pub struct OutputNode {
 impl FlexNode for OutputNode {}
 
 impl DynNode for OutputNode {
+    fn title(&self) -> &str {
+        "Output"
+    }
+
     fn priority(&self) -> usize {
         9999
     }
@@ -629,11 +644,8 @@ impl DynNode for OutputNode {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for OutputNode {
-    fn title(&self) -> &str {
-        "Output"
-    }
-
     fn tooltip(&self) -> &str {
         "Emits an output.\n\
             It is up to the workflow runner to determine what to do with it."
@@ -671,6 +683,10 @@ pub struct Panic {}
 impl FlexNode for Panic {}
 
 impl DynNode for Panic {
+    fn title(&self) -> &str {
+        "Panic"
+    }
+
     fn priority(&self) -> usize {
         9000
     }
@@ -699,11 +715,8 @@ impl DynNode for Panic {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Panic {
-    fn title(&self) -> &str {
-        "Panic"
-    }
-
     fn tooltip(&self) -> &str {
         "Aborts run if the input is non-empty"
     }

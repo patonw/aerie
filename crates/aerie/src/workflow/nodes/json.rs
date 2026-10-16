@@ -1,5 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
+#[cfg(feature = "ui")]
 use egui_snarl::OutPinId;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -7,18 +8,18 @@ use serde_json::json;
 use serde_with::skip_serializing_none;
 
 use crate::{
+    utils::{extract_json, message_text, message_to_json},
+    workflow::{DynNode, FlexNode, RunContext, Value, ValueKind, WorkflowError},
+};
+
+#[cfg(feature = "ui")]
+use crate::{
     ui::{
         resizable_frame,
         shortcuts::{Shortcut, squelch},
     },
-    utils::{extract_json, message_text, message_to_json},
-    workflow::{
-        DynNode, EditContext, FlexNode, RunContext, UiNode, Value, WorkNode, WorkflowError,
-        nodes::GraphSubmenu,
-    },
+    workflow::{EditContext, UiNode, WorkNode, nodes::GraphSubmenu},
 };
-
-use super::ValueKind;
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +39,10 @@ pub struct ParseJson {
 impl FlexNode for ParseJson {}
 
 impl DynNode for ParseJson {
+    fn title(&self) -> &str {
+        "Parse JSON"
+    }
+
     fn in_kinds(&'_ self, in_pin: usize) -> Cow<'_, [ValueKind]> {
         Cow::Borrowed(match in_pin {
             0 => &[ValueKind::Text, ValueKind::Message],
@@ -95,6 +100,7 @@ impl DynNode for ParseJson {
     }
 }
 
+#[cfg(feature = "ui")]
 pub fn json_editor(
     ui: &mut egui::Ui,
     buffer: &mut dyn egui::TextBuffer,
@@ -146,6 +152,7 @@ pub fn json_editor(
     squelch(resp)
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for ParseJson {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other.downcast_ref::<Self>().is_some_and(|other| {
@@ -153,10 +160,6 @@ impl UiNode for ParseJson {
                 && self.extract == other.extract
                 && self.as_array == other.as_array
         })
-    }
-
-    fn title(&self) -> &str {
-        "Parse JSON"
     }
 
     fn show_input(
@@ -237,6 +240,10 @@ pub struct ValidateJson {
 impl FlexNode for ValidateJson {}
 
 impl DynNode for ValidateJson {
+    fn title(&self) -> &str {
+        "Validate JSON"
+    }
+
     fn inputs(&self) -> usize {
         2
     }
@@ -303,15 +310,12 @@ impl DynNode for ValidateJson {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for ValidateJson {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other
             .downcast_ref::<Self>()
             .is_some_and(|other| self.schema == other.schema)
-    }
-
-    fn title(&self) -> &str {
-        "Validate JSON"
     }
 
     fn tooltip(&self) -> &str {
@@ -383,6 +387,10 @@ pub struct TransformJson {
 impl FlexNode for TransformJson {}
 
 impl DynNode for TransformJson {
+    fn title(&self) -> &str {
+        "Transform JSON"
+    }
+
     fn inputs(&self) -> usize {
         2
     }
@@ -453,15 +461,12 @@ impl DynNode for TransformJson {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for TransformJson {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other
             .downcast_ref::<Self>()
             .is_some_and(|other| self.filter == other.filter)
-    }
-
-    fn title(&self) -> &str {
-        "Transform JSON"
     }
 
     fn tooltip(&self) -> &str {
@@ -516,6 +521,10 @@ pub struct GatherJson {
 impl FlexNode for GatherJson {}
 
 impl DynNode for GatherJson {
+    fn title(&self) -> &str {
+        "Gather JSON"
+    }
+
     fn inputs(&self) -> usize {
         self.count + 1 // Extra slot to add another document
     }
@@ -582,11 +591,8 @@ impl DynNode for GatherJson {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for GatherJson {
-    fn title(&self) -> &str {
-        "Gather JSON"
-    }
-
     fn tooltip(&self) -> &str {
         "Combine multiple JSON documents into a single array.\n\
             The output can be transformed using shallow, deep or arbitrary merging"
@@ -630,6 +636,10 @@ impl Default for UnwrapJson {
 }
 
 impl DynNode for UnwrapJson {
+    fn title(&self) -> &str {
+        "Unwrap JSON"
+    }
+
     fn in_kinds(&'_ self, _in_pin: usize) -> Cow<'_, [ValueKind]> {
         Cow::Borrowed(&[ValueKind::Json])
     }
@@ -698,11 +708,8 @@ impl DynNode for UnwrapJson {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for UnwrapJson {
-    fn title(&self) -> &str {
-        "Unwrap JSON"
-    }
-
     fn tooltip(&self) -> &str {
         "Converts a JSON value into a workflow value"
     }
@@ -744,35 +751,37 @@ impl UiNode for UnwrapJson {
     }
 }
 
+#[cfg(feature = "ui")]
 fn json_node_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
     ui.menu_button("JSON", |ui| {
         if ui.button("Parse JSON").clicked() {
-            snarl.insert_node(pos, ParseJson::default().into());
+            snarl.insert_node(pos.into(), ParseJson::default().into());
             ui.close();
         }
 
         if ui.button("Gather JSON").clicked() {
-            snarl.insert_node(pos, GatherJson::default().into());
+            snarl.insert_node(pos.into(), GatherJson::default().into());
             ui.close();
         }
 
         if ui.button("Validate JSON").clicked() {
-            snarl.insert_node(pos, ValidateJson::default().into());
+            snarl.insert_node(pos.into(), ValidateJson::default().into());
             ui.close();
         }
 
         if ui.button("Transform JSON").clicked() {
-            snarl.insert_node(pos, TransformJson::default().into());
+            snarl.insert_node(pos.into(), TransformJson::default().into());
             ui.close();
         }
 
         if ui.button("Unwrap JSON").clicked() {
-            snarl.insert_node(pos, UnwrapJson::default().into());
+            snarl.insert_node(pos.into(), UnwrapJson::default().into());
             ui.close();
         }
     });
 }
 
+#[cfg(feature = "ui")]
 inventory::submit! {
     GraphSubmenu("json", json_node_menu)
 }

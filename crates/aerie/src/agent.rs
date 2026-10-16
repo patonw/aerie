@@ -1,15 +1,23 @@
-#[allow(deprecated)]
 use crate::rig::{
     self,
-    agent::{Agent, AgentBuilder},
+    agent::{Agent as RigAgent, AgentBuilder, PromptRequest},
     completion::ToolDefinition,
+    message::Message,
+    tool::{
+        ToolContext,
+        server::{ToolServer, ToolServerHandle},
+    },
 };
 use anyhow::anyhow;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use decorum::E64;
 use derive_builder::Builder;
+use futures_util::{Stream, StreamExt as _};
 use itertools::Itertools;
-use rig_dynclient::{builder::DynClientBuilder, completion::CompletionModelHandle};
+use rig_dynclient::{
+    builder::DynClientBuilder, completion::CompletionModelHandle,
+    rig::agent::StreamingPromptRequest,
+};
 use scopeguard::defer;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -38,7 +46,7 @@ pub use super::toolbox::{ToolProvider, Toolbox};
 pub type AgentBuilderT = AgentBuilder<CompletionModelHandle<'static>>;
 
 #[allow(deprecated)]
-pub type AgentT = Agent<CompletionModelHandle<'static>>;
+pub type AgentT = RigAgent<CompletionModelHandle<'static>>;
 
 #[derive(Serialize, Deserialize)]
 pub struct StructuredSubmit {
@@ -62,19 +70,118 @@ impl rig::tool::Tool for StructuredSubmit {
 
     type Output = serde_json::Value;
 
-    async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "\
-                Submits a JSON value confirming to this schema.\n\
-                Be sure to use this tool to submit your response."
-                .to_string(),
-            parameters: self.schema.clone(),
-        }
+    async fn call(
+        &self,
+        _ctx: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
+        Ok(args)
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        Ok(args)
+    fn description(&self) -> String {
+        "Submits a JSON value confirming to this schema.\n\
+                Be sure to use this tool to submit your response."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        self.schema.clone()
+    }
+}
+
+// Agent wrapper with accessors for tool defs & settings
+#[derive(Clone)]
+pub struct AgentW {
+    pub spec: AgentSpec,
+
+    tool_handle: ToolServerHandle,
+
+    inner: AgentT,
+}
+
+pub struct CompletionOnly;
+
+impl rig::agent::AgentHook for CompletionOnly {
+    async fn on_tool_call(
+        &self,
+        _ctx: &rig::agent::HookContext,
+        _event: rig::agent::ToolCall<'_>,
+    ) -> rig::agent::ToolCallAction {
+        rig::agent::ToolCallAction::Stop(Default::default())
+    }
+}
+
+// TODO: wrap rig types in return values
+impl AgentW {
+    pub async fn tool_defs(&self) -> Vec<ToolDefinition> {
+        let tool_definitions = self.tool_handle.get_tool_defs(None).await;
+        tool_definitions.unwrap_or_default()
+    }
+
+    pub async fn exec_tool(&self, tool_name: &str, args: &str) -> rig::tool::ToolResult {
+        let mut tool_ctx = ToolContext::new();
+        self.tool_handle
+            .execute(tool_name, args, &mut tool_ctx)
+            .await
+    }
+
+    pub fn exec_completion<H, Item>(
+        &self,
+        prompt: impl Into<rig::message::Message>,
+        history: H,
+    ) -> impl IntoFuture<Output = Result<rig::agent::PromptResponse, rig::prelude::PromptError>>
+    where
+        H: IntoIterator<Item = Item>,
+        Item: Into<Message>,
+    {
+        PromptRequest::from_agent(&self.inner, prompt)
+            .history(history)
+            .add_hook(CompletionOnly)
+            .extended_details()
+    }
+
+    pub fn exec_chat<H, Item>(
+        &self,
+        prompt: impl Into<rig::message::Message>,
+        history: H,
+        max_turns: Option<usize>,
+    ) -> impl IntoFuture<Output = Result<rig::agent::PromptResponse, rig::prelude::PromptError>>
+    where
+        H: IntoIterator<Item = Item>,
+        Item: Into<Message>,
+    {
+        let mut request = PromptRequest::from_agent(&self.inner, prompt).history(history);
+        if let Some(max_turns) = max_turns {
+            request = request.max_turns(max_turns);
+        }
+
+        request.extended_details()
+    }
+
+    pub fn stream_completion<H, Item>(
+        &self,
+        prompt: impl Into<rig::message::Message>,
+        history: H,
+    ) -> impl Stream<
+        Item = Result<
+            rig::prelude::MultiTurnStreamItem<rig_dynclient::completion::FinalCompletionResponse>,
+            rig::agent::StreamingError,
+        >,
+    >
+    where
+        H: IntoIterator<Item = Item>,
+        Item: Into<Message>,
+    {
+        let request = StreamingPromptRequest::from_agent(&self.inner, prompt)
+            .history(history)
+            .add_hook(CompletionOnly);
+
+        async_stream::stream! {
+            let mut stream= request.await;
+            while let Some(item) = stream.next().await {
+                yield item;
+            }
+        }
     }
 }
 
@@ -103,7 +210,7 @@ pub struct AgentFactory {
     pub toolbox: Toolbox,
 
     #[builder(default)]
-    pub cache: Arc<ArcSwap<im::HashMap<AgentSpec, AgentT>>>,
+    pub cache: Arc<ArcSwap<im::HashMap<AgentSpec, AgentW>>>,
 
     #[builder(default)]
     pub next_workflow: Arc<ArcSwapOption<String>>,
@@ -143,7 +250,7 @@ impl AgentFactory {
         Ok(AgentBuilder::new(handle).temperature(temperature))
     }
 
-    pub fn spec_to_agent(&self, spec: &AgentSpec) -> anyhow::Result<AgentT> {
+    pub fn spec_to_agent(&self, spec: &AgentSpec) -> anyhow::Result<AgentW> {
         let cache = self.cache.load();
         if let Some(cached) = cache.get(spec) {
             return Ok(cached.clone());
@@ -167,21 +274,24 @@ impl AgentFactory {
             agent = agent.context(context_doc);
         }
 
-        let agent = if let Some(schema) = &spec.schema {
+        let tool_server = if let Some(schema) = &spec.schema {
             let tool = StructuredSubmit::from(schema.as_ref());
-            agent.tool(tool).build()
-        } else if let Some(toolset) = &spec.tools {
-            match self.toolbox.apply(agent, toolset) {
-                either::Either::Left(builder) => builder.build(),
-                either::Either::Right(builder) => builder.build(),
-            }
+            ToolServer::new().tool(tool)
         } else {
-            agent.build()
+            self.toolbox.get_tools(&spec.tool_selection())
         };
 
+        let tool_handle = tool_server.run();
+
+        let inner = agent.tool_server_handle(tool_handle.clone());
+
+        let agent = AgentW {
+            spec: spec.clone(),
+            tool_handle,
+            inner: inner.build(),
+        };
         self.cache
             .store(Arc::new(cache.update(spec.clone(), agent.clone())));
-
         Ok(agent)
     }
 
@@ -267,13 +377,7 @@ pub struct _AgentSpec_ {
 }
 
 impl AgentSpec {
-    pub fn agent(&self, factory: &AgentFactory) -> anyhow::Result<AgentT> {
-        factory.spec_to_agent(self)
-    }
-
     pub fn tool_selection(&self) -> Arc<ToolSelector> {
         self.tools.clone().unwrap_or_default()
     }
-
-    // TODO: method to just get rig tools from selection
 }

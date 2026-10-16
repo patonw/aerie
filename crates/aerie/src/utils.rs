@@ -3,12 +3,12 @@ use std::{
     cmp::{Eq, PartialEq},
     collections::BinaryHeap,
     hash::Hash,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use arc_swap::ArcSwap;
 use decorum::E32;
-use egui::mutex::Mutex;
+use egui_snarl::NodePos;
 use itertools::{Itertools, iproduct};
 use rpds::{List, ListSync};
 use serde::{Deserialize, Serialize};
@@ -28,8 +28,10 @@ pub struct EVec2 {
     pub y: E32,
 }
 
-impl From<egui::Vec2> for EVec2 {
-    fn from(value: egui::Vec2) -> Self {
+pub type EPos2 = EVec2;
+
+impl From<NodePos> for EVec2 {
+    fn from(value: NodePos) -> Self {
         Self {
             x: E32::assert(value.x),
             y: E32::assert(value.y),
@@ -37,7 +39,7 @@ impl From<egui::Vec2> for EVec2 {
     }
 }
 
-impl From<EVec2> for egui::Vec2 {
+impl From<EVec2> for NodePos {
     fn from(value: EVec2) -> Self {
         Self {
             x: value.x.into_inner(),
@@ -45,7 +47,6 @@ impl From<EVec2> for egui::Vec2 {
         }
     }
 }
-
 #[derive(Clone)]
 pub struct AtomicBuffer<T>(pub Arc<ArcSwap<im::Vector<Arc<ArcSwap<T>>>>>);
 
@@ -104,14 +105,14 @@ impl<T: Ord + std::fmt::Debug> PriorityQueue<T> {
     }
 
     pub fn insert(&self, value: T) {
-        let mut data = self.0.lock();
+        let mut data = self.0.lock().unwrap();
         let count = data.0;
         data.1.push((value, count));
         data.0 -= 1;
     }
 
     pub fn pop(&self) -> Option<T> {
-        let mut data = self.0.lock();
+        let mut data = self.0.lock().unwrap();
         data.1.pop().map(|(t, _)| t)
     }
 
@@ -119,7 +120,7 @@ impl<T: Ord + std::fmt::Debug> PriorityQueue<T> {
     pub fn retain(&self, f: impl Fn(&T) -> bool) -> Vec<T> {
         let mut remainder = vec![];
         let mut target = BinaryHeap::new();
-        let mut data = self.0.lock();
+        let mut data = self.0.lock().unwrap();
         while let Some((item, i)) = data.1.pop() {
             if f(&item) {
                 target.push((item, i));
@@ -138,7 +139,6 @@ impl<T: Ord + std::fmt::Debug> PriorityQueue<T> {
         self.retain(|item| !f(item))
     }
 }
-
 pub trait CowExt<'a, T: Clone, E> {
     /// Flat map for cows.
     ///
@@ -444,6 +444,7 @@ pub fn extract_user_content(content: &UserContent) -> Vec<(Cow<'_, str>, FormatO
                 _ => None,
             })
             .collect_vec(),
+        #[cfg(feature = "ui")]
         UserContent::Image(img) => {
             let key = rig_image_to_egui(img);
 
@@ -464,11 +465,14 @@ pub fn extract_agent_content(content: &AssistantContent) -> Vec<(Cow<'_, str>, F
         AssistantContent::Reasoning(reasoning) => {
             vec![(Cow::Owned(reasoning.display_text()), FormatOpts::Reasoning)]
         }
+        #[cfg(feature = "ui")]
         AssistantContent::Image(img) => {
             let key = rig_image_to_egui(img);
 
             vec![(Cow::Owned(key), FormatOpts::Image)]
         }
+        #[cfg(not(feature = "ui"))]
+        other => vec![(Cow::Owned(format!("{other:?}")), FormatOpts::Unknown)],
     }
 }
 
@@ -555,6 +559,70 @@ where
     T: Deserialize<'a>,
 {
     extract_json(input, false)
+}
+
+#[cfg(feature = "ui")]
+pub mod ui {
+    use decorum::E32;
+
+    use super::EVec2;
+
+    impl From<egui::Vec2> for EVec2 {
+        fn from(value: egui::Vec2) -> Self {
+            Self {
+                x: E32::assert(value.x),
+                y: E32::assert(value.y),
+            }
+        }
+    }
+
+    impl From<EVec2> for egui::Vec2 {
+        fn from(value: EVec2) -> Self {
+            Self {
+                x: value.x.into_inner(),
+                y: value.y.into_inner(),
+            }
+        }
+    }
+
+    impl From<egui::Pos2> for EVec2 {
+        fn from(value: egui::Pos2) -> Self {
+            Self {
+                x: E32::assert(value.x),
+                y: E32::assert(value.y),
+            }
+        }
+    }
+
+    impl From<EVec2> for egui::Pos2 {
+        fn from(value: EVec2) -> Self {
+            Self {
+                x: value.x.into_inner(),
+                y: value.y.into_inner(),
+            }
+        }
+    }
+
+    impl std::ops::Add<egui::Vec2> for EVec2 {
+        type Output = Self;
+
+        fn add(self, rhs: egui::Vec2) -> Self::Output {
+            Self {
+                x: self.x + rhs.x,
+                y: self.y + rhs.y,
+            }
+        }
+    }
+    impl std::ops::Sub<egui::Vec2> for EVec2 {
+        type Output = Self;
+
+        fn sub(self, rhs: egui::Vec2) -> Self::Output {
+            Self {
+                x: self.x - rhs.x,
+                y: self.y - rhs.y,
+            }
+        }
+    }
 }
 
 #[cfg(test)]

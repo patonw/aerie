@@ -4,7 +4,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "ui")]
 use egui::{Sense, UiBuilder};
+#[cfg(feature = "ui")]
 use egui_phosphor::regular::{GRAPH, LINE_SEGMENTS, REPEAT};
 use egui_snarl::NodeId;
 use im::vector;
@@ -15,13 +17,15 @@ use serde_with::skip_serializing_none;
 use serde_yaml_ng as serde_yml;
 use uuid::Uuid;
 
+#[cfg(feature = "ui")]
+use crate::workflow::{MetaNode, NodeTheme, ThemeCodex, UiNode, nodes::LoopControl};
+
 use crate::{
-    ui::AppEvent,
+    events::AppEvent,
     utils::ImmutableMapExt,
     workflow::{
-        CheckContext, DynNode, FlexNode, GraphId, MetaNode, NodeTheme, ShadowGraph, ThemeCodex,
-        UiNode, Value, ValueKind, WorkNode, WorkflowError, min_instant,
-        nodes::LoopControl,
+        CheckContext, DynNode, FlexNode, GraphId, ShadowGraph, Value, ValueKind, WorkNode,
+        WorkflowError, min_instant,
         runner::{ExecState, WorkflowRunner},
     },
 };
@@ -566,6 +570,10 @@ fn input_lengths(inputs: &[Option<Value>]) -> Vec<usize> {
 }
 
 impl DynNode for Subgraph {
+    fn title(&self) -> &str {
+        &self.title
+    }
+
     fn uuid(&self) -> Option<uuid::Uuid> {
         Some(self.graph.uuid.0)
     }
@@ -655,6 +663,7 @@ impl DynNode for Subgraph {
     }
 }
 
+#[cfg(feature = "ui")]
 impl UiNode for Subgraph {
     fn weak_eq(&self, other: &dyn std::any::Any) -> bool {
         other.downcast_ref::<Self>().is_some_and(|other| {
@@ -685,10 +694,6 @@ impl UiNode for Subgraph {
             nodes,
             ..self.graph.clone()
         };
-    }
-
-    fn title(&self) -> &str {
-        &self.title
     }
 
     fn title_mut(&mut self) -> Option<&mut String> {
@@ -919,10 +924,11 @@ fn par_slice(inputs: &[Option<Value>], i: usize) -> Vec<Option<Value>> {
         .collect_vec()
 }
 
+#[cfg(feature = "ui")]
 fn subgraph_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos: egui::Pos2) {
     ui.menu_button("Subgraph", |ui| {
         if ui.button("Simple").clicked() {
-            snarl.insert_node(pos, Subgraph::default().into());
+            snarl.insert_node(pos.into(), Subgraph::default().into());
         }
 
         if ui.button("Looping").clicked() {
@@ -941,7 +947,7 @@ fn subgraph_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos
                 &ctrl_id,
                 &MetaNode {
                     value: controller.into(),
-                    pos: egui::pos2(500.0, -300.0),
+                    pos: egui::pos2(500.0, -300.0).into(),
                     open: true,
                 },
             );
@@ -949,18 +955,19 @@ fn subgraph_menu(ui: &mut egui::Ui, snarl: &mut egui_snarl::Snarl<WorkNode>, pos
 
             container.graph = subgraph;
 
-            snarl.insert_node(pos, container.into());
+            snarl.insert_node(pos.into(), container.into());
         }
 
         if ui.button("Iterative").clicked() {
             snarl.insert_node(
-                pos,
+                pos.into(),
                 Subgraph::default().with_flavor(Flavor::Iterative).into(),
             );
         }
     });
 }
 
+#[cfg(feature = "ui")]
 inventory::submit! {
     super::GraphSubmenu("subgraph", subgraph_menu)
 }

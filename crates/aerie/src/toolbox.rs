@@ -2,7 +2,7 @@ use crate::rig::{
     self,
     agent::AgentBuilder,
     completion::CompletionModel,
-    tool::{Tool as _, ToolSet as RigToolSet},
+    tool::{Tool as RigTool, ToolContext, server::ToolServer},
 };
 use anyhow::Context as _;
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -40,14 +40,14 @@ use crate::{
 };
 
 pub type AgentMaybeTooled<M> =
-    Either<AgentBuilder<M>, AgentBuilder<M, (), rig::agent::WithBuilderTools>>;
+    Either<AgentBuilder<M>, AgentBuilder<M, rig::agent::WithBuilderTools>>;
 
 use super::config::{ToolSelector, ToolSpec};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainBreaker;
 
-impl rig::tool::Tool for ChainBreaker {
+impl RigTool for ChainBreaker {
     const NAME: &'static str = "__break__";
 
     type Error = WorkflowError;
@@ -56,19 +56,23 @@ impl rig::tool::Tool for ChainBreaker {
 
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
-        rig::completion::ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: Self::description().to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": { }
-            }),
-        }
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        _args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
+        Ok("Stopping workflow chain".to_string())
     }
 
-    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
-        Ok("Stopping workflow chain".to_string())
+    fn description(&self) -> String {
+        Self::description().to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": { }
+        })
     }
 }
 
@@ -121,7 +125,7 @@ pub struct ChainTool {
     schema: String,
 }
 
-impl rig::tool::Tool for ChainTool {
+impl RigTool for ChainTool {
     const NAME: &'static str = "chainer";
 
     type Error = WorkflowError;
@@ -130,26 +134,11 @@ impl rig::tool::Tool for ChainTool {
 
     type Output = String;
 
-    fn name(&self) -> String {
-        self.name.clone()
-    }
-
-    async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
-        let description = format!(
-            "Queues workflow '{}' to run next with a prompt.\n---\nWorkflow description:\n{}",
-            &self.name, &self.description
-        );
-
-        let schema = parse_or_prompt_schema(&self.schema);
-
-        rig::completion::ToolDefinition {
-            name: self.name.clone(),
-            description,
-            parameters: schema,
-        }
-    }
-
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         use serde_json::Value;
         tracing::info!(
             "Queuing next workflow: {} with prompt: {:?}",
@@ -187,6 +176,17 @@ impl rig::tool::Tool for ChainTool {
         }
 
         Ok(format!("Queued workflow {} to run next", &self.name))
+    }
+
+    fn description(&self) -> String {
+        format!(
+            "Queues workflow '{}' to run next with a prompt.\n---\nWorkflow description:\n{}",
+            &self.name, &self.description
+        )
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        parse_or_prompt_schema(&self.schema)
     }
 }
 
@@ -310,8 +310,7 @@ impl ToolProvider {
         false
     }
 
-    pub fn get_tools(&self, _provider: &str, selector: impl Fn(&str) -> bool) -> RigToolSet {
-        let mut result = RigToolSet::default();
+    pub fn add_tools(&self, mut server: ToolServer, selector: impl Fn(&str) -> bool) -> ToolServer {
         match self {
             ToolProvider::MCP { client, tools, .. } => {
                 for tool in tools {
@@ -319,11 +318,8 @@ impl ToolProvider {
                         // namespace tools with provider name
                         let tool = tool.clone();
                         // tool.name = Cow::Owned(format!("{provider}::{}", tool.name.as_ref()));
-
-                        result.add_tool(rig::tool::rmcp::McpTool::from_mcp_server(
-                            tool,
-                            client.peer().clone(),
-                        ));
+                        //
+                        server = server.rmcp_tool(tool, client.peer().clone());
                     }
                 }
             }
@@ -334,7 +330,7 @@ impl ToolProvider {
                 next_images,
             } => {
                 if selector(ChainBreaker::NAME) {
-                    result.add_tool(ChainBreaker);
+                    server = server.tool(ChainBreaker);
                 }
 
                 let store = workflows;
@@ -349,12 +345,12 @@ impl ToolProvider {
                         description: description.into_owned(),
                         schema: schema.into_owned(),
                     };
-                    result.add_tool(tool);
+                    server = server.tool(tool);
                 }
             }
         }
 
-        result
+        server
     }
 
     pub fn select_tools<M: CompletionModel>(
@@ -471,7 +467,7 @@ impl ToolProvider {
                     let token = vars
                         .get(var_name)
                         .context(format!("Environment variable {var_name} not found"))?;
-                    let uri = uri.replace(API_KEY, &token);
+                    let uri = uri.replace(API_KEY, token);
 
                     StreamableHttpClientTransportConfig::with_uri(uri.as_str())
                 } else {
@@ -552,15 +548,16 @@ impl Toolbox {
         self
     }
 
-    pub fn get_tools(&self, toolset: &ToolSelector) -> RigToolSet {
-        let mut result = RigToolSet::default();
+    pub fn get_tools(&self, toolset: &ToolSelector) -> ToolServer {
+        let mut server = ToolServer::new();
+
         let providers = self.providers.load();
         for (name, provider) in providers.as_ref() {
             tracing::debug!("Adding tools for provider {name}");
-            result.add_tools(provider.get_tools(name, |tool| toolset.apply(name, tool)))
+            server = provider.add_tools(server, |tool| toolset.apply(name, tool));
         }
 
-        result
+        server
     }
 
     pub fn missing_tools(&self, toolset: &ToolSelector) -> Vec<String> {
